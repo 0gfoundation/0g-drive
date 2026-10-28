@@ -1,0 +1,126 @@
+# 0GDrive user guide
+
+0GDrive is a personal drive — folders, uploads, previews, sharing, trash — that keeps your files on **0G Storage**, a decentralized storage network, instead of a company's servers. Your wallet is your account: there is no sign-up, no password database and no 0GDrive server holding your files. Everything is **encrypted in your browser before it leaves your device**.
+
+This guide explains how to use each feature and what happens underneath. For the design reasoning see `docs/decisions.md`; for the code, `core/src` (storage, encryption, keys) and `web/src/App.tsx` (the app).
+
+## Getting started
+
+1. **Install a wallet.** 0GDrive needs an Ethereum-style browser wallet such as MetaMask. Without one the app shows "No Ethereum wallet detected".
+2. **Connect wallet** (top right). The app switches the wallet to the 0G network it runs on (currently the **0G Galileo testnet**, chain ID 16602); approve the switch if asked.
+3. **Get some 0G** for fees. On testnet use the faucet linked in the footer ("Get testnet 0G", https://faucet.0g.ai, 0.1 0G per day). Your balance shows in the header.
+4. **Create your drive.** On a new account the banner says "Create your drive." Click **Create my drive**: a random *drive key* is generated in your browser. Nothing is sent on-chain yet.
+5. **Set up recovery** (sidebar → Security → Recovery → **Set up**). One signature and one transaction back up your drive key on-chain, locked to your wallet, so you can open the drive on any device. Do this right away: until then, the drive key exists only in this browser.
+
+If the account already has a drive, the start banner says "This account has a drive on-chain." — click **Restore my drive** and sign once. Don't create a second drive on an account that already has one.
+
+## What costs a transaction
+
+Storing data on 0G costs a small fee in 0G (storage fee + gas), paid by a wallet transaction you approve in MetaMask. Reading is free.
+
+| Action | Wallet prompts |
+|---|---|
+| Upload one or many files (one drop) | 1 transaction (all files + the folder listing in one batch) |
+| New folder, move to trash, restore, remove from trash, organize moves | 1 transaction each (updates a small listing file) |
+| Set up recovery | 1 signature + 1 transaction |
+| Set or change the recovery password | 1 signature + 1 transaction |
+| Publish / update share key | 1 signature + 1 transaction |
+| Restore a drive on a new device | 1 signature, no transaction |
+| Create a share link | nothing — no prompt, nothing on-chain |
+| Open a link encrypted to you | 1 signature the first time on a device, no transaction |
+| Browse, preview, download, search | nothing |
+
+Observed testnet costs: about 0.001 0G per MB uploaded, about 0.0001–0.0015 0G per metadata change.
+
+## Uploading files
+
+- Drop files on the upload zone ("Drop files here or click to upload"; on phones "Tap to upload files"), or click it to pick files. Files go into the folder you are viewing.
+- One drop = **one** wallet approval, however many files.
+- The **Uploads** list shows each file's state: *queued → approve in MetaMask → uploading → sealing → stored*. "Sealing" means storage nodes are confirming they hold every piece — the app waits for this (up to 15 minutes, repairing missing pieces automatically) so "stored" really means stored.
+- You can keep dropping files while an upload runs; they queue and go up next.
+- If an upload fails the error says why; keep your local copy and try again.
+
+Every file gets its own random key; the file is encrypted with it before upload, and that key is stored (locked under your drive key) in the folder's listing.
+
+## Folders, trash and sync
+
+- **+ New folder** creates a folder in the current folder (1 transaction). The sidebar shows the folder tree; click a folder to open it, the arrow to expand it.
+- **Move to trash** (trash icon on a file, or select several and **Trash selected**). Folders can be moved to trash from the tree.
+- **Trash** (sidebar): **Restore** puts a file back where it was; the × button removes its record from the trash.
+- Storage on 0G is **immutable**: "deleting" removes the file from your drive's listings, but the encrypted data stays on the network until its storage period ends. Nobody can read it without your keys.
+- **⟳ Sync** reloads the drive from the chain — useful after using the drive on another device.
+- **List / Grid** toggle switches the file view; photos show thumbnails.
+
+## Preview and download
+
+Click a file name to preview it (images, PDFs, text and code up to 2 MB, audio, video; files up to 100 MB), or use **Download**. Files are downloaded from storage nodes and decrypted in your browser. Previewed files are kept on this device **still encrypted**, so the next preview is instant. Thumbnails made by the browser are kept on this device (unencrypted, never uploaded) for speed; clearing the site's data removes them.
+
+## Sharing
+
+Click **Share** on a file. Two kinds of link:
+
+- **Secret link** — anyone with the link can download and decrypt that one file. The file's key rides in the part of the URL after `#`, which browsers never send to a server. Treat the link like the file itself. Works for anyone, no wallet needed.
+- **Encrypted to recipient** — enter the recipient's wallet address; click **Wrap & create link**. The file key is locked to the recipient's published **share key**, so only their wallet can open it: they connect the same wallet, sign once ("Unlock with wallet & download"), no transaction. Someone else opening the link is refused before signing.
+
+Creating a link writes nothing on-chain and needs no approval. Links can't be revoked once sent (the file is immutable; the recipient may already have it).
+
+The recipient must have published a share key (it is published automatically by **Set up recovery**). If they have only an old-style key, you'll see a warning: they will need their raw private key to open the link. Files uploaded before per-file keys existed can't be shared (re-upload them).
+
+## Security: recovery, password, share key, key file
+
+The **Security** section of the sidebar shows four rows:
+
+| Row | Meaning | Action |
+|---|---|---|
+| **Recovery** | Your drive key is backed up on-chain, locked to a wallet signature. On a new device: connect wallet → **Restore my drive** → sign once. | **Set up** (1 signature + 1 tx) |
+| **Password** | A second lock on the same backup, for when you lose the wallet. | **Set** / **Change** |
+| **Share key** | The public key others use for "Encrypted to recipient" links to you. | **Publish** / **Update** if missing or outdated |
+| **Key file** | A copy of your drive key to keep offline. | **Export** |
+
+### Recovery password
+
+**Set** opens a dialog: type the password twice, at least 12 characters. Use several unrelated words — the locked backup is public, so anyone can try guessing offline, and **nobody can reset it for you**. Setting a new password replaces the old one (the old one stops working). "Set" shows again as "Change" after it's saved.
+
+### Lost your wallet?
+
+On the start screen (no wallet connected): **Lost access to your wallet? → Open your drive with its recovery password**. Enter the drive's wallet address and the recovery password. The drive opens **read-only**: you can browse, preview, download and share files, but not upload or change anything (that needs the wallet). The drive key is kept in memory only — nothing is saved on that device; **Exit** closes it. Export the key file from the sidebar if you want a copy. This works only if a password was set before the wallet was lost.
+
+### Key file
+
+**Export** downloads your drive key. Anyone with this file can read your whole drive — store it offline. To use it: on the start banner, "import an existing 0x… key" (new drive screen) or "advanced: import a key file" (restore screen).
+
+### What if…
+
+- *I lose my wallet, no password, no key file* — the drive cannot be opened. There is no reset: 0GDrive has no server that knows your keys.
+- *Someone gets my key file / drive key* — they can read every file uploaded so far, permanently (the encrypted data is public and immutable).
+- *I clear my browser data* — connect the wallet and **Restore my drive** (if recovery is set up).
+
+## Search and organize (on-device AI)
+
+Sidebar → **On-device AI → Smart search & organize**. When on, AI models (~300 MB, downloaded once) run **inside your browser** — no file content or query leaves your device.
+
+- **Search your drive — any language**: finds files by meaning, e.g. "猫" finds a cat photo named IMG_0001.jpg, "lease contract" finds a PDF named in Chinese. Matches names, text excerpts and photo content.
+- New uploads are indexed automatically. **Index N older files for search** indexes files uploaded before (downloads them, reads them on your device, saves the index: 1 approval).
+- **✨ Suggest organization** proposes moving files to better-matching folders; you approve the moves (transactions).
+- When off, search matches file names only.
+
+## Assistant (this help panel)
+
+The assistant answers questions about 0GDrive and 0G. It runs in a separate, isolated part of the page: it **cannot see your files, file names, keys, or wallet address** — only on/off facts such as "recovery is set up" — and it never asks for passwords or keys. It uses your own 0G Private Computer API key (create one at https://pc.0g.ai → Dashboard → API Keys), stored only in the assistant's part of this browser; you pay 0G directly per question — usually 0.05–0.25 0G (a few US cents), shown under each answer. Questions go to the GLM-5.3 model running in a secure enclave (TEE) via the 0G Router. Open it with **Ask** (bottom right; on phones the round button). It can point at controls on the page: the control pulses. Answers link to their sources; check them, answers can be wrong.
+
+## How it works underneath
+
+- **0G Storage** stores files as content-addressed blobs: each file is split into 256 KB segments, a Merkle root identifies it, and a transaction to the Flow contract registers it and pays the fee. Storage nodes then accept the segments and "seal" them.
+- **Drive structure** lives in small encrypted listing files ("manifests") uploaded the same way: one for the folder list, one per folder with its file records (name, size, key, search index), one for trash, and a public backup of your drive key locked under the recovery signature and the password.
+- **Finding your drive** needs no server: the app scans the chain for your account's upload events, picks the newest listing of each kind, downloads and decrypts it.
+- **Encryption**: per-file AES-256 keys; file keys locked under your drive key; the drive key locked under a key derived from a fixed wallet signature (and optionally your password, PBKDF2 600k rounds). Share keys are derived from the same signature.
+- **Network**: 0G Galileo testnet (chain 16602, RPC https://evmrpc-testnet.0g.ai, storage indexer https://indexer-storage-testnet-turbo.0g.ai). Storage is paid for about one year per upload.
+
+## Troubleshooting
+
+- **"Checking for an existing drive on-chain…" for long** — the chain scan is slow or failed; wait or use Retry. Never create a new drive while this is unknown.
+- **Upload stuck at "sealing"** — the app waits up to 15 minutes and repairs automatically; if it fails, retry later.
+- **"Couldn't check"** in Security — a chain query failed; click Retry.
+- **Transaction failed / insufficient funds** — top up 0G (testnet faucet).
+- **A file disappeared after refresh** — click ⟳ Sync; listings on another device may be newer.
+- **Recipient can't open an encrypted link** — they must connect the exact wallet address the link was made for and have published a share key.

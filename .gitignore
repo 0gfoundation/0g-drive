@@ -1,0 +1,23 @@
+node_modules/
+dist/
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+reference/
+assistant/public/knowledge.json
+
+# local tool settings
+.claude/
+
+# working files kept out of the repo (user decision, 2026-10-29)
+docs/issue-*.md
+scripts/post-issue.mjs
+scripts/.issue-config.json
+scripts/.experiment-state.json
+scripts/diagnose-*.mjs
+scripts/debug-manifest.mjs
+scripts/probe-events.mjs
+scripts/verify-fold.mjs
+scripts/verify-root-tx.mjs

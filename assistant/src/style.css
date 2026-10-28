@@ -1,0 +1,503 @@
+:root {
+  /* the drive's palette (web/src/style.css) */
+  --bg: #0a0a0c;
+  --bg-elev: #101014;
+  --panel: #141419;
+  --panel-2: #1b1b22;
+  --border: #26262e;
+  --text: #dcdfe4;
+  --text-dim: #b8b8c0;
+  --muted: #7c7e89;
+  --accent: #b75fff;
+  --accent-strong: #9200e1;
+  --accent-soft: rgba(146, 0, 225, 0.16);
+  --danger: #ff6b6b;
+  --ok: #4ade80;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg-elev);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+.shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── header ── */
+.top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.badge {
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.spacer {
+  flex: 1;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  text-decoration: none;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn.primary {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #fff;
+}
+.btn.small {
+  padding: 4px 10px;
+  font-size: 12.5px;
+}
+.icon-btn {
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.menu-wrap {
+  position: relative;
+}
+.menu {
+  position: absolute;
+  right: 0;
+  top: 34px;
+  z-index: 5;
+  min-width: 180px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+.menu a,
+.menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.menu a:hover,
+.menu button:hover {
+  background: var(--panel-2);
+  text-decoration: none;
+}
+
+/* ── key setup ── */
+.setup {
+  padding: 20px 16px;
+  overflow-y: auto;
+}
+.setup h1 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+.setup p {
+  color: var(--text-dim);
+}
+.setup-steps {
+  padding-left: 20px;
+  display: grid;
+  gap: 16px;
+}
+.setup-steps li > .muted {
+  display: block;
+  margin-top: 6px;
+  font-size: 12.5px;
+}
+.key-form {
+  display: flex;
+  gap: 8px;
+}
+.key-form input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.key-form input:focus,
+.composer textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.privacy {
+  font-size: 12.5px;
+  margin-top: 20px;
+}
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: var(--danger);
+  margin: 8px 0;
+}
+
+/* ── chat ── */
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+.empty p {
+  color: var(--text-dim);
+  margin-top: 0;
+}
+.suggestions {
+  display: grid;
+  gap: 8px;
+}
+.suggestion {
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.suggestion:hover {
+  border-color: var(--accent);
+}
+
+.turn {
+  margin-bottom: 22px;
+}
+.q {
+  background: var(--accent-soft);
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin-left: 15%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.steps {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.steps li {
+  display: flex;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.steps .done .step-ico {
+  color: var(--ok);
+}
+.steps .running {
+  color: var(--text-dim);
+}
+.step-ico {
+  flex-shrink: 0;
+  width: 12px;
+}
+.thinking {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+.meta {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* answer markdown */
+.a {
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.a > :first-child {
+  margin-top: 0;
+}
+.a p,
+.a ul,
+.a ol,
+.a blockquote,
+.a pre,
+.a .table-wrap {
+  margin: 0 0 10px;
+}
+.a ul,
+.a ol {
+  padding-left: 22px;
+}
+.a li + li {
+  margin-top: 3px;
+}
+.a h2,
+.a h3,
+.a h4 {
+  font-size: 14.5px;
+  margin: 14px 0 6px;
+}
+.a code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.a pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.a pre code {
+  background: none;
+  padding: 0;
+}
+.a blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  color: var(--text-dim);
+}
+.a hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.table-wrap {
+  overflow-x: auto;
+}
+.a table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.a th,
+.a td {
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.a th {
+  background: var(--panel);
+}
+.cite {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 0;
+  border-radius: 6px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+.cite:hover {
+  text-decoration: underline;
+}
+
+/* composer */
+.composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 12px 4px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.foot {
+  margin: 0;
+  padding: 2px 12px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* source viewer */
+.viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+}
+.viewer-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.viewer-path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-body {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.vline {
+  display: flex;
+  white-space: pre;
+}
+.vline.hit {
+  background: var(--accent-soft);
+}
+.vn {
+  flex-shrink: 0;
+  width: 48px;
+  padding-right: 10px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+}
+.vt {
+  padding-right: 16px;
+}
+
+/* ── phone ── */
+@media (max-width: 760px) {
+  .top {
+    padding: 8px 8px 8px 16px;
+  }
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 22px;
+  }
+  .btn {
+    min-height: 40px;
+  }
+  .btn.small {
+    min-height: 34px;
+  }
+  /* 16px inputs: iOS zooms the page into anything smaller */
+  .composer textarea,
+  .key-form input {
+    font-size: 16px;
+  }
+  .key-form {
+    flex-direction: column;
+  }
+  .chat {
+    padding: 12px 16px;
+  }
+  .q {
+    margin-left: 8%;
+  }
+  .suggestion {
+    padding: 12px;
+  }
+  .menu a,
+  .menu button {
+    padding: 12px;
+  }
+  .viewer-body {
+    font-size: 11px;
+  }
+  .vn {
+    width: 38px;
+    padding-right: 8px;
+  }
+}

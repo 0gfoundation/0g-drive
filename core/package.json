@@ -1,0 +1,23 @@
+{
+  "name": "@0gdrive/core",
+  "version": "0.1.0",
+  "description": "Shared 0GDrive logic: 0G Storage uploads/downloads, encryption, drive state",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-storage-ts-sdk": "^1.2.13",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
+    "ethers": "^6.13.1"
+  }
+}

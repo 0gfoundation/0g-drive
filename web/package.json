@@ -1,0 +1,28 @@
+{
+  "name": "web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@0gdrive/core": "*",
+    "@0gfoundation/0g-storage-ts-sdk": "^1.2.12",
+    "@huggingface/transformers": "4.3.1",
+    "ethers": "^6.13.1",
+    "pdfjs-dist": "6.4.299",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2",
+    "vite-plugin-node-polyfills": "^0.22.0"
+  }
+}
