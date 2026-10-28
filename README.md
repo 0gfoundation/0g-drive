@@ -44,3 +44,7 @@ All test scripts read `PRIVATE_KEY` from the environment or the gitignored `.env
 - **Cost** observed on testnet: ~0.0012 0G per ~MB file roundtrip; each metadata op is one small tx (~0.0001 0G).
 
 See `docs/decisions.md` for the full architecture and roadmap.
+
+## License
+
+[Apache License 2.0](LICENSE)
