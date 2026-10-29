@@ -1,7 +1,7 @@
 # 0GDrive — Architecture Decisions
 
 ## Product
-OneDrive-style personal drive on 0G Storage: folders, upload/download, sharing, trash, versioning — wallet-based identity, no backend accounts.
+Private, encrypted personal file drive on 0G Storage: folders, upload/download, sharing, trash, versioning. Wallet-based identity, no backend accounts.
 
 ## Decisions
 
@@ -157,7 +157,6 @@ Crucially, the first run of this test failed and led us down a diagnostic path w
 1. **M1 — Core spike**: monorepo scaffold (`core/` + `web/`), end-to-end upload→download of an encrypted file on Galileo testnet via MetaMask; `zgs_getFileInfo` finality polling; progress UI. **✅ done 2026-10-24**
 2. **M2 — Drive semantics**: folder tree CRUD, listing, trash, restart recovery via manifest files + event scan. **✅ done 2026-10-25**
 3. **M3 — UX & sharing**: per-file keys, secret links + wallet-gated links, streaming downloads, public profiles, upload queue with per-file states, share dialog, recipient link view (`#s=`/`#e=`), share-key publishing. **✅ done 2026-10-26** (core E2E 11/11; UI built, browser flow pending manual trial)
-3. **M3 — UX**: file browser UI, drag-drop upload, download (blob for small files; segment-streaming for large), sharing links + key re-wrap.
 4. **M4 — Packaging**: Capacitor (mobile) + Electron (desktop) shells, wallet UX per platform (MetaMask on web/desktop; WalletConnect/wallet capabilities on mobile).
 5. **M5 — Polish**: dedupe-aware re-upload, hot-storage prefetch for frequently opened files, PWA offline shell.
 6. **AI Phase 1 — on-device search & organize** (D8) and **one-prompt batch uploads** (D7). **✅ built 2026-10-27**. **Help assistant** (D9) ✅ built 2026-10-29. Phase 2 (planned): Ask-your-drive + plan-then-approve actions on 0G Compute (TEE providers), session spending key. Phase 3: per-folder delegation keys + MCP server for external agents.

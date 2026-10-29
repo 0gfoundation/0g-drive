@@ -1,49 +1,92 @@
 # 0GDrive
 
-OneDrive-style personal drive on [0G Storage](https://docs.0g.ai) — folders, uploads, downloads, and sharing with wallet-based identity and client-side encryption.
+A private, encrypted file drive that runs in your browser and stores everything on [0G Storage](https://docs.0g.ai), a decentralized storage network. Your wallet is your account. Files are encrypted on your device before upload, and no 0GDrive server stores, sees or controls your data.
+
+You get the usual drive features: folders, drag-and-drop upload, preview, download, share links and trash. Built-in AI helps you find and organize files without exposing them.
+
+## Why 0GDrive
+
+### Your files are only yours
+- **No company in the middle.** Files live on 0G's decentralized storage network, not on a provider's servers. There is no account to suspend, no subscription that locks your data, and no operator who can delete or read it.
+- **Your wallet is your login.** There is no sign-up and no password database. Only your wallet can change your drive.
+- **No backend.** The app rebuilds your whole drive from public chain data plus your keys, so it keeps working even if this website disappears. Any copy of the app can open your drive.
+- **Recovery you control.** Your drive key is backed up on-chain and locked to your wallet. An optional recovery password opens the drive (read-only) if you lose the wallet. Nobody, including us, can reset it or open it for you.
+
+### Encrypted everywhere outside your device
+- **Every file is encrypted in your browser** with its own AES-256 key before it is uploaded. Storage nodes and the chain only ever hold ciphertext.
+- **Names and structure are encrypted too.** File names, folder names, the folder tree, trash and search indexes are stored as encrypted listing files, not as readable metadata.
+- **Sharing doesn't break this.** A secret link carries a single file's key in the part of the URL that browsers never send to a server. An "encrypted to recipient" link can be opened only by the recipient's wallet. Creating a link sends nothing on-chain.
+- **What is public:** that your wallet uploaded data, and when and how much. File contents, names and folder layout are not public.
+
+### AI that helps without seeing what it shouldn't
+- **On-device AI works on your plaintext, locally.** Smart search (by meaning, in any language, including photo content) and "Suggest organization" run inside your browser. Your files and queries never leave your device.
+- **The cloud assistant is walled off from your files.** The help assistant uses a stronger remote model (GLM-5.3 in a secure enclave via 0G Private Computer). It runs in a sandboxed frame on a separate origin. It cannot read your files, file names, keys or wallet address. It sees only on/off facts such as "recovery is set up", and it can point at controls on the page but never click them.
+- **You pay for the assistant directly**, with your own 0G Private Computer API key (a few US cents per question). No middleman stores your questions.
+
+## Features
+
+| Area | What you can do |
+|---|---|
+| Files | Drag-and-drop upload (many files, one wallet approval), folders, list/grid view with photo thumbnails, trash and restore, sync across devices |
+| Preview | Images, PDF, text and code, audio and video, decrypted in the browser |
+| Sharing | Secret links for anyone; wallet-locked links for a specific recipient |
+| Security | On-chain key backup, recovery password, offline key file, share key for receiving locked links |
+| Reliability | Uploads count as stored only once storage nodes confirm every piece, with automatic repair of missing pieces |
+| AI | On-device semantic search and organization; isolated help assistant that cites its sources |
+| Mobile | Every screen adapts to phone width |
+
+See the [user guide](docs/user-guide.md) for how each feature works and what it costs.
 
 ## Status
 
-**M1 ✅ / M2 in verification** — encrypted uploads/downloads with strict bounded finality proven on testnet; drive semantics (folders, trash, rename) on manifest files, E2E test running.
+Version 0.1, running on the **0G Galileo testnet**. Storage, folders, sharing, recovery, on-device AI and the assistant are built and covered by end-to-end tests on testnet. Mainnet support, storage renewal (0G stores data for about one year per payment) and app packaging are next. See the roadmap in [`docs/decisions.md`](docs/decisions.md).
 
-- `core/` — shared TypeScript package: uploads/downloads (progress + bounded finality + auto-repair), encryption, drive key custody, on-chain event scanning, manifest-based drive metadata (`DriveStore`)
-- `web/` — React + Vite app: wallet connect, drive key setup, folder navigation, drag-drop encrypted upload, trash/restore
-- `assistant/` — the help assistant (own origin, embedded as an isolated iframe; GLM-5.3 on 0G Private Computer with the user's API key) — see D9 in `docs/decisions.md`
-- `docs/` — [0G Storage API study](docs/0g-storage-api-study.md) · [architecture decisions](docs/decisions.md) · [user guide](docs/user-guide.md)
-- `reference/` — clones of the 0G SDK and starter kit (gitignored, for reading only)
+## Project layout
+
+- `core/`: shared TypeScript library. Covers uploads and downloads (progress, bounded finality, auto-repair), encryption, drive-key custody and recovery, sharing, on-chain event scanning, and manifest-based drive metadata (`DriveStore`).
+- `web/`: the drive app (React + Vite).
+- `assistant/`: the help assistant, served from its own origin and embedded as an isolated iframe (see D9 in `docs/decisions.md`).
+- `docs/`: [user guide](docs/user-guide.md), [architecture decisions](docs/decisions.md) and [0G Storage API study](docs/0g-storage-api-study.md).
+- `reference/`: clones of the 0G SDK and starter kit (gitignored, for reading only).
 
 ## Getting started
 
 ```bash
 npm install
 npm run net-check        # verify 0G indexer endpoints are reachable (no wallet needed)
-npm run dev              # build core + start the web app (:5173) and the assistant (:3000)
+npm run dev              # build core + start the drive (:5173) and the assistant (:3000)
 ```
 
-Get testnet funds at <https://faucet.0g.ai> (0.1 0G/day per wallet).
+Open <http://localhost:5173> with a browser wallet such as MetaMask. Get testnet 0G at <https://faucet.0g.ai> (0.1 0G per day per wallet).
 
 ### Scripts
 
 | Script | What it does |
 |---|---|
-| `npm run net-check` | read-only indexer/node connectivity probe |
-| `npm run smoke` | strict E2E: 1 MB ECIES upload → finality → download → decrypt → verify + cost report |
-| `node scripts/verify-roundtrip.mjs` | fast E2E roundtrip (same flow, 256 KB) |
-| `node scripts/test-drive.mjs` | drive semantics E2E: folders, files, trash, rename, restart-recovery |
-| `node scripts/gen-test-wallet.mjs` | create a throwaway test wallet in `.env` |
+| `npm run net-check` | read-only indexer and node connectivity probe |
+| `npm run smoke` | strict E2E: 1 MB upload → finality → download → decrypt → verify, with a cost report |
+| `npm run roundtrip` | fast E2E roundtrip (same flow, 256 KB) |
+| `npm run test:drive` | drive semantics: folders, files, trash, rename, restart recovery |
+| `npm run test:e2e` | the full drive UI in a real browser |
+| `npm run test:batch` | one-approval batch uploads |
+| `npm run test:share-wallet` | wallet-locked share links |
+| `npm run test:password` | recovery password and read-only open without the wallet |
+| `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
+| `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos) |
-| `npm run test:assistant` | assistant E2E in the browser — isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; ~0.5 0G) |
+| `node scripts/gen-test-wallet.mjs` | create a throwaway test wallet in `.env` |
 
-All test scripts read `PRIVATE_KEY` from the environment or the gitignored `.env`.
+Test scripts read `PRIVATE_KEY` from the environment or the gitignored `.env`.
 
 ## How it works
 
-- **Files** are stored on 0G Storage as content-addressed, Merkle-rooted blobs; uploads pay an on-chain storage fee via the Flow contract. Core enforces strict finality itself (15-min bounded wait, auto-repair of missing segments) rather than trusting the SDK's unbounded loop.
-- **Encryption** is client-side. The web shell uses a per-account AES-256 drive master key (generated in-browser, must be backed up — injected wallets cannot decrypt ECIES since they never expose the raw private key). Node/desktop flows use ECIES to the wallet key.
-- **Drive metadata** (folders, file records, trash) lives in small encrypted JSON manifests uploaded as tagged 0G files. Discovery is serverless: the Flow contract's `Submit` events carry the sender, the file root hash, and the upload tags — so a fresh client reconstructs the whole drive from a public RPC + downloads, no backend.
-- **Cost** observed on testnet: ~0.0012 0G per ~MB file roundtrip; each metadata op is one small tx (~0.0001 0G).
+- **Storage.** Files are stored on 0G Storage as content-addressed, Merkle-rooted blobs. Each upload pays an on-chain storage fee through the Flow contract. Core enforces strict finality itself (a 15-minute bounded wait, plus auto-repair of missing segments) instead of trusting the SDK's unbounded loop.
+- **Keys.** Each file has a random AES-256 key, locked under your drive key. The drive key is backed up on-chain, locked under a key derived from a fixed wallet signature, and optionally also under your password (PBKDF2, 600k rounds). Share keys are derived from the same signature.
+- **Metadata.** Folders, file records, trash and search indexes live in small encrypted JSON manifests uploaded as tagged 0G files.
+- **Discovery is serverless.** The Flow contract's `Submit` events carry the sender, file root and tags. A fresh client finds the newest manifests from a public RPC, downloads them and decrypts them.
+- **Cost on testnet.** About 0.001 0G per MB uploaded. Each metadata change is one small transaction (about 0.0001–0.0015 0G).
 
-See `docs/decisions.md` for the full architecture and roadmap.
+See [`docs/decisions.md`](docs/decisions.md) for the full architecture and roadmap.
 
 ## License
 
