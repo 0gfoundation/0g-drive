@@ -68,7 +68,9 @@ function SourceViewer({ cite, onClose }: { cite: { path: string; from?: number; 
   useEffect(() => {
     focus.current?.scrollIntoView({ block: 'center' })
   }, [text])
-  const url = publicUrl(cite.path)
+  const base = publicUrl(cite.path)
+  // GitHub opens at the cited lines
+  const url = base?.startsWith('https://github.com/') && cite.from ? `${base}#L${cite.from}${cite.to ? `-L${cite.to}` : ''}` : base
   const from = cite.from ?? 0
   const to = cite.to ?? cite.from ?? 0
   return (

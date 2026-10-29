@@ -1,7 +1,7 @@
-// The help assistant in the browser (headless Chromium, drive dev server on
-// :5173, assistant dev server on :3000), with an injected wallet backed by a
-// FRESH key funded from .env's test wallet, and the real 0G Router using
-// ZG_ROUTER_API_KEY from .env (5 real questions, ~0.5 0G):
+// The help assistant in the browser (headless Chromium; drive dev server on
+// :5173 and assistant on :3000, or a deployed drive URL), with an injected
+// wallet backed by a FRESH key funded from .env's test wallet, and the real
+// 0G Router using ZG_ROUTER_API_KEY from .env (5 real questions, ~0.5 0G):
 //   isolation: the assistant frame can't read the drive's storage or DOM,
 //              and its CSP blocks other hosts
 //   key setup: bad key refused, real key accepted, kept only on the assistant's origin
@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getNetworkConfig } from '../core/dist/index.js'
+import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -106,9 +107,12 @@ async function open(viewport, label) {
 }
 
 const assistantFrame = async (page) => {
-  await page.locator('.assist-panel.open iframe').waitFor()
+  const iframe = page.locator('.assist-panel.open iframe')
+  await iframe.waitFor()
+  // the assistant's own origin: :3000 in dev, its *.0g.ai host when deployed
+  const origin = new URL(await iframe.getAttribute('src')).origin
   for (let i = 0; i < 50; i++) {
-    const f = page.frames().find((f) => f.url().startsWith('http://localhost:3000/'))
+    const f = page.frames().find((f) => f.url().startsWith(`${origin}/`))
     if (f) return f
     await page.waitForTimeout(100)
   }
@@ -209,7 +213,7 @@ try {
   check(
     'how-to answer: searched, mentions the recovery password + read-only, cites a source',
     !r.error && r.steps.some((s) => s.startsWith('✓Searched')) && /recovery password/i.test(r.answer) && /read-only/i.test(r.answer) && r.cites > 0,
-    `${r.meta} | steps: ${r.steps.join(' / ')}`
+    `${r.meta} | ${r.cites} citations | steps: ${r.steps.join(' / ')} | ${r.answer.slice(0, 300).replace(/\s+/g, ' ')}`
   )
   await r.turn.locator('.cite').first().click()
   await frame.locator('.viewer .vline').first().waitFor({ timeout: 30_000 })
@@ -233,7 +237,7 @@ try {
   )
   r = await ask(frame, 'Where do I set a recovery password?')
   const shown = await pulsed.then(() => true, () => false)
-  check('"where" question highlights the Password row in the drive', !r.error && shown && r.steps.some((s) => /Pointed at/.test(s)), r.steps.join(' / '))
+  check('"where" question highlights the Password row in the drive', !r.error && shown && r.steps.some((s) => /Pointed at/.test(s)), `${r.steps.join(' / ')} | ${r.answer.slice(0, 160).replace(/\s+/g, ' ')}`)
 
   // ── Q4: 0G internals from GitHub source ──
   r = await ask(frame, 'In the 0G storage contracts (Solidity), which function does an upload call to register a file, and which event does it emit? Check the source.')
@@ -313,4 +317,5 @@ try {
   console.log(`${pass}/${results.length} checks passed`)
   process.exitCode = pass === results.length && errors.length === 0 ? 0 : 1
   await browser.close()
+  await refund(wallet, funder.address)
 }

@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getNetworkConfig } from '../core/dist/index.js'
+import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -267,4 +268,5 @@ try {
   console.log(`${pass}/${results.length} checks passed`)
   process.exitCode = pass === results.length && errors.length === 0 ? 0 : 1
   await browser.close()
+  await refund(wallet, funder.address)
 }

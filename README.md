@@ -46,7 +46,7 @@ Version 0.1, running on the **0G Galileo testnet**. Storage, folders, sharing, r
 - `core/`: shared TypeScript library. Covers uploads and downloads (progress, bounded finality, auto-repair), encryption, drive-key custody and recovery, sharing, on-chain event scanning, and manifest-based drive metadata (`DriveStore`).
 - `web/`: the drive app (React + Vite).
 - `assistant/`: the help assistant, served from its own origin and embedded as an isolated iframe (see D9 in `docs/decisions.md`).
-- `docs/`: [user guide](docs/user-guide.md), [architecture decisions](docs/decisions.md) and [0G Storage API study](docs/0g-storage-api-study.md).
+- `docs/`: [user guide](docs/user-guide.md), [architecture decisions](docs/decisions.md), [deployment](docs/deploy.md) and [0G Storage API study](docs/0g-storage-api-study.md).
 - `reference/`: clones of the 0G SDK and starter kit (gitignored, for reading only).
 
 ## Getting started
@@ -73,10 +73,14 @@ Open <http://localhost:5173> with a browser wallet such as MetaMask. Get testnet
 | `npm run test:password` | recovery password and read-only open without the wallet |
 | `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
-| `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos) |
+| `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
 | `node scripts/gen-test-wallet.mjs` | create a throwaway test wallet in `.env` |
 
-Test scripts read `PRIVATE_KEY` from the environment or the gitignored `.env`.
+Test scripts read `PRIVATE_KEY` (and `ZG_ROUTER_API_KEY`) from the gitignored `.env`, fund a throwaway wallet from it, and return what's left at the end. Pass a URL to test a deployed drive instead of the dev server, e.g. `node scripts/test-browser-e2e.mjs https://drive-staging.0g.ai`.
+
+## Deployment
+
+The drive and the assistant are two static sites on Vercel, with preview (per pull request), staging (`main`) and production (`release`) environments. CI builds every pull request; a scheduled workflow runs the end-to-end tests against staging. See [docs/deploy.md](docs/deploy.md).
 
 ## How it works
 

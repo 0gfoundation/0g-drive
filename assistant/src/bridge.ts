@@ -38,17 +38,27 @@ export const SHOW_TARGETS = [
 ] as const
 export type ShowTarget = (typeof SHOW_TARGETS)[number]
 
-/** drive origins allowed to embed and talk to the assistant */
-function allowedParents(): string[] {
+/** drive origins allowed to embed and talk to the assistant; an entry may
+ *  use * for one hostname part, for Vercel preview URLs like
+ *  https://0g-drive-*-team.vercel.app */
+export function allowedParents(): string[] {
   const env = import.meta.env.VITE_DRIVE_ORIGINS as string | undefined
-  if (env) return env.split(',').map((s) => s.trim())
+  if (env) return env.split(',').map((s) => s.trim()).filter(Boolean)
   return ['http://localhost:5173']
+}
+
+function allowed(origin: string): boolean {
+  return allowedParents().some((pattern) => {
+    if (!pattern.includes('*')) return pattern === origin
+    const re = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[a-z0-9-]+')
+    return new RegExp(`^${re}$`).test(origin)
+  })
 }
 
 const requested = new URLSearchParams(location.search).get('parent')
 /** the drive's origin, if we are embedded by an allowed one */
 export const parentOrigin: string | null =
-  window.parent !== window && requested && allowedParents().includes(requested) ? requested : null
+  window.parent !== window && requested && allowed(requested) ? requested : null
 
 let seq = 0
 const pending = new Map<number, (v: unknown) => void>()

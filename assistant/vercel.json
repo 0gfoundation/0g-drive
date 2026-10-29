@@ -1,0 +1,67 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "cd .. && npm ci",
+  "buildCommand": "cd .. && npm run build -w assistant",
+  "outputDirectory": "dist",
+  "git": { "deploymentEnabled": { "*": false, "main": true, "release": true } },
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [
+        { "type": "host", "value": "drive-assistant.0g.ai" },
+        { "type": "header", "key": "sec-fetch-dest", "value": "document" }
+      ],
+      "destination": "https://drive.0g.ai/",
+      "permanent": false
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        { "type": "host", "value": "drive-assistant-staging.0g.ai" },
+        { "type": "header", "key": "sec-fetch-dest", "value": "document" }
+      ],
+      "destination": "https://drive-staging.0g.ai/",
+      "permanent": false
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "header", "key": "sec-fetch-dest", "value": "document" }],
+      "missing": [
+        { "type": "host", "value": "drive-assistant.0g.ai" },
+        { "type": "host", "value": "drive-assistant-staging.0g.ai" }
+      ],
+      "destination": "https://drive.0g.ai/",
+      "permanent": false
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Vary", "value": "Sec-Fetch-Dest" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "drive-assistant.0g.ai" }],
+      "headers": [{ "key": "Content-Security-Policy", "value": "frame-ancestors https://drive.0g.ai" }]
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "drive-assistant-staging.0g.ai" }],
+      "headers": [{ "key": "Content-Security-Policy", "value": "frame-ancestors https://drive-staging.0g.ai https://*.vercel.app" }]
+    },
+    {
+      "source": "/(.*)",
+      "missing": [
+        { "type": "host", "value": "drive-assistant.0g.ai" },
+        { "type": "host", "value": "drive-assistant-staging.0g.ai" }
+      ],
+      "headers": [{ "key": "Content-Security-Policy", "value": "frame-ancestors 'none'" }]
+    }
+  ]
+}

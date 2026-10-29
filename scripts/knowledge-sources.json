@@ -1,0 +1,7 @@
+{
+  "0gfoundation/0g-storage-ts-sdk": "2f213c3145181e7766cd7dd02e0690ca98d3bd0e",
+  "0gfoundation/0g-storage-client": "bb5675461a96b654d3015c5522666ee8101cf810",
+  "0gfoundation/0g-storage-node": "f75aeaef2cba5b198b5d34301925edbaa180dcdb",
+  "0gfoundation/0g-storage-kv": "fce72eed9979bc1211b91c7d58db4b4a7891575e",
+  "0gfoundation/0g-storage-contracts": "0dcef31fd6398c9aca7267dc5a7a9e1caf3a3581"
+}
