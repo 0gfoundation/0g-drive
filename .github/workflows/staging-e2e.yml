@@ -1,0 +1,47 @@
+# End-to-end tests against the live staging site (drive-staging.0g.ai, which
+# Vercel deploys from main), in headless Chromium. Each suite funds a
+# throwaway wallet from the TEST_WALLET_KEY secret (testnet 0G) and returns
+# what's left at the end. The assistant suite also pays the 0G Router with
+# ZG_ROUTER_API_KEY (~0.5 0G per run), so it runs weekly or when asked.
+name: Staging E2E
+on:
+  schedule:
+    - cron: '0 3 * * *' # daily: drive suites
+    - cron: '0 4 * * 1' # Mondays: drive suites + assistant
+  workflow_dispatch:
+    inputs:
+      assistant:
+        description: Also run the assistant suite (~0.5 0G on the 0G Router)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: staging-e2e
+  cancel-in-progress: false
+env:
+  STAGING_URL: https://drive-staging.0g.ai
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @0gdrive/core
+      - run: npx playwright install --with-deps chromium
+      - name: Write test secrets to .env
+        env:
+          TEST_WALLET_KEY: ${{ secrets.TEST_WALLET_KEY }}
+          ZG_ROUTER_API_KEY: ${{ secrets.ZG_ROUTER_API_KEY }}
+        run: printf 'PRIVATE_KEY=%s\nZG_ROUTER_API_KEY=%s\n' "$TEST_WALLET_KEY" "$ZG_ROUTER_API_KEY" > .env
+      - run: node scripts/test-browser-e2e.mjs "$STAGING_URL"
+      - run: node scripts/test-password-recovery.mjs "$STAGING_URL"
+      - if: github.event.schedule == '0 4 * * 1' || inputs.assistant
+        run: node scripts/test-assistant.mjs "$STAGING_URL"
+      - if: always()
+        run: rm -f .env

@@ -23,6 +23,9 @@ export interface TurnResult {
 }
 
 const MAX_ROUNDS = 8
+/** text sent along with tool calls counts as part of the answer from this
+ *  length on; shorter is a preamble ("Let me check…") */
+const KEEP_WITH_TOOLS = 200
 /** previous question/answer pairs kept as context */
 const MAX_HISTORY = 6
 
@@ -41,17 +44,21 @@ export async function runTurn(
 
   const usage: Usage = { prompt_tokens: 0, completion_tokens: 0 }
   const steps: Step[] = []
-  let text = ''
+  // GLM thinks in a separate channel, so text it sends with tool calls is
+  // written for the user — often the whole answer, with a last call such as
+  // show_in_drive and only a short follow-up after it. Keep it.
+  let kept = ''
+  const join = (a: string, b: string) => (a && b ? `${a}\n\n${b}` : a || b)
   for (let round = 1; ; round++) {
     // on the last round the model must answer with what it has
     const last = round === MAX_ROUNDS
-    text = ''
+    let text = ''
     const c = await complete(
       key,
       { messages, tools: TOOLS, tool_choice: last ? 'none' : 'auto', max_tokens: 2000 },
       (d) => {
         text += d
-        ev.onText(text)
+        ev.onText(join(kept, text))
       },
       ev.onThinking,
       signal
@@ -61,10 +68,11 @@ export async function runTurn(
       usage.completion_tokens += c.usage.completion_tokens
     }
     const calls = c.message.tool_calls ?? []
-    if (!calls.length || last) return { answer: c.message.content ?? '', usage, rounds: round }
+    const content = (c.message.content ?? '').trim()
+    if (!calls.length || last) return { answer: join(kept, content), usage, rounds: round }
 
-    // text before tool calls is the model thinking aloud: not the answer
-    ev.onText('')
+    if (content.length >= KEEP_WITH_TOOLS) kept = join(kept, content)
+    ev.onText(kept)
     messages.push(c.message)
     const parsed = calls.map((call) => {
       let args: Record<string, unknown> = {}

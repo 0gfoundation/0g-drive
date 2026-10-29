@@ -19,6 +19,8 @@ export interface Repo {
 }
 interface Bundle {
   builtAt: string
+  /** this repo at the commit the bundle was built from */
+  drive: { repo: string; commit: string | null }
   docs: Doc[]
   repos: Repo[]
 }
@@ -209,9 +211,11 @@ export async function findFiles(query: string, limit = 40): Promise<{ matches: s
   return { matches: matches.slice(0, limit), total: matches.length }
 }
 
-/** a link a person can open for a cited path (0GDrive's own files have none) */
+/** a link a person can open for a cited path */
 export function publicUrl(path: string): string | null {
   if (path.startsWith('docs:')) return `https://docs.0g.ai/${path.slice(5).replace(/\.md$/, '')}`
+  const doc = loaded?.docs.find((d) => d.p === path)
+  if (doc) return doc.u
   const m = /^github:([^/]+\/[^/]+)\/(.+)$/.exec(path)
   const repo = m && loaded?.repos.find((r) => r.repo === m[1])
   return repo ? `https://github.com/${repo.repo}/blob/${repo.commit}/${m![2]}` : null

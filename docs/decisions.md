@@ -128,6 +128,14 @@ A chat assistant ("Ask", bottom right) answers questions about using 0GDrive, ho
 
 Verified: `npm run test:assistant` (headless Chromium, real Router, 18 checks): isolation (parent storage/DOM blocked, CSP blocks other hosts), wrong key refused, key only on the assistant origin, how-to answer with a working citation, drive_status answer, "where" question pulsing the Password row, contract-source answer read from GitHub (`submit` / `Submit` event), **no address, file name or drive key in any of 16 Router requests**, Escape/× close, and the phone checks.
 
+### D10 — Hosting: Vercel, two static sites, three environments (2026-10-29)
+- **Vercel**, one project per site: the drive (`web/`, plus a function relaying AI model downloads) and the assistant (`assistant/`, static only). Not one project with host-based routing: that would serve each app's files on the other's hostname and weaken the assistant's origin isolation.
+- **Preview** per pull request, **staging** from `main`, **production** from `release`. All on testnet until mainnet support lands.
+- The assistant must be on `*.0g.ai` (the 0G Router's CORS allowlist). Previews on `vercel.app` therefore embed the staging assistant.
+- The assistant works only inside the drive: `frame-ancestors` per host, a redirect for direct visits (`Sec-Fetch-Dest: document`), an allowed-parent check in the page, and `noindex`.
+- The knowledge bundle pins the 0G repos in `scripts/knowledge-sources.json` and reads them from tarballs (no GitHub API rate limits on build machines). 0GDrive's own files link to GitHub at the deployed commit.
+- Details and setup steps: `docs/deploy.md`.
+
 ## Verification (M1, 2026-10-24)
 Full roundtrip proven on testnet: 256 KB random payload → ECIES-encrypted to wallet pubkey → on-chain submit (fee via Flow contract) → segment upload → finality → download (file-relative segment indices, shard-affinity routing) → decrypt → byte-exact match. Cost: ~0.0012 0G per 256 KB roundtrip (gas + storage fee).
 

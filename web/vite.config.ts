@@ -3,40 +3,27 @@ import { Readable } from 'node:stream'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import { GET as modelsGET } from './api/models'
 
 const fsStub = path.resolve(__dirname, 'src/stubs/fs.ts')
 const fsPromisesStub = path.resolve(__dirname, 'src/stubs/fs-promises.ts')
 
-// /_models/<host>/<path>: the AI worker's fallback route for model files
-// when the browser's own connection to the model CDNs stalls (see
-// src/ai/netfetch.ts). Fetches upstream (following the CDN's redirects) and
-// streams back, passing Range through so downloads resume. GET only, and
-// only for the two hosts the models come from. A production host needs the
-// same route (or the browser simply keeps the direct download).
-const MODEL_HOSTS = new Set(['huggingface.co', 'cdn.jsdelivr.net'])
-const PASS_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']
-
+// /_models/<host>/<path>: the AI worker's fallback route for model files —
+// the same handler that runs as a Vercel function in production (api/models.ts)
 const modelRoute: Connect.NextHandleFunction = (req, res, next) => {
   if (!req.url?.startsWith('/_models/')) return next()
-  const rest = req.url.slice('/_models/'.length)
-  const slash = rest.indexOf('/')
-  const host = slash > 0 ? rest.slice(0, slash) : ''
-  if (req.method !== 'GET' || !MODEL_HOSTS.has(host)) {
+  if (req.method !== 'GET') {
     res.statusCode = 404
     return res.end()
   }
   const ctrl = new AbortController()
   res.on('close', () => ctrl.abort())
-  const headers: Record<string, string> = { 'accept-encoding': 'identity' }
-  if (typeof req.headers.range === 'string') headers.range = req.headers.range
-  fetch(`https://${host}${rest.slice(slash)}`, { headers, redirect: 'follow', signal: ctrl.signal })
+  const url = `http://localhost/api/models?path=${encodeURIComponent(req.url.slice('/_models/'.length))}`
+  const headers = typeof req.headers.range === 'string' ? { range: req.headers.range } : undefined
+  modelsGET(new Request(url, { headers, signal: ctrl.signal }))
     .then((up) => {
       res.statusCode = up.status
-      for (const h of PASS_HEADERS) {
-        const v = up.headers.get(h)
-        if (v) res.setHeader(h, v)
-      }
-      res.setHeader('x-0gdrive-proxy', '1')
+      up.headers.forEach((v, k) => res.setHeader(k, v))
       if (!up.body) return res.end()
       Readable.fromWeb(up.body as import('node:stream/web').ReadableStream).on('error', () => res.destroy()).pipe(res)
     })

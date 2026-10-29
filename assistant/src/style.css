@@ -501,3 +501,19 @@ a:hover {
     padding-right: 8px;
   }
 }
+
+/* shown when the assistant is opened outside the drive (main.tsx) */
+.elsewhere {
+  max-width: 420px;
+  margin: 18vh auto 0;
+  padding: 0 16px;
+  text-align: center;
+}
+.elsewhere h1 {
+  font-size: 20px;
+  margin: 0 0 8px;
+}
+.elsewhere p {
+  color: var(--muted);
+  margin: 0 0 16px;
+}
