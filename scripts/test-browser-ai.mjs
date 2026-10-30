@@ -48,6 +48,8 @@ const result = await page.evaluate(
   async ({ IMG, pdf }) => {
     const client = await import('/src/ai/client.ts')
     const core = await import('/src/ai/searchcore.ts')
+    client.setSmartSearchEnabled(true)
+    await client.warmUpModels() // as the app does when a drive opens
     const progress = []
     client.subscribeModelStatus((s) => {
       if (s.loading && s.percent !== undefined && progress.at(-1) !== s.percent) progress.push(s.percent)
@@ -81,6 +83,19 @@ const result = await page.evaluate(
       const hits = core.rank({ text: q, vec: v.vec, clip: v.clip }, items, (i) => i)
       out.push({ q, want, top: hits[0]?.item.name ?? null, score: hits[0]?.score ?? 0 })
     }
+    // a rename redoes the embedding with the new name: a file whose content
+    // says nothing gets found by meaning once its name does (scored under
+    // the old name, so the name-text match can't be what helps)
+    const vague = await client.indexFile(new Blob(['see list'], { type: 'text/plain' }), 'x7.txt', 'text/plain')
+    const renamed = await client.entryForRename(vague, 'beach holiday packing list.txt')
+    const v = await client.embedSearchQuery('what to bring on vacation', false)
+    const score = (search) => core.rank({ text: 'what to bring on vacation', vec: v.vec }, [{ name: 'x7.txt', search }], (i) => i)[0]?.score ?? 0
+    out.push({
+      q: 'rename: "what to bring on vacation" scores higher after x7.txt → beach holiday packing list.txt',
+      want: 'higher',
+      top: renamed.e !== vague.e && renamed.t === vague.t && score(renamed) > score(vague) + 0.1 ? 'higher' : 'not higher',
+      score: score(renamed) - score(vague),
+    })
     // cached for next time?
     const cacheNames = await caches.keys()
     return {

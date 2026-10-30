@@ -1,7 +1,7 @@
 import { ethers } from 'ethers'
 import type { NetworkConfig } from './config.js'
 import { uploadData, uploadBatch, downloadFile, type BatchItem } from './storage.js'
-import type { FileMeta } from './types.js'
+import type { FileMeta, SearchEntry } from './types.js'
 import { scanUploadsCached, type EventCache, type UploadEvent } from './events.js'
 import {
   TRASH_PATH,
@@ -44,6 +44,17 @@ function normalizePath(path: string): string {
     throw new Error(`Invalid folder path: "${path}"`)
   }
   return p // '' = the drive root
+}
+
+export const MAX_FILE_NAME = 255
+
+/** Why `name` (already trimmed) can't be a file name, or null if it can. */
+export function fileNameProblem(name: string): string | null {
+  if (name === '') return 'The name can’t be empty.'
+  if (name.includes('/')) return 'The name can’t contain “/”.'
+  if (name === '.' || name === '..') return 'That name is reserved.'
+  if (name.length > MAX_FILE_NAME) return `The name can be at most ${MAX_FILE_NAME} characters.`
+  return null
 }
 
 /** A fresh empty index each time — a shared constant's `folders` array
@@ -334,6 +345,40 @@ export class DriveStore {
       [this.manifestItem(folder, folderTag(path))],
       'the files were added to trash but are still listed in their folder too. Move them to trash again to finish.'
     )
+  }
+
+  /**
+   * Rename a file: one folder-manifest write (one transaction). The blob
+   * doesn't change — names live only in the encrypted manifest. `search`
+   * replaces the record's search entry (recomputed for the new name by
+   * the caller); left out, the old entry is kept. Refuses an invalid name
+   * or one already used in the folder (ignoring case).
+   */
+  async renameFile(
+    folderPath: string,
+    id: string,
+    newName: string,
+    search?: SearchEntry
+  ): Promise<FileMeta> {
+    const path = normalizePath(folderPath)
+    const name = newName.trim()
+    const problem = fileNameProblem(name)
+    if (problem) throw new Error(problem)
+    await this.refreshEvents()
+
+    const folder = await this.loadFolder(path)
+    const rec = folder?.files.find((f) => f.id === id)
+    if (!folder || !rec) throw new Error('That file is no longer in this folder. Reload and try again.')
+    if (rec.name === name) return rec
+    if (folder.files.some((f) => f.id !== id && f.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`There is already a file named "${name}" in this folder.`)
+    }
+    rec.name = name
+    if (search) rec.search = search
+    folder.updatedAt = Date.now()
+    folder.version += 1
+    await this.uploadManifest(new TextEncoder().encode(JSON.stringify(folder)), folderTag(path))
+    return rec
   }
 
   /** Create a folder (index entry; manifest materializes on first file). */

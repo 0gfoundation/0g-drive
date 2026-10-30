@@ -145,6 +145,18 @@ export async function indexText(name: string, text: string | undefined): Promise
   return { v: SEARCH_ENTRY_VERSION, t: makeExcerpt(text), e }
 }
 
+/**
+ * The entry for a renamed file: the passage embedding redone with the new
+ * name. The rest is kept — photo tags and the excerpt don't depend on the
+ * name. The excerpt stands in for the text read at upload (it is shorter,
+ * so the new embedding leans slightly more on the name).
+ */
+export async function renameEntry(name: string, entry: SearchEntry): Promise<SearchEntry> {
+  const passage = passageText(name, entry.g, entry.t)
+  const e = passage ? quantize(await embedPassage(passage)) : undefined
+  return { ...entry, e }
+}
+
 /** Load every model now (download + init), so the first upload isn't kept waiting. */
 export async function warmUp(): Promise<true> {
   try {

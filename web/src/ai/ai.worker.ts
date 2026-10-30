@@ -4,7 +4,8 @@
 // device — the only network traffic is the one-time model download.
 
 import { RawImage, env } from '@huggingface/transformers'
-import { embedPassage, embedQuery, indexPhoto, indexText, onModelProgress, warmUp } from './engine'
+import type { SearchEntry } from '@0gdrive/core'
+import { embedPassage, embedQuery, indexPhoto, indexText, onModelProgress, renameEntry, warmUp } from './engine'
 import { modelFetch, onNetStats, planDownloads, type NetStats } from './netfetch'
 
 env.allowLocalModels = false // weights come from the HF CDN, then the browser cache
@@ -14,6 +15,7 @@ env.fetch = modelFetch // progress in bytes, stall recovery via the app's server
 export type AiRequest =
   | { id: number; op: 'indexPhoto'; name: string; image: Blob }
   | { id: number; op: 'indexText'; name: string; text?: string }
+  | { id: number; op: 'renameEntry'; name: string; entry: SearchEntry }
   | { id: number; op: 'query'; text: string; photos: boolean }
   | { id: number; op: 'embed'; texts: string[] }
   | { id: number; op: 'warm' }
@@ -62,6 +64,9 @@ self.onmessage = (e: MessageEvent<AiRequest>) => {
           break
         case 'indexText':
           result = await indexText(req.name, req.text)
+          break
+        case 'renameEntry':
+          result = await renameEntry(req.name, req.entry)
           break
         case 'query':
           result = await embedQuery(req.text, req.photos)

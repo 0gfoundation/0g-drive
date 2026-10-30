@@ -31,7 +31,8 @@
     "test:password": "npm run build -w core && node scripts/test-password-recovery.mjs",
     "dev:assistant": "npm run dev -w assistant",
     "knowledge": "node scripts/build-knowledge.mjs",
-    "test:assistant": "node scripts/test-assistant.mjs"
+    "test:assistant": "node scripts/test-assistant.mjs",
+    "test:rename": "npm run build -w core && node scripts/test-rename.mjs"
   },
   "engines": {
     "node": ">=20"
