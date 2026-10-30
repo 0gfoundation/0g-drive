@@ -38,11 +38,14 @@ import {
   type UploadEvent,
 } from '@0gdrive/core'
 import {
+  activeProvider,
+  chooseWallet,
   connectWallet,
   hasWallet,
   onAccountsChanged,
   onChainChanged,
   readWalletState,
+  selectWallet,
   type WalletState,
 } from './wallet'
 import { Logo } from './Logo'
@@ -330,13 +333,15 @@ function ShareView({
   const viaWallet = mode === 'encrypted' && p.d === 1
 
   /** The recipient's sharing private key, from this device or a wallet signature. */
-  const walletShareKey = async (): Promise<Uint8Array> => {
-    if (!window.ethereum) {
+  const walletShareKey = async (): Promise<Uint8Array | null> => {
+    if (!hasWallet()) {
       throw new Error('No Ethereum wallet detected. Open this link in a browser with the recipient’s wallet.')
     }
+    const option = await chooseWallet()
+    if (!option) return null
     setBusy('Connecting wallet…')
     const { BrowserProvider } = await import('ethers')
-    const provider = new BrowserProvider(window.ethereum)
+    const provider = new BrowserProvider(selectWallet(option))
     await provider.send('eth_requestAccounts', [])
     const signer = await provider.getSigner()
     const address = await signer.getAddress()
@@ -358,6 +363,7 @@ function ShareView({
     setError(null)
     try {
       const privateKey = viaWallet ? await walletShareKey() : keyInput.trim()
+      if (privateKey === null) return // wallet picker dismissed
       setBusy('Downloading…')
       const res =
         mode === 'link'
@@ -664,6 +670,7 @@ export default function App() {
   const connect = useCallback(async () => {
     try {
       const state = await connectWallet(NETWORK)
+      if (!state) return // picker dismissed
       setWallet(state)
       setMasterKeyHex(getMasterKeyHex(state.address))
       log(`Connected ${shortHash(state.address)} · balance ${Number(state.balance).toFixed(4)} 0G`)
@@ -681,8 +688,8 @@ export default function App() {
   }, [wallet?.address, masterKeyHex])
 
   useEffect(() => {
-    if (!hasWallet()) return
-    onAccountsChanged(async (accounts) => {
+    const offChain = onChainChanged(() => window.location.reload())
+    const offAccounts = onAccountsChanged(async (accounts) => {
       if (readOnlyRef.current) return // no wallet in play
       if (accounts.length === 0) {
         setWallet(null)
@@ -693,7 +700,9 @@ export default function App() {
         return
       }
       try {
-        const provider = new (await import('ethers')).BrowserProvider(window.ethereum!)
+        const eth = activeProvider()
+        if (!eth) return
+        const provider = new (await import('ethers')).BrowserProvider(eth)
         const signer = await provider.getSigner()
         const state = await readWalletState(signer, NETWORK)
         setWallet(state)
@@ -705,14 +714,17 @@ export default function App() {
         log(`Wallet error: ${(err as Error).message}`)
       }
     })
-    onChainChanged(() => window.location.reload())
+    return () => {
+      offChain()
+      offAccounts()
+    }
   }, [log])
 
   const generateKey = useCallback(() => {
     if (!wallet) return
     createMasterKey(wallet.address)
     setMasterKeyHex(getMasterKeyHex(wallet.address))
-    log('Drive key created — enable on-chain recovery below (one signature).')
+    log('Drive key created — enable on-chain recovery below (two signatures, one transaction).')
   }, [wallet, log])
 
   const enableRecovery = useCallback(async () => {
@@ -720,14 +732,15 @@ export default function App() {
     setRestoreBusy('Waiting for signature…')
     setRestoreError(null)
     try {
-      // one signature, one tx: recovery backup + share key together
+      // one tx (the message is signed twice, to check the wallet signs
+      // deterministically): recovery backup + share key together
       const res = await setupDriveSecurity(
         NETWORK, wallet.signer, wallet.address, hexToBytes(masterKeyHex)
       )
       setHasBackup(true)
       setProfilePubKey(res.shareKey)
       setProfileLegacy(false)
-      log('Drive security enabled — recovery + share key published (1 signature, 1 tx).')
+      log('Drive security enabled — recovery + share key published (2 signatures, 1 tx).')
     } catch (err) {
       setRestoreError((err as Error).message)
       log(`Enable security failed: ${(err as Error).message}`)
@@ -1020,8 +1033,8 @@ export default function App() {
                   state: 'approving',
                   percent: undefined,
                   message: n === 1
-                    ? 'approve the storage transaction in MetaMask'
-                    : `approve 1 transaction for all ${n} files in MetaMask`,
+                    ? 'approve the storage transaction in your wallet'
+                    : `approve 1 transaction for all ${n} files in your wallet`,
                 })
               } else if (msg.startsWith('Transaction submitted')) {
                 phaseOf.fill('upload')
@@ -1055,7 +1068,7 @@ export default function App() {
         } else if (okIdx.length > 0) {
           // some files failed (or the batched record didn't store): register
           // the stored files with a normal manifest write
-          setAll({ state: 'registering', message: 'registering — check MetaMask', percent: undefined }, (i) => okIdx.includes(i))
+          setAll({ state: 'registering', message: 'registering — check your wallet', percent: undefined }, (i) => okIdx.includes(i))
           const stored = okIdx.map((i) => {
             const r = res.items[i]
             return r.ok ? { ...metas[i], txHashes: r.result.txHashes, txSeqs: r.result.txSeqs } : metas[i]
@@ -1107,7 +1120,7 @@ export default function App() {
           // genuine two-phase progress bar with no SDK changes.
           // The hashing pass reads exactly file.size bytes (verified), and
           // the SDK builds + sends the storage tx right after it — so the
-          // moment pass 1 completes is when the MetaMask prompt is coming.
+          // moment pass 1 completes is when the wallet prompt is coming.
           let bytesRead = 0
           let phase: 'hash' | 'approve' | 'upload' = 'hash'
           const totalBytes = file.size * 2
@@ -1121,7 +1134,7 @@ export default function App() {
                     phase = 'approve'
                     setItem({
                       state: 'approving',
-                      message: 'approve the storage transaction in MetaMask',
+                      message: 'approve the storage transaction in your wallet',
                       percent: undefined,
                     })
                   } else if (phase === 'hash') {
@@ -1711,7 +1724,8 @@ export default function App() {
 
       {!hasWallet() && (
         <div className="banner warn">
-          No Ethereum wallet detected. Install <strong>MetaMask</strong> to use 0GDrive.
+          No Ethereum wallet detected. Install a wallet extension such as <strong>MetaMask</strong> or{' '}
+          <strong>Rabby</strong> to use 0GDrive.
         </div>
       )}
 
@@ -1922,7 +1936,7 @@ export default function App() {
                                 onClick={enableRecovery}
                                 disabled={restoreBusy !== null}
                                 aria-label="Set up recovery"
-                                title="1 signature + 1 transaction: backs up your drive key on-chain and publishes your share key"
+                                title="2 signatures + 1 transaction: backs up your drive key on-chain and publishes your share key"
                               >
                                 {restoreBusy?.includes('signature') ? 'Signing…' : 'Set up'}
                               </button>
@@ -1972,7 +1986,7 @@ export default function App() {
                                   onClick={publishShareKey}
                                   disabled={publishing}
                                   aria-label={profilePubKey ? 'Update share key' : 'Publish share key'}
-                                  title="1 signature + 1 transaction"
+                                  title="2 signatures + 1 transaction"
                                 >
                                   {publishing ? 'Publishing…' : profilePubKey ? 'Update' : 'Publish'}
                                 </button>
@@ -2112,9 +2126,9 @@ export default function App() {
                 <span className="q-size">{fmtSize(q.size)}</span>
                 <span className={`q-state s-${q.state}`}>
                   {q.state === 'uploading' && (q.percent !== undefined ? `${q.percent}%` : 'uploading')}
-                  {q.state === 'approving' && '🔐 approve in MetaMask'}
+                  {q.state === 'approving' && '🔐 approve in your wallet'}
                   {q.state === 'sealing' && '⏳ sealing'}
-                  {q.state === 'registering' && '📝 registering — check MetaMask'}
+                  {q.state === 'registering' && '📝 registering — check your wallet'}
                   {q.state === 'done' && `✓ ${q.message ?? 'stored'}`}
                   {q.state === 'error' && `✗ ${q.message ?? 'failed'}`}
                   {q.state === 'queued' && 'queued'}

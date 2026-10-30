@@ -6,25 +6,25 @@ This guide explains how to use each feature and what happens underneath. For the
 
 ## Getting started
 
-1. **Install a wallet.** 0GDrive needs an Ethereum-style browser wallet such as MetaMask. Without one the app shows "No Ethereum wallet detected".
-2. **Connect wallet** (top right). The app switches the wallet to the 0G network it runs on (currently the **0G Galileo testnet**, chain ID 16602); approve the switch if asked.
+1. **Install a wallet.** 0GDrive needs an Ethereum-style browser wallet extension such as MetaMask, Rabby, OKX Wallet or Coinbase Wallet; a Ledger or Trezor works through one of these. Without one the app shows "No Ethereum wallet detected".
+2. **Connect wallet** (top right). With more than one wallet installed, choose which one in the "Choose a wallet" list (the last one you used is at the top). Your drive belongs to the account, not to the wallet app: the same account opens it in any of them. The app then switches the wallet to the 0G network it runs on (currently the **0G Galileo testnet**, chain ID 16602); approve the switch if asked.
 3. **Get some 0G** for fees. On testnet use the faucet linked in the footer ("Get testnet 0G", https://faucet.0g.ai, 0.1 0G per day). Your balance shows in the header.
 4. **Create your drive.** On a new account the banner says "Create your drive." Click **Create my drive**: a random *drive key* is generated in your browser. Nothing is sent on-chain yet.
-5. **Set up recovery** (sidebar → Security → Recovery → **Set up**). One signature and one transaction back up your drive key on-chain, locked to your wallet, so you can open the drive on any device. Do this right away: until then, the drive key exists only in this browser.
+5. **Set up recovery** (sidebar → Security → Recovery → **Set up**). Two signatures and one transaction back up your drive key on-chain, locked to your wallet, so you can open the drive on any device. Do this right away: until then, the drive key exists only in this browser. You sign the same message twice so the app can check that your wallet always gives the same signature for it; recovery depends on that. If it doesn't (some smart-contract, passkey and social-login wallets), the app says so and turns nothing on: export the key file instead, or use a different wallet.
 
 If the account already has a drive, the start banner says "This account has a drive on-chain." — click **Restore my drive** and sign once. Don't create a second drive on an account that already has one.
 
 ## What costs a transaction
 
-Storing data on 0G costs a small fee in 0G (storage fee + gas), paid by a wallet transaction you approve in MetaMask. Reading is free.
+Storing data on 0G costs a small fee in 0G (storage fee + gas), paid by a wallet transaction you approve in your wallet. Reading is free.
 
 | Action | Wallet prompts |
 |---|---|
 | Upload one or many files (one drop) | 1 transaction (all files + the folder listing in one batch) |
 | New folder, move to trash, restore, remove from trash, organize moves | 1 transaction each (updates a small listing file) |
-| Set up recovery | 1 signature + 1 transaction |
+| Set up recovery | 2 signatures + 1 transaction |
 | Set or change the recovery password | 1 signature + 1 transaction |
-| Publish / update share key | 1 signature + 1 transaction |
+| Publish / update share key | 2 signatures + 1 transaction |
 | Restore a drive on a new device | 1 signature, no transaction |
 | Create a share link | nothing — no prompt, nothing on-chain |
 | Open a link encrypted to you | 1 signature the first time on a device, no transaction |
@@ -36,7 +36,7 @@ Observed testnet costs: about 0.001 0G per MB uploaded, about 0.0001–0.0015 0G
 
 - Drop files on the upload zone ("Drop files here or click to upload"; on phones "Tap to upload files"), or click it to pick files. Files go into the folder you are viewing.
 - One drop = **one** wallet approval, however many files.
-- The **Uploads** list shows each file's state: *queued → approve in MetaMask → uploading → sealing → stored*. "Sealing" means storage nodes are confirming they hold every piece — the app waits for this (up to 15 minutes, repairing missing pieces automatically) so "stored" really means stored.
+- The **Uploads** list shows each file's state: *queued → approve in your wallet → uploading → sealing → stored*. "Sealing" means storage nodes are confirming they hold every piece — the app waits for this (up to 15 minutes, repairing missing pieces automatically) so "stored" really means stored.
 - You can keep dropping files while an upload runs; they queue and go up next.
 - If an upload fails the error says why; keep your local copy and try again.
 
@@ -72,7 +72,7 @@ The **Security** section of the sidebar shows four rows:
 
 | Row | Meaning | Action |
 |---|---|---|
-| **Recovery** | Your drive key is backed up on-chain, locked to a wallet signature. On a new device: connect wallet → **Restore my drive** → sign once. | **Set up** (1 signature + 1 tx) |
+| **Recovery** | Your drive key is backed up on-chain, locked to a wallet signature. On a new device: connect wallet → **Restore my drive** → sign once. | **Set up** (2 signatures + 1 tx) |
 | **Password** | A second lock on the same backup, for when you lose the wallet. | **Set** / **Change** |
 | **Share key** | The public key others use for "Encrypted to recipient" links to you. | **Publish** / **Update** if missing or outdated |
 | **Key file** | A copy of your drive key to keep offline. | **Export** |
