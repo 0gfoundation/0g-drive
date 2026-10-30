@@ -21,6 +21,7 @@
     "test:batch": "npm run build -w core && node scripts/test-batch-upload.mjs",
     "test:browser-ai": "node scripts/test-browser-ai.mjs",
     "test:e2e": "npm run build -w core && node scripts/test-browser-e2e.mjs",
+    "test:wallets": "npm run build -w core && node scripts/test-wallet-picker.mjs",
     "test:model-download": "node scripts/test-model-download.mjs",
     "test:grid-thumbs": "node scripts/test-grid-thumbs.mjs",
     "test:file-cache": "node scripts/test-file-cache.mjs",

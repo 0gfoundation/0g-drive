@@ -69,26 +69,64 @@ export async function signForRecovery(signer: {
 }
 
 /**
+ * The wallet can't back signature-based recovery: its signature isn't a
+ * plain signature by the account's key (smart-contract or passkey
+ * accounts), or signing twice gave different results (some MPC or
+ * embedded wallets). Either way S would not be reproducible.
+ */
+export class UnstableSignatureError extends Error {
+  constructor(reason: 'not-ecdsa' | 'changed', setup: boolean) {
+    super(
+      (reason === 'changed'
+        ? 'Your wallet gave a different signature when asked to sign the same message twice'
+        : 'Your wallet’s signature isn’t a standard signature by your address') +
+        (setup
+          ? ', so it couldn’t unlock a drive backup later. Recovery was not turned on. ' +
+            'Export the key file to keep your drive safe, or set up recovery with a different wallet ' +
+            '(a browser extension such as MetaMask or Rabby, or a hardware wallet).'
+          : ', so it can’t unlock your drive backup or sharing key. Use the wallet you set the drive up with.')
+    )
+    this.name = 'UnstableSignatureError'
+  }
+}
+
+/**
  * Sign the recovery message once and derive both keys from it: the
  * recovery wrapping key S and the sharing keypair. The sharing key is
  * cached on this device so opening a share later needs no signature.
+ *
+ * Every signature must recover to `address`. When `checkStable` is set
+ * (first setup, before anything is published) the message is signed a
+ * second time and must match — one extra prompt, once per drive.
  */
 async function signForKeys(
   signer: { signMessage(message: string): Promise<string> },
-  address: string
+  address: string,
+  checkStable = false
 ): Promise<{ recoveryKey: Uint8Array; shareKey: ShareKeyPair }> {
   const sig = await signer.signMessage(RECOVERY_SIGN_MESSAGE)
+  let signedBy: string | null = null
+  try {
+    signedBy = ethers.verifyMessage(RECOVERY_SIGN_MESSAGE, sig)
+  } catch {
+    // not a 65-byte ECDSA signature
+  }
+  if (signedBy?.toLowerCase() !== address.toLowerCase()) throw new UnstableSignatureError('not-ecdsa', checkStable)
+  if (checkStable && (await signer.signMessage(RECOVERY_SIGN_MESSAGE)).toLowerCase() !== sig.toLowerCase()) {
+    throw new UnstableSignatureError('changed', true)
+  }
   const shareKey = deriveShareKey(sig)
   cacheShareKey(address, shareKey)
   return { recoveryKey: deriveRecoveryKey(sig), shareKey }
 }
 
 /**
- * One-signature, one-transaction drive setup: the recovery signature does
+ * One-transaction drive setup: the recovery signature does
  * double duty — HKDF derives the recovery wrapping key S and the sharing
  * keypair (Mode B). The published backup manifest carries S's wrap of the
  * master key and the sharing public key, so enabling recovery and
- * publishing the share key cost a single signature and a single tx.
+ * publishing the share key cost a single tx. The message is signed twice
+ * to check the wallet signs deterministically (see signForKeys).
  */
 export async function setupDriveSecurity(
   network: NetworkConfig,
@@ -96,7 +134,7 @@ export async function setupDriveSecurity(
   address: string,
   masterKey: Uint8Array
 ): Promise<{ rootHash: string; txHash: string; shareKey: string }> {
-  const { recoveryKey, shareKey } = await signForKeys(signer, address)
+  const { recoveryKey, shareKey } = await signForKeys(signer, address, true)
   const result = await publishDriveKeyBackup(network, signer, address, masterKey, recoveryKey, {
     shareKey: shareKey.pubKey,
   })
@@ -106,7 +144,7 @@ export async function setupDriveSecurity(
 /**
  * Add the sharing key to an existing backup (accounts set up before
  * derived sharing keys existed). Keeps the password wrap, if any.
- * One signature, one tx.
+ * Two signatures (the stability check), one tx.
  */
 export async function enableShareKey(
   network: NetworkConfig,
@@ -116,7 +154,7 @@ export async function enableShareKey(
   cache?: EventCache
 ): Promise<{ rootHash: string; txHash: string; shareKey: string }> {
   const previous = await downloadBackup(address, network, cache)
-  const { recoveryKey, shareKey } = await signForKeys(signer, address)
+  const { recoveryKey, shareKey } = await signForKeys(signer, address, true)
   const result = await publishDriveKeyBackup(network, signer, address, masterKey, recoveryKey, {
     shareKey: shareKey.pubKey,
     previous,

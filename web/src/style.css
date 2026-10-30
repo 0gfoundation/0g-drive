@@ -1822,3 +1822,60 @@ tbody tr:hover {
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
 }
+
+/* ─── Wallet picker ─────────────────────────────────── */
+
+.wallet-picker {
+  max-width: 400px;
+}
+.wallet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wallet-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.wallet-option:hover,
+.wallet-option:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.wallet-option img,
+.wallet-icon-blank {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  flex: none;
+}
+.wallet-icon-blank {
+  background: var(--accent-soft);
+}
+.wallet-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wallet-last {
+  font-size: 11px;
+  color: var(--accent);
+  flex: none;
+}

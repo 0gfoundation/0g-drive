@@ -1,7 +1,7 @@
 // "Encrypted to recipient" with the derived sharing key, in the browser
 // (headless Chromium + dev server), with injected wallets backed by FRESH
 // keys funded from .env's test wallet:
-//   recipient sets up security (1 signature, 1 tx) → share key published
+//   recipient sets up security (2 signatures, 1 tx) → share key published
 //   sender uploads a file and creates an encrypted link (0 prompts)
 //   recipient opens the link in a fresh browser → 1 signature, 0 tx,
 //   file decrypts; reopening on that device → 0 signatures
@@ -125,7 +125,7 @@ try {
   await createDrive(R.page)
   await R.page.getByRole('button', { name: 'Set up recovery' }).click({ timeout: 120_000 })
   await R.page.locator('.sec-row[data-row=share-key] .sec-ok').waitFor({ timeout: 5 * 60_000 })
-  check('recipient setup: 1 signature, 1 tx', R.prompts.sign === 1 && R.prompts.tx === 1, JSON.stringify(R.prompts))
+  check('recipient setup: 2 signatures (stability check), 1 tx', R.prompts.sign === 2 && R.prompts.tx === 1, JSON.stringify(R.prompts))
   const profile = await getProfile(recipient.address, network)
   check('published key is the derived sharing key, not the wallet key',
     profile?.kind === 'share' && profile.pubKey !== ethers.SigningKey.computePublicKey(recipient.signingKey.publicKey, true),
