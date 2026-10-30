@@ -49,7 +49,7 @@ Every file gets its own random key; the file is encrypted with it before upload,
 - **Trash** (sidebar): **Restore** puts a file back where it was; the × button removes its record from the trash.
 - Storage on 0G is **immutable**: "deleting" removes the file from your drive's listings, but the encrypted data stays on the network until its storage period ends. Nobody can read it without your keys.
 - **⟳ Sync** reloads the drive from the chain — useful after using the drive on another device.
-- **List / Grid** toggle switches the file view; photos show thumbnails.
+- **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails.
 
 ## Preview and download
 

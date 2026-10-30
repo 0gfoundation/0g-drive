@@ -114,6 +114,7 @@ Bugs this run found and fixed:
 - **Stale search results (web):** the results header showed the typed query over the previous query's results until the debounce finished; results are now labelled with the query that produced them.
 - **First-visit history scan:** a brand-new wallet (nonce 0) no longer triggers a full-chain `Submit` scan (hundreds of `getLogs` calls) — drive open went from minutes to ~3 s.
 - **Vite dev reload:** lazily imported pdf.js/transformers made the dev server re-optimize and reload the page on first use (mid-upload); both are now pre-bundled (`optimizeDeps.include`).
+- **SVG files had no thumbnail (reported by the user, 2026-10-30):** thumbnails were made with `createImageBitmap`, which Chrome refuses for SVG, so SVGs were skipped. They are now loaded into an `<img>` (as an image an SVG runs no script and loads nothing external) and drawn to a canvas, so only pixels are kept: the 96 px WebP in the manifest and a PNG grid preview that keeps transparency. Size comes from width/height, else the viewBox; small icons are drawn at full size. Test: `npm run test:svg`.
 
 ### D9 — Help assistant: an agent in the browser, isolated, on the user's own 0G key (2026-10-29)
 A chat assistant ("Ask", bottom right) answers questions about using 0GDrive, how it works, and 0G — as an agent loop running **in the browser**, no 0GDrive backend:
