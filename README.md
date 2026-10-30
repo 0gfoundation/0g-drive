@@ -4,6 +4,8 @@ A private, encrypted file drive that runs in your browser and stores everything 
 
 You get the usual drive features: folders, drag-and-drop upload, preview, download, share links and trash. Built-in AI helps you find and organize files without exposing them.
 
+**Try it:** <https://drive-staging.0g.ai> (0G Galileo testnet). The production address will be `drive.0g.ai`.
+
 ## Why 0GDrive
 
 ### Your files are only yours
@@ -27,7 +29,7 @@ You get the usual drive features: folders, drag-and-drop upload, preview, downlo
 
 | Area | What you can do |
 |---|---|
-| Files | Drag-and-drop upload (many files, one wallet approval), folders, list/grid view with photo thumbnails, trash and restore, sync across devices |
+| Files | Drag-and-drop upload (many files, one wallet approval), folders, list/grid view with photo, video and SVG thumbnails, trash and restore, sync across devices |
 | Preview | Images, PDF, text and code, audio and video, decrypted in the browser |
 | Sharing | Secret links for anyone; wallet-locked links for a specific recipient |
 | Security | On-chain key backup, recovery password, offline key file, share key for receiving locked links |
@@ -71,6 +73,9 @@ Open <http://localhost:5173> with a browser wallet such as MetaMask. Get testnet
 | `npm run test:batch` | one-approval batch uploads |
 | `npm run test:share-wallet` | wallet-locked share links |
 | `npm run test:password` | recovery password and read-only open without the wallet |
+| `npm run test:wallets` | wallet picker with several wallets installed, and the signature check (spends nothing) |
+| `npm run test:svg` | SVG thumbnails, including that an SVG's scripts and external images never load |
+| `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
 | `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
@@ -78,9 +83,17 @@ Open <http://localhost:5173> with a browser wallet such as MetaMask. Get testnet
 
 Test scripts read `PRIVATE_KEY` (and `ZG_ROUTER_API_KEY`) from the gitignored `.env`, fund a throwaway wallet from it, and return what's left at the end. Pass a URL to test a deployed drive instead of the dev server, e.g. `node scripts/test-browser-e2e.mjs https://drive-staging.0g.ai`.
 
-## Deployment
+## Run your own copy
 
-The drive and the assistant are two static sites on Vercel, with preview (per pull request), staging (`main`) and production (`release`) environments. CI builds every pull request; a scheduled workflow runs the end-to-end tests against staging. See [docs/deploy.md](docs/deploy.md).
+Your drive lives on 0G, not on our website, so any copy of the app opens it with the same wallet. To host one:
+
+1. `npm install && npm run build -w @0gdrive/core && npm run build -w web` produces a static site in `web/dist`.
+2. **Over https, add the storage-node relay.** Storage nodes speak plain HTTP, which browsers block from https pages, so the app sends node calls to `/_node/<ip>:<port>` on its own site. [`web/api/node.ts`](web/api/node.ts) is that relay: stateless, POST only, storage-node methods only, and only to nodes a 0G indexer lists. It runs as-is as a Vercel function (with the rewrites in [`web/vercel.json`](web/vercel.json)); on other hosts, port it or put an equivalent proxy at `/_node/`. Served over plain http (e.g. on your own machine), the app talks to the nodes directly and needs no relay.
+3. Optional: [`web/api/models.ts`](web/api/models.ts) at `/_models/` is a fallback download route for the on-device AI models, used only when the browser can't reach the model CDNs directly.
+
+The help assistant won't work in a self-hosted copy: its AI provider only answers pages on `0g.ai` hostnames. Everything else works without it.
+
+Maintainers: environments, releases and settings for the hosted app are in [docs/deploy.md](docs/deploy.md).
 
 ## How it works
 
