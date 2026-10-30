@@ -38,13 +38,67 @@ function drawScaled(
   return canvasToDataUrl(canvas)
 }
 
-async function imageThumb(blob: Blob): Promise<string | undefined> {
-  if (blob.size > THUMB_MAX_IMAGE_BYTES) return undefined
-  const bmp = await createImageBitmap(blob)
+interface Decoded {
+  source: CanvasImageSource
+  width: number
+  height: number
+  close(): void
+}
+
+const SVG_MIME = 'image/svg+xml'
+const SVG_DEFAULT_DIM = 512 // drawn size when an SVG states no size at all
+
+/**
+ * An SVG's drawing size: its width/height, else its viewBox, else a square.
+ * Browsers report 0 (or a 300×150 default) for SVGs without width/height.
+ */
+async function svgSize(blob: Blob, img: HTMLImageElement): Promise<[number, number]> {
+  const head = (await blob.slice(0, 4096).text()).match(/<svg\b[^>]*>/i)?.[0] ?? ''
+  const attr = (name: string) => head.match(new RegExp(`\\s${name}\\s*=\\s*["']([^"']*)["']`, 'i'))?.[1]
+  const box = attr('viewBox')?.trim().split(/[\s,]+/).map(Number)
+  const vb = box?.length === 4 && box[2] > 0 && box[3] > 0 ? [box[2], box[3]] : null
+  if (attr('width') && attr('height') && img.naturalWidth > 0 && img.naturalHeight > 0) {
+    return [img.naturalWidth, img.naturalHeight]
+  }
+  if (vb) {
+    const scale = SVG_DEFAULT_DIM / Math.max(vb[0], vb[1])
+    return [vb[0] * scale, vb[1] * scale]
+  }
+  return [SVG_DEFAULT_DIM, SVG_DEFAULT_DIM]
+}
+
+/**
+ * Decode an image for drawing onto a canvas. SVGs go through an <img>:
+ * as an image, an SVG runs no script and loads nothing outside itself,
+ * and only its rasterized pixels leave this function.
+ */
+async function decodeImage(blob: Blob, mime: string): Promise<Decoded> {
+  if (mime !== SVG_MIME) {
+    const bmp = await createImageBitmap(blob)
+    return { source: bmp, width: bmp.width, height: bmp.height, close: () => bmp.close() }
+  }
+  const url = URL.createObjectURL(new Blob([blob], { type: SVG_MIME }))
+  const img = new Image()
   try {
-    return drawScaled(bmp, bmp.width, bmp.height)
+    img.src = url
+    await withTimeout(img.decode(), 8000)
+    const [width, height] = await svgSize(blob, img)
+    return { source: img, width, height, close: () => URL.revokeObjectURL(url) }
+  } catch (err) {
+    URL.revokeObjectURL(url)
+    throw err
+  }
+}
+
+async function imageThumb(blob: Blob, mime: string): Promise<string | undefined> {
+  if (blob.size > THUMB_MAX_IMAGE_BYTES) return undefined
+  const img = await decodeImage(blob, mime)
+  // an SVG stating a small size (an icon) is still drawn at full thumbnail size
+  const f = mime === SVG_MIME ? THUMB_MAX_DIM / Math.max(img.width, img.height) : 1
+  try {
+    return drawScaled(img.source, img.width * f, img.height * f)
   } finally {
-    bmp.close()
+    img.close()
   }
 }
 
@@ -88,14 +142,15 @@ async function videoThumb(blob: Blob): Promise<string | undefined> {
   }
 }
 
-function isRasterImage(mime: string): boolean {
-  return mime.startsWith('image/') && mime !== 'image/svg+xml'
+/** Images we can draw a thumbnail of (raster formats, and SVG via decodeImage). */
+function isThumbImage(mime: string): boolean {
+  return mime.startsWith('image/')
 }
 
 /** Best-effort thumbnail for an upload; undefined when not applicable. */
 export async function makeThumbnail(file: Blob, mime: string): Promise<string | undefined> {
   try {
-    if (isRasterImage(mime)) return await imageThumb(file)
+    if (isThumbImage(mime)) return await imageThumb(file, mime)
     if (mime.startsWith('video/')) return await videoThumb(file)
   } catch {
     // unsupported codec/format — the file just keeps its type icon
@@ -128,9 +183,12 @@ const HIRES_CACHE_MAX = 300
 const hiresCache = new Map<string, string | null>()
 let hiresChain: Promise<unknown> = Promise.resolve()
 
-async function hiresThumb(blob: Blob): Promise<Blob | null> {
-  const probe = await createImageBitmap(blob)
-  const scale = Math.min(1, HIRES_DIM / Math.min(probe.width, probe.height))
+async function hiresThumb(blob: Blob, mime: string): Promise<Blob | null> {
+  const probe = await decodeImage(blob, mime)
+  // vector art is drawn at the target size (it may state a tiny one)
+  const scale = mime === SVG_MIME
+    ? HIRES_DIM / Math.min(probe.width, probe.height)
+    : Math.min(1, HIRES_DIM / Math.min(probe.width, probe.height))
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.round(probe.width * scale))
   canvas.height = Math.max(1, Math.round(probe.height * scale))
@@ -140,9 +198,12 @@ async function hiresThumb(blob: Blob): Promise<Blob | null> {
     return null
   }
   ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(probe, 0, 0, canvas.width, canvas.height)
+  ctx.drawImage(probe.source, 0, 0, canvas.width, canvas.height)
   probe.close()
-  return new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.85))
+  // PNG keeps an SVG's transparent background (JPEG would turn it black)
+  return mime === SVG_MIME
+    ? new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'))
+    : new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/jpeg', 0.85))
 }
 
 function rememberHires(id: string, url: string | null) {
@@ -175,7 +236,7 @@ export function FileThumb({
   const imgRef = useRef<HTMLElement | null>(null)
 
   const wantSharp =
-    hiRes && isRasterImage(meta.mime) && meta.size <= HIRES_MAX_BYTES && sharp === undefined
+    hiRes && isThumbImage(meta.mime) && meta.size <= HIRES_MAX_BYTES && sharp === undefined
   useEffect(() => {
     const el = imgRef.current
     if (!wantSharp || !el) return
@@ -200,7 +261,7 @@ export function FileThumb({
             let url: string | null = null
             try {
               const bytes = await load(meta)
-              const out = await hiresThumb(new Blob([bytes as unknown as BlobPart], { type: meta.mime }))
+              const out = await hiresThumb(new Blob([bytes as unknown as BlobPart], { type: meta.mime }), meta.mime)
               if (out) {
                 url = URL.createObjectURL(out)
                 void saveThumb(key, out)
@@ -225,7 +286,7 @@ export function FileThumb({
 
   useEffect(() => {
     if (isSafeThumb(meta.thumb) || legacyCache.has(meta.id)) return
-    if (!isRasterImage(meta.mime) || meta.size > LEGACY_MAX_BYTES) return
+    if (!isThumbImage(meta.mime) || meta.size > LEGACY_MAX_BYTES) return
     if (hiRes && meta.size <= HIRES_MAX_BYTES) return // the sharp preview covers it
     let alive = true
     const key = thumbKey('small', meta.rootHashes)
@@ -240,7 +301,7 @@ export function FileThumb({
         let t: string | null = null
         try {
           const bytes = await load(meta)
-          t = (await imageThumb(new Blob([bytes as unknown as BlobPart], { type: meta.mime }))) ?? null
+          t = (await imageThumb(new Blob([bytes as unknown as BlobPart], { type: meta.mime }), meta.mime)) ?? null
           if (t) void saveThumb(key, t)
         } catch (err) {
           console.warn(`[thumbs] thumbnail failed for ${meta.name} (${meta.mime}, ${meta.size} B):`, err)
