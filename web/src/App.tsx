@@ -189,6 +189,49 @@ function buildTree(folders: string[]): TreeNode[] {
   return root
 }
 
+// ─── Hero art and the welcome panel ─────────────────────────────────
+
+function HeroIcon() {
+  return (
+    <svg className="hero-icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="og-grad" x1="0" y1="0" x2="48" y2="48">
+          <stop offset="0" stopColor="#b75fff" />
+          <stop offset="1" stopColor="#4932c4" />
+        </linearGradient>
+      </defs>
+      <path d="M14 16a9 9 0 0 1 17.6-2.6A7.5 7.5 0 0 1 38 20.5c0 4.1-3.4 7.5-7.5 7.5H16a6.5 6.5 0 0 1-2-12.7z"
+        fill="url(#og-grad)" opacity="0.16" />
+      <path d="M14 16a9 9 0 0 1 17.6-2.6A7.5 7.5 0 0 1 38 20.5c0 4.1-3.4 7.5-7.5 7.5H16a6.5 6.5 0 0 1-2-12.7z"
+        stroke="url(#og-grad)" strokeWidth="1.8" />
+      <path d="M18 24h12v9a3 3 0 0 1-3 3h-6a3 3 0 0 1-3-3z" fill="url(#og-grad)" opacity="0.9" />
+      <path d="M21 28h6M21 31h6" stroke="#0a0a0c" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** First screen before a wallet is connected: what 0GDrive is for, and the way in. */
+function Welcome({ onConnect }: { onConnect: () => void }) {
+  return (
+    <section className="hero welcome" aria-labelledby="welcome-title">
+      <HeroIcon />
+      <h1 id="welcome-title">Your files, for your eyes only.</h1>
+      <p className="welcome-sub">
+        Encrypted on your device before upload. Only you, and the people you share with, can open
+        them. Not 0G, not the storage nodes.
+      </p>
+      {hasWallet() ? (
+        <button className="btn primary welcome-cta" onClick={onConnect}>
+          Get started
+        </button>
+      ) : (
+        <p className="hero-hint">Install a wallet extension such as MetaMask or Rabby to start.</p>
+      )}
+      <p className="hero-hint">Connect to open your drive, or create one in a click.</p>
+    </section>
+  )
+}
+
 // ─── File type icons (inline SVG, no deps) ────────────────────────────
 
 const ICON_COLORS: Record<string, string> = {
@@ -2141,7 +2184,7 @@ export default function App() {
           </section>
         )}
 
-        {!readOnly && (
+        {wallet && !readOnly && (
         <section
           className={`dropzone ${dragOver ? 'over' : ''} ${!wallet || view === 'trash' || !masterKeyHex ? 'disabled' : ''}`}
           onDragOver={(e) => {
@@ -2185,7 +2228,9 @@ export default function App() {
         </section>
         )}
 
-        {smart.results !== null ? (
+        {!wallet && !readOnly ? (
+          <Welcome onConnect={connect} />
+        ) : smart.results !== null ? (
           <SearchResults
             query={smart.resultsQuery}
             results={smart.results}
@@ -2243,20 +2288,7 @@ export default function App() {
           </h2>
           {shownFiles.length === 0 && view === 'drive' && drive ? (
             <div className="hero">
-              <svg className="hero-icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-                <defs>
-                  <linearGradient id="og-grad" x1="0" y1="0" x2="48" y2="48">
-                    <stop offset="0" stopColor="#b75fff" />
-                    <stop offset="1" stopColor="#4932c4" />
-                  </linearGradient>
-                </defs>
-                <path d="M14 16a9 9 0 0 1 17.6-2.6A7.5 7.5 0 0 1 38 20.5c0 4.1-3.4 7.5-7.5 7.5H16a6.5 6.5 0 0 1-2-12.7z"
-                  fill="url(#og-grad)" opacity="0.16" />
-                <path d="M14 16a9 9 0 0 1 17.6-2.6A7.5 7.5 0 0 1 38 20.5c0 4.1-3.4 7.5-7.5 7.5H16a6.5 6.5 0 0 1-2-12.7z"
-                  stroke="url(#og-grad)" strokeWidth="1.8" />
-                <path d="M18 24h12v9a3 3 0 0 1-3 3h-6a3 3 0 0 1-3-3z" fill="url(#og-grad)" opacity="0.9" />
-                <path d="M21 28h6M21 31h6" stroke="#0a0a0c" strokeWidth="1.2" strokeLinecap="round" />
-              </svg>
+              <HeroIcon />
               <h3>Your drive lives on 0G Storage</h3>
               <p className="hero-sub">
                 Encrypted per file · metadata on-chain · restorable on any device with one signature

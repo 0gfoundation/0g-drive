@@ -1879,3 +1879,49 @@ tbody tr:hover {
   color: var(--accent);
   flex: none;
 }
+
+/* ─── Welcome (before a wallet is connected) ────────── */
+
+.welcome {
+  padding: 64px 24px 60px;
+  border-style: solid;
+}
+.welcome .hero-icon {
+  width: 72px;
+  height: 72px;
+}
+.welcome h1 {
+  margin: 0 0 12px;
+  font-size: clamp(24px, 4vw, 34px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  background: linear-gradient(90deg, var(--text), var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.welcome-sub {
+  max-width: 520px;
+  margin: 0 auto 24px;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.welcome-cta {
+  min-height: 44px;
+  padding: 0 26px;
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+@media (max-width: 640px) {
+  .welcome {
+    padding: 40px 16px 36px;
+  }
+  .welcome-sub {
+    font-size: 14px;
+  }
+  .welcome-cta {
+    width: 100%;
+  }
+}

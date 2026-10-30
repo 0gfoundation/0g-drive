@@ -23,6 +23,7 @@
     "test:e2e": "npm run build -w core && node scripts/test-browser-e2e.mjs",
     "test:wallets": "npm run build -w core && node scripts/test-wallet-picker.mjs",
     "test:svg": "npm run build -w core && node scripts/test-svg-thumbs.mjs",
+    "test:welcome": "node scripts/test-welcome.mjs",
     "test:model-download": "node scripts/test-model-download.mjs",
     "test:grid-thumbs": "node scripts/test-grid-thumbs.mjs",
     "test:file-cache": "node scripts/test-file-cache.mjs",
