@@ -59,7 +59,7 @@ npm run net-check        # verify 0G indexer endpoints are reachable (no wallet 
 npm run dev              # build core + start the drive (:5173) and the assistant (:3000)
 ```
 
-Open <http://localhost:5173> with a browser wallet such as MetaMask. Get testnet 0G at <https://faucet.0g.ai> (0.1 0G per day per wallet).
+Then open <http://localhost:5173> in a browser with a wallet extension installed (MetaMask, Rabby or any other Ethereum wallet). You'll need testnet 0G to upload: get some at <https://faucet.0g.ai> (0.1 0G per day per wallet).
 
 ### Scripts
 
