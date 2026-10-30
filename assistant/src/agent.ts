@@ -28,6 +28,11 @@ const MAX_ROUNDS = 8
 const KEEP_WITH_TOOLS = 200
 /** previous question/answer pairs kept as context */
 const MAX_HISTORY = 6
+/** an answer saying it highlighted something on screen ("I've highlighted
+ *  it for you") — only show_in_drive does that */
+const CLAIMS_HIGHLIGHT = /\b(?:i['’]ve|i have|i)\s+(?:just\s+|also\s+)?(?:highlighted|pointed (?:at|to|out))\b|\bhighlighted (?:it|that|this|them) for you\b/i
+const POINT_NOW =
+  'You wrote that you highlighted something in the drive, but you did not call show_in_drive, so nothing was highlighted. Call show_in_drive now for that control. After it, reply with one short sentence at most; do not repeat your answer.'
 
 export async function runTurn(
   key: string,
@@ -48,6 +53,10 @@ export async function runTurn(
   // written for the user — often the whole answer, with a last call such as
   // show_in_drive and only a short follow-up after it. Keep it.
   let kept = ''
+  // the model sometimes says it highlighted a control without calling
+  // show_in_drive; it then gets one reminder to make the call
+  let pointed = false
+  let reminded = false
   const join = (a: string, b: string) => (a && b ? `${a}\n\n${b}` : a || b)
   for (let round = 1; ; round++) {
     // on the last round the model must answer with what it has
@@ -69,7 +78,15 @@ export async function runTurn(
     }
     const calls = c.message.tool_calls ?? []
     const content = (c.message.content ?? '').trim()
+    if (!calls.length && !last && !pointed && !reminded && CLAIMS_HIGHLIGHT.test(content)) {
+      reminded = true
+      kept = join(kept, content)
+      ev.onText(kept)
+      messages.push({ role: 'assistant', content }, { role: 'user', content: POINT_NOW })
+      continue
+    }
     if (!calls.length || last) return { answer: join(kept, content), usage, rounds: round }
+    if (calls.some((call) => call.function.name === 'show_in_drive')) pointed = true
 
     if (content.length >= KEEP_WITH_TOOLS) kept = join(kept, content)
     ev.onText(kept)
