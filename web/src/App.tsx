@@ -1501,7 +1501,7 @@ export default function App() {
     if (!store || selectedIds.length === 0) return
     const n = selectedIds.length
     if (!window.confirm(`Move ${n} file${n === 1 ? '' : 's'} to trash?`)) return
-    setBusy(`Moving ${n} file${n === 1 ? '' : 's'} to trash… (1–2 wallet approvals)`)
+    setBusy(`Moving ${n} file${n === 1 ? '' : 's'} to trash…`)
     try {
       await store.removeFileRecords(view === 'trash' ? TRASH_PATH : currentPath, selectedIds, view !== 'trash')
       log(`${n} file${n === 1 ? '' : 's'} moved to trash.`)
@@ -1518,7 +1518,7 @@ export default function App() {
     const store = storeRef.current
     if (!store || selectedIds.length === 0) return
     const n = selectedIds.length
-    setBusy(`Restoring ${n} file${n === 1 ? '' : 's'}… (1–3 wallet approvals)`)
+    setBusy(`Restoring ${n} file${n === 1 ? '' : 's'}…`)
     try {
       await store.restoreRecords(selectedIds)
       log(`${n} file${n === 1 ? '' : 's'} restored.`)

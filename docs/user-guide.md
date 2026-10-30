@@ -21,7 +21,7 @@ Storing data on 0G costs a small fee in 0G (storage fee + gas), paid by a wallet
 | Action | Wallet prompts |
 |---|---|
 | Upload one or many files (one drop) | 1 transaction (all files + the folder listing in one batch) |
-| New folder, move to trash, restore, remove from trash, organize moves | 1 transaction each (updates a small listing file) |
+| New folder, move to trash, restore, remove from trash, organize moves | 1 transaction each, however many files or folders (updates small listing files) |
 | Set up recovery | 2 signatures + 1 transaction |
 | Set or change the recovery password | 1 signature + 1 transaction |
 | Publish / update share key | 2 signatures + 1 transaction |

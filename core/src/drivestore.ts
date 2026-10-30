@@ -302,9 +302,10 @@ export class DriveStore {
   }
 
   /**
-   * Remove multiple file records from one folder in two transactions
-   * regardless of count: one folder-manifest write, one trash-manifest
-   * write.
+   * Remove file records from one folder: the folder's listing, plus the
+   * trash's when they go to trash, in one transaction where batchSubmit is
+   * on. Trash is stored first, so a failure part-way leaves a file in both
+   * places, never in neither.
    */
   async removeFileRecords(
     folderPath: string,
@@ -323,29 +324,16 @@ export class DriveStore {
     folder.files = folder.files.filter((f) => !ids.includes(f.id))
     folder.updatedAt = Date.now()
     folder.version += 1
-    await this.uploadManifest(
-      new TextEncoder().encode(JSON.stringify(folder)),
-      folderTag(path)
-    )
-
+    const first: BatchItem[] = []
     if (toTrash) {
-      const trash =
-        (await this.loadFolder(TRASH_PATH)) ?? {
-          path: TRASH_PATH,
-          files: [],
-          updatedAt: 0,
-          version: 0,
-        }
-      for (const rec of removed) {
-        trash.files.push({ ...rec, originalPath: path })
-      }
-      trash.updatedAt = Date.now()
-      trash.version += 1
-      await this.uploadManifest(
-        new TextEncoder().encode(JSON.stringify(trash)),
-        folderTag(TRASH_PATH)
-      )
+      const trash = await this.trashWith(removed.map((rec) => ({ ...rec, originalPath: path })))
+      first.push(this.manifestItem(trash, folderTag(TRASH_PATH)))
     }
+    await this.writeManifests(
+      first,
+      [this.manifestItem(folder, folderTag(path))],
+      'the files were added to trash but are still listed in their folder too. Move them to trash again to finish.'
+    )
   }
 
   /** Create a folder (index entry; manifest materializes on first file). */
@@ -375,9 +363,9 @@ export class DriveStore {
 
   /**
    * Move a folder and everything inside it (including all descendant
-   * folders) to trash. Two transactions total:
+   * folders) to trash, in one transaction where batchSubmit is on:
    *   1. trash manifest update — all file records, each tagged with its
-   *      original folder path (restorable individually)
+   *      original folder path (restorable individually); stored first
    *   2. index update — the folder and its descendants stop existing
    * Descendant folder manifests are NOT rewritten: they become unreferenced
    * the moment the index drops their paths, so their old versions simply
@@ -405,25 +393,18 @@ export class DriveStore {
       }
     }
 
+    const first: BatchItem[] = []
     if (records.length > 0) {
-      const trash =
-        (await this.loadFolder(TRASH_PATH)) ?? {
-          path: TRASH_PATH,
-          files: [],
-          updatedAt: 0,
-          version: 0,
-        }
-      trash.files.push(...records)
-      trash.updatedAt = Date.now()
-      trash.version += 1
-      await this.uploadManifest(
-        new TextEncoder().encode(JSON.stringify(trash)),
-        folderTag(TRASH_PATH)
-      )
+      first.push(this.manifestItem(await this.trashWith(records), folderTag(TRASH_PATH)))
     }
-
     index.folders = index.folders.filter((f) => !affected.includes(f))
-    await this.writeIndex(index)
+    index.updatedAt = Date.now()
+    index.version += 1
+    await this.writeManifests(
+      first,
+      [this.manifestItem(index, indexTag())],
+      'the files were added to trash but the folder still shows. Delete it again to finish.'
+    )
   }
 
   /** Rename a folder: re-manifest its files under the new path. */
@@ -463,9 +444,11 @@ export class DriveStore {
   }
 
   /**
-   * Restore multiple trashed records: ONE trash-manifest write plus ONE
-   * manifest write per distinct target folder (records remember their
-   * original folders).
+   * Restore multiple trashed records (records remember their original
+   * folders): a manifest write per target folder, the index if a target is
+   * new, and the trash — in one transaction where batchSubmit is on.
+   * Targets are stored first, so a failure part-way leaves a file in both
+   * places, never in neither.
    */
   async restoreRecords(ids: string[], targetPath?: string): Promise<void> {
     if (ids.length === 0) return
@@ -485,6 +468,7 @@ export class DriveStore {
       byFolder.set(dest, list)
     }
 
+    const first: BatchItem[] = []
     for (const [dest, records] of byFolder) {
       const folder =
         (await this.loadFolder(dest)) ?? {
@@ -493,36 +477,32 @@ export class DriveStore {
           updatedAt: 0,
           version: 0,
         }
-      folder.files.push(...records)
+      const back = new Set(records.map((f) => f.id))
+      folder.files = [...folder.files.filter((f) => !back.has(f.id)), ...records]
       folder.updatedAt = Date.now()
       folder.version += 1
-      await this.uploadManifest(
-        new TextEncoder().encode(JSON.stringify(folder)),
-        folderTag(dest)
-      )
-      if (dest !== '') {
-        const index = await this.loadIndex()
-        if (!index.folders.includes(dest)) {
-          index.folders.push(dest)
-          await this.writeIndex(index)
-        }
-      }
+      first.push(this.manifestItem(folder, folderTag(dest)))
     }
+    const indexItem = await this.indexWith([...byFolder.keys()])
+    if (indexItem) first.push(indexItem)
 
     trash.files = trash.files.filter((f) => !ids.includes(f.id))
     trash.updatedAt = Date.now()
     trash.version += 1
-    await this.uploadManifest(
-      new TextEncoder().encode(JSON.stringify(trash)),
-      folderTag(TRASH_PATH)
+    await this.writeManifests(
+      first,
+      [this.manifestItem(trash, folderTag(TRASH_PATH))],
+      'the files were restored but are still listed in trash too. Restore them again to finish.'
     )
   }
 
   /**
    * Move file records out of one folder, each to its own destination: a
    * manifest write per destination folder, one for the source, plus an
-   * index write if a destination is new. Metadata only — blobs don't move.
-   * With batchSubmit, all of them go in ONE transaction (one wallet prompt).
+   * index write if a destination is new — in one transaction where
+   * batchSubmit is on. Destinations are stored first, so a failure
+   * part-way leaves a file in both folders, never in neither. Metadata
+   * only — blobs don't move.
    */
   async moveRecords(fromPath: string, moves: { id: string; to: string }[]): Promise<void> {
     const from = normalizePath(fromPath)
@@ -537,10 +517,8 @@ export class DriveStore {
 
     const source = await this.loadFolder(from)
     if (source === null) return
-    if (this.network.batchSubmit) return this.moveRecordsBatched(from, source, byDest)
+    const first: BatchItem[] = []
     const moved = new Set<string>()
-
-    // destinations first: an interruption leaves a duplicate, never a loss
     for (const [to, ids] of byDest) {
       const records = source.files.filter((f) => ids.includes(f.id))
       if (records.length === 0) continue
@@ -550,86 +528,87 @@ export class DriveStore {
       dest.files.push(...records.filter((f) => !present.has(f.id)))
       dest.updatedAt = Date.now()
       dest.version += 1
-      await this.uploadManifest(new TextEncoder().encode(JSON.stringify(dest)), folderTag(to))
+      first.push(this.manifestItem(dest, folderTag(to)))
       records.forEach((f) => moved.add(f.id))
     }
     if (moved.size === 0) return
+    const indexItem = await this.indexWith([...byDest.keys()])
+    if (indexItem) first.push(indexItem)
 
     source.files = source.files.filter((f) => !moved.has(f.id))
     source.updatedAt = Date.now()
     source.version += 1
-    await this.uploadManifest(new TextEncoder().encode(JSON.stringify(source)), folderTag(from))
+    await this.writeManifests(
+      first,
+      [this.manifestItem(source, folderTag(from))],
+      'the files were copied to their new folders but are still listed in the old one too. Move them again to finish.'
+    )
+  }
 
-    const index = await this.loadIndex()
-    const added = [...byDest.keys()].filter((p) => p !== '' && !index.folders.includes(p))
-    if (added.length > 0) {
-      index.folders.push(...added)
-      await this.writeIndex(index)
+  // ─── Multi-manifest writes ──────────────────────────────────────────
+
+  private manifestItem(value: unknown, tag: string): BatchItem {
+    return {
+      data: new TextEncoder().encode(JSON.stringify(value)),
+      encryption: { type: 'aes256', key: this.masterKey },
+      tags: tag,
     }
   }
 
-  /**
-   * moveRecords in one transaction. The transaction registers every
-   * manifest at once, but each one's data is stored separately afterwards,
-   * so the order still matters: destinations (and the index) are stored
-   * first, and the source only once they all stored and sealed. A failure
-   * part-way therefore leaves the files listed in both folders (the
-   * source's new version stays empty, so readers keep its older one),
-   * never in neither.
-   */
-  private async moveRecordsBatched(
-    from: string,
-    source: FolderManifest,
-    byDest: Map<string, string[]>
-  ): Promise<void> {
-    const enc = { type: 'aes256' as const, key: this.masterKey }
-    const item = (value: unknown, tags: string): BatchItem => ({
-      data: new TextEncoder().encode(JSON.stringify(value)),
-      encryption: enc,
-      tags,
-    })
-    const destinations: BatchItem[] = []
-    const moved = new Set<string>()
-    for (const [to, ids] of byDest) {
-      const records = source.files.filter((f) => ids.includes(f.id))
-      if (records.length === 0) continue
-      const dest =
-        (await this.loadFolder(to)) ?? { path: to, files: [], updatedAt: 0, version: 0 }
-      const present = new Set(dest.files.map((f) => f.id))
-      dest.files.push(...records.filter((f) => !present.has(f.id)))
-      dest.updatedAt = Date.now()
-      dest.version += 1
-      destinations.push(item(dest, folderTag(to)))
-      records.forEach((f) => moved.add(f.id))
-    }
-    if (moved.size === 0) return
+  /** The trash with `records` added (a record already there is replaced). */
+  private async trashWith(records: FileMeta[]): Promise<FolderManifest> {
+    const trash =
+      (await this.loadFolder(TRASH_PATH)) ?? { path: TRASH_PATH, files: [], updatedAt: 0, version: 0 }
+    const adding = new Set(records.map((r) => r.id))
+    trash.files = [...trash.files.filter((f) => !adding.has(f.id)), ...records]
+    trash.updatedAt = Date.now()
+    trash.version += 1
+    return trash
+  }
 
+  /** The index write that adds any of `paths` it lacks, or null if none. */
+  private async indexWith(paths: string[]): Promise<BatchItem | null> {
     const index = await this.loadIndex()
-    const added = [...byDest.keys()].filter((p) => p !== '' && !index.folders.includes(p))
-    if (added.length > 0) {
-      index.folders.push(...added)
-      index.updatedAt = Date.now()
-      index.version += 1
-      destinations.push(item(index, indexTag()))
-    }
+    const added = paths.filter((p, i) => p !== '' && !index.folders.includes(p) && paths.indexOf(p) === i)
+    if (added.length === 0) return null
+    index.folders.push(...added)
+    index.updatedAt = Date.now()
+    index.version += 1
+    return this.manifestItem(index, indexTag())
+  }
 
-    source.files = source.files.filter((f) => !moved.has(f.id))
-    source.updatedAt = Date.now()
-    source.version += 1
-    const res = await uploadBatch(destinations, this.network, this.signer, {
-      finalize: async () => [item(source, folderTag(from))],
+  /**
+   * Write several manifests: in ONE transaction where batchSubmit is on,
+   * else one transaction each. Either way `first` is stored before `then`,
+   * and `then` only if all of `first` stored (and sealed, under strict
+   * finality). Callers put what must not be lost in `first`, so a failure
+   * part-way duplicates a record rather than dropping it. `partial` is the
+   * error when `first` stored but `then` didn't.
+   */
+  private async writeManifests(first: BatchItem[], then: BatchItem[], partial: string): Promise<void> {
+    const all = [...first, ...then]
+    if (all.length === 0) return
+    if (!this.network.batchSubmit || all.length === 1) {
+      for (let i = 0; i < all.length; i++) {
+        try {
+          await this.uploadManifest(all[i].data as Uint8Array, all[i].tags ?? '0x')
+        } catch (err) {
+          if (i < first.length || first.length === 0) throw err
+          throw new Error(`${partial} (${(err as Error).message})`)
+        }
+      }
+      return
+    }
+    const res = await uploadBatch(first.length > 0 ? first : then, this.network, this.signer, {
+      finalize: first.length > 0 && then.length > 0 ? async () => then : undefined,
       finalityRequired: this.opts.finalityRequired ?? true,
       onProgress: (msg) => this.progress(msg),
     })
-    const failed = res.items.find((r) => !r.ok)
-    if (failed && !failed.ok) {
-      throw new Error(`nothing was moved: a destination folder could not be stored (${failed.error})`)
+    for (const r of res.items) {
+      if (!r.ok) throw new Error(`nothing was changed: a listing could not be stored (${r.error})`)
     }
-    const src = res.extras[0]
-    if (src && !src.ok) {
-      throw new Error(
-        `the files were copied to their new folders but are still listed in the old one too (${src.error}). Move them again to finish.`
-      )
+    for (const r of res.extras) {
+      if (!r.ok) throw new Error(`${partial} (${r.error})`)
     }
   }
 
