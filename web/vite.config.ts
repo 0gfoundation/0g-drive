@@ -4,23 +4,14 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { GET as modelsGET } from './api/models'
+import { POST as nodePOST } from './api/node'
 
 const fsStub = path.resolve(__dirname, 'src/stubs/fs.ts')
 const fsPromisesStub = path.resolve(__dirname, 'src/stubs/fs-promises.ts')
 
-// /_models/<host>/<path>: the AI worker's fallback route for model files —
-// the same handler that runs as a Vercel function in production (api/models.ts)
-const modelRoute: Connect.NextHandleFunction = (req, res, next) => {
-  if (!req.url?.startsWith('/_models/')) return next()
-  if (req.method !== 'GET') {
-    res.statusCode = 404
-    return res.end()
-  }
-  const ctrl = new AbortController()
-  res.on('close', () => ctrl.abort())
-  const url = `http://localhost/api/models?path=${encodeURIComponent(req.url.slice('/_models/'.length))}`
-  const headers = typeof req.headers.range === 'string' ? { range: req.headers.range } : undefined
-  modelsGET(new Request(url, { headers, signal: ctrl.signal }))
+// Pipes a web Response from one of the api/ handlers into a Node response
+function send(res: import('node:http').ServerResponse, out: Promise<Response>) {
+  out
     .then((up) => {
       res.statusCode = up.status
       up.headers.forEach((v, k) => res.setHeader(k, v))
@@ -33,15 +24,46 @@ const modelRoute: Connect.NextHandleFunction = (req, res, next) => {
     })
 }
 
-const modelProxy = (): Plugin => ({
-  name: '0gdrive-model-route',
-  configureServer: (server) => void server.middlewares.use(modelRoute),
-  configurePreviewServer: (server) => void server.middlewares.use(modelRoute),
+// /_models/<host>/<path>: the AI worker's fallback route for model files, and
+// /_node/<ip>:<port>: the storage-node relay — the same handlers that run as
+// Vercel functions in production (api/models.ts, api/node.ts)
+const apiRoutes: Connect.NextHandleFunction = (req, res, next) => {
+  const ctrl = new AbortController()
+  res.on('close', () => ctrl.abort())
+  if (req.url?.startsWith('/_models/')) {
+    if (req.method !== 'GET') {
+      res.statusCode = 404
+      return res.end()
+    }
+    const url = `http://localhost/api/models?path=${encodeURIComponent(req.url.slice('/_models/'.length))}`
+    const headers = typeof req.headers.range === 'string' ? { range: req.headers.range } : undefined
+    return send(res, modelsGET(new Request(url, { headers, signal: ctrl.signal })))
+  }
+  if (req.url?.startsWith('/_node/')) {
+    if (req.method !== 'POST') {
+      res.statusCode = 404
+      return res.end()
+    }
+    const url = `http://localhost/api/node?target=${encodeURIComponent(req.url.slice('/_node/'.length))}`
+    const chunks: Buffer[] = []
+    req.on('data', (c: Buffer) => chunks.push(c))
+    req.on('end', () =>
+      send(res, nodePOST(new Request(url, { method: 'POST', body: Buffer.concat(chunks), signal: ctrl.signal })))
+    )
+    return
+  }
+  next()
+}
+
+const apiProxy = (): Plugin => ({
+  name: '0gdrive-api-routes',
+  configureServer: (server) => void server.middlewares.use(apiRoutes),
+  configurePreviewServer: (server) => void server.middlewares.use(apiRoutes),
 })
 
 export default defineConfig({
   plugins: [
-    modelProxy(),
+    apiProxy(),
     react(),
     nodePolyfills({
       include: ['crypto', 'buffer', 'stream', 'util', 'events', 'path'],

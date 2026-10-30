@@ -39,6 +39,26 @@ type Uploadable = Parameters<Indexer['upload']>[0]
 const SHARD_CACHE_MS = 60_000
 const shardCache = new Map<string, { at: number; nodes: ShardedNodes }>()
 
+/**
+ * Storage nodes only speak plain HTTP (`http://<ip>:5678`), which browsers
+ * block from https pages (mixed content). With a relay set, every node URL
+ * the indexer hands out becomes `<relay><ip>:<port>`, an https endpoint on
+ * the app's own origin that forwards to the node (web/api/node.ts). All
+ * node traffic — upload, finality checks, repair, download — gets its
+ * StorageNode from these lists, so rewriting them here covers every path.
+ */
+let nodeRelay: string | null = null
+
+/** Route storage-node calls through `base` (e.g. `https://drive.0g.ai/_node/`); null for direct. */
+export function setNodeRelay(base: string | null): void {
+  nodeRelay = base
+}
+
+function viaRelay<T extends { url: string }>(node: T): T {
+  const m = nodeRelay ? /^http:\/\/([^/]+)\/?$/.exec(node.url) : null
+  return m ? { ...node, url: nodeRelay + m[1] } : node
+}
+
 class SessionIndexer extends Indexer {
   private key: string
   constructor(url: string) {
@@ -47,10 +67,18 @@ class SessionIndexer extends Indexer {
   }
   async getShardedNodes(): Promise<ShardedNodes> {
     const hit = shardCache.get(this.key)
-    if (hit && Date.now() - hit.at < SHARD_CACHE_MS) return hit.nodes
-    const nodes = await super.getShardedNodes()
-    shardCache.set(this.key, { at: Date.now(), nodes })
-    return nodes
+    let nodes = hit && Date.now() - hit.at < SHARD_CACHE_MS ? hit.nodes : null
+    if (!nodes) {
+      nodes = await super.getShardedNodes()
+      shardCache.set(this.key, { at: Date.now(), nodes })
+    }
+    return {
+      trusted: (nodes.trusted ?? []).map(viaRelay),
+      discovered: (nodes.discovered ?? []).map(viaRelay),
+    }
+  }
+  async getFileLocations(rootHash: string): Promise<ShardedNode[]> {
+    return (await super.getFileLocations(rootHash)).map(viaRelay)
   }
 }
 /**

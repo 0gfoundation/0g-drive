@@ -4,8 +4,11 @@
   "installCommand": "cd .. && npm ci",
   "buildCommand": "cd .. && npm run build -w @0gdrive/core && npm run build -w web",
   "outputDirectory": "dist",
-  "rewrites": [{ "source": "/_models/:path*", "destination": "/api/models?path=:path*" }],
-  "functions": { "api/models.ts": { "maxDuration": 300 } },
+  "rewrites": [
+    { "source": "/_models/:path*", "destination": "/api/models?path=:path*" },
+    { "source": "/_node/:target", "destination": "/api/node?target=:target" }
+  ],
+  "functions": { "api/models.ts": { "maxDuration": 300 }, "api/node.ts": { "maxDuration": 90 } },
   "headers": [
     {
       "source": "/(.*)",

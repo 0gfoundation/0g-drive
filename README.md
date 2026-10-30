@@ -9,7 +9,7 @@ You get the usual drive features: folders, drag-and-drop upload, preview, downlo
 ### Your files are only yours
 - **No company in the middle.** Files live on 0G's decentralized storage network, not on a provider's servers. There is no account to suspend, no subscription that locks your data, and no operator who can delete or read it.
 - **Your wallet is your login.** There is no sign-up and no password database. Only your wallet can change your drive.
-- **No backend.** The app rebuilds your whole drive from public chain data plus your keys, so it keeps working even if this website disappears. Any copy of the app can open your drive.
+- **No backend.** The app rebuilds your whole drive from public chain data plus your keys, so it keeps working even if this website disappears. Any copy of the app can open your drive. The only server-side piece is a stateless relay that passes already-encrypted pieces to storage nodes, because browsers require HTTPS and the nodes speak plain HTTP.
 - **Recovery you control.** Your drive key is backed up on-chain and locked to your wallet. An optional recovery password opens the drive (read-only) if you lose the wallet. Nobody, including us, can reset it or open it for you.
 
 ### Encrypted everywhere outside your device
