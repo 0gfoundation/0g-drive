@@ -189,6 +189,7 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
       const store = storeRef.current
       if (!store || chosen.length === 0) return
       setBusy('Moving files…')
+      // one transaction for all moves where batchSubmit is on (DriveStore.moveRecords)
       log(`Moving ${chosen.length} file${chosen.length === 1 ? '' : 's'} — approve in your wallet…`)
       try {
         await store.moveRecords(currentPath, chosen.map((c) => ({ id: c.item.id, to: c.to })))
