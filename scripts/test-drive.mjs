@@ -106,7 +106,16 @@ check('trash empty', (state.trash?.files.length ?? 0) === 0)
 
 // ── 4. Trash + rename + remove-folder guards ──────────────────────────
 console.log('\n— removeFileRecord → trash; renameFolder; removeFolder —')
+let nonce = await provider.getTransactionCount(wallet.address)
+const txsSince = async () => {
+  const now = await provider.getTransactionCount(wallet.address)
+  const n = now - nonce
+  nonce = now
+  return n
+}
 await store.removeFileRecord('Photos', 'f1')
+const trashTxs = await txsSince()
+check('move to trash: one transaction (folder + trash)', trashTxs === 1, `${trashTxs} tx`)
 await store.renameFolder('Documents', 'Docs')
 await store.createFolder('Temp')
 await store.removeFolder('Temp')
@@ -136,12 +145,12 @@ check('Temp removed', !state.index.folders.includes('Temp'))
 // ── 6. Moves: two destinations (one new folder) in ONE transaction ──
 console.log('\n— moveRecords: Inbox → Docs + Archive (new), one transaction —')
 await store.putFileRecords('Inbox', [fileMeta('f4', 'invoice.pdf'), fileMeta('f5', 'old-photo.jpg')])
-const nonceBefore = await provider.getTransactionCount(wallet.address)
+nonce = await provider.getTransactionCount(wallet.address)
 await store.moveRecords('Inbox', [
   { id: 'f4', to: 'Docs' },
   { id: 'f5', to: 'Archive' },
 ])
-const moveTxs = (await provider.getTransactionCount(wallet.address)) - nonceBefore
+const moveTxs = await txsSince()
 check('one transaction for 3 manifests + the index', moveTxs === 1, `${moveTxs} tx`)
 store = newStore()
 state = await store.loadDrive()
@@ -152,10 +161,30 @@ check('after restart: invoice in Docs, photo in new Archive, Inbox empty',
   state.folders.get('Inbox')?.files.length === 0,
   state.index.folders.join(', '))
 
-// ── 7. Cost report ────────────────────────────────────────────────────
+// ── 7. Folder trash + restore, each in ONE transaction ───────────────
+console.log('\n— trashFolder(Archive), then restore its file —')
+await store.createFolder('Archive/2025')
+await store.putFileRecord('Archive/2025', fileMeta('f6', 'tax.pdf'))
+await txsSince()
+await store.trashFolder('Archive')
+const folderTxs = await txsSince()
+check('folder to trash: one transaction (trash + index)', folderTxs === 1, `${folderTxs} tx`)
+await store.restoreRecords(['f5', 'f6'])
+const restoreTxs = await txsSince()
+check('restore to 2 folders (both gone from the index): one transaction', restoreTxs === 1, `${restoreTxs} tx`)
+store = newStore()
+state = await store.loadDrive()
+check('after restart: both restored to their own folders, trash keeps only sunset.jpg',
+  state.folders.get('Archive')?.files.some((f) => f.id === 'f5') &&
+  state.folders.get('Archive/2025')?.files.some((f) => f.id === 'f6') &&
+  state.index.folders.includes('Archive') && state.index.folders.includes('Archive/2025') &&
+  JSON.stringify(state.trash?.files.map((f) => f.name)) === '["sunset.jpg"]',
+  `${state.index.folders.join(', ')} | trash: ${state.trash?.files.map((f) => f.name).join(', ')}`)
+
+// ── 8. Cost report ────────────────────────────────────────────────────
 const balanceAfter = await provider.getBalance(wallet.address)
 console.log(`\ndrive key:  ${masterKeyHex}`)
-console.log(`cost:       ${ethers.formatEther(balanceBefore - balanceAfter)} 0G for ~13 metadata txs`)
+console.log(`cost:       ${ethers.formatEther(balanceBefore - balanceAfter)} 0G for ~17 metadata txs`)
 
 if (failures > 0) {
   console.error(`\n${failures} CHECKS FAILED`)

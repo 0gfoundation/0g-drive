@@ -237,6 +237,19 @@ try {
   const text = await page.textContent('.preview-text')
   check('preview downloads + decrypts the moved file', text.startsWith('Spaghetti carbonara'), JSON.stringify(text.slice(0, 40)))
   await page.keyboard.press('Escape')
+
+  // trash and restore through the UI, one transaction each
+  const row = (name) => page.locator('table tr', { has: page.locator('.fname-btn', { hasText: name }) })
+  tx = prompts.tx
+  await row('carbonara.md').getByRole('button', { name: 'Move to trash' }).click()
+  await page.locator('.activity li', { hasText: 'carbonara.md moved to trash' }).waitFor({ timeout: 10 * 60_000 })
+  const trashTx = prompts.tx - tx
+  await page.locator('[data-guide="trash"]').click()
+  await row('carbonara.md').waitFor({ timeout: 2 * 60_000 })
+  tx = prompts.tx
+  await row('carbonara.md').getByRole('button', { name: 'Restore' }).click()
+  await page.locator('.activity li', { hasText: 'carbonara.md restored' }).waitFor({ timeout: 10 * 60_000 })
+  check('move to trash and restore: one transaction each', trashTx === 1 && prompts.tx - tx === 1, `${trashTx} + ${prompts.tx - tx} tx`)
 } catch (err) {
   check('run completed', false, err.message.split('\n')[0])
   const q = await page.$$eval('.queue-item', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' '))).catch(() => [])
