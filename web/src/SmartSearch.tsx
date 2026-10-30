@@ -188,9 +188,8 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
     async (chosen: MoveSuggestion<FileMeta>[]) => {
       const store = storeRef.current
       if (!store || chosen.length === 0) return
-      const dests = new Set(chosen.map((c) => c.to)).size
       setBusy('Moving files…')
-      log(`Moving ${chosen.length} file${chosen.length === 1 ? '' : 's'} — approve ${dests + 1} transaction${dests + 1 === 1 ? '' : 's'}…`)
+      log(`Moving ${chosen.length} file${chosen.length === 1 ? '' : 's'} — approve in your wallet…`)
       try {
         await store.moveRecords(currentPath, chosen.map((c) => ({ id: c.item.id, to: c.to })))
         await reloadDrive()

@@ -101,7 +101,7 @@ Sidebar → **On-device AI → Smart search & organize**. When on, AI models (~3
 
 - **Search your drive — any language**: finds files by meaning, e.g. "猫" finds a cat photo named IMG_0001.jpg, "lease contract" finds a PDF named in Chinese. Matches names, text excerpts and photo content.
 - New uploads are indexed automatically. **Index N older files for search** indexes files uploaded before (downloads them, reads them on your device, saves the index: 1 approval).
-- **✨ Suggest organization** proposes moving files to better-matching folders; you approve the moves (transactions).
+- **✨ Suggest organization** proposes moving files to better-matching folders; you approve the moves in one transaction, however many folders they go to.
 - When off, search matches file names only.
 
 ## Assistant (this help panel)

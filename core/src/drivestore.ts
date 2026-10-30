@@ -1,6 +1,6 @@
 import { ethers } from 'ethers'
 import type { NetworkConfig } from './config.js'
-import { uploadData, downloadFile, type BatchItem } from './storage.js'
+import { uploadData, uploadBatch, downloadFile, type BatchItem } from './storage.js'
 import type { FileMeta } from './types.js'
 import { scanUploadsCached, type EventCache, type UploadEvent } from './events.js'
 import {
@@ -519,9 +519,10 @@ export class DriveStore {
   }
 
   /**
-   * Move file records out of one folder, each to its own destination: ONE
-   * manifest write per destination folder, ONE for the source, plus an
+   * Move file records out of one folder, each to its own destination: a
+   * manifest write per destination folder, one for the source, plus an
    * index write if a destination is new. Metadata only — blobs don't move.
+   * With batchSubmit, all of them go in ONE transaction (one wallet prompt).
    */
   async moveRecords(fromPath: string, moves: { id: string; to: string }[]): Promise<void> {
     const from = normalizePath(fromPath)
@@ -536,6 +537,7 @@ export class DriveStore {
 
     const source = await this.loadFolder(from)
     if (source === null) return
+    if (this.network.batchSubmit) return this.moveRecordsBatched(from, source, byDest)
     const moved = new Set<string>()
 
     // destinations first: an interruption leaves a duplicate, never a loss
@@ -563,6 +565,71 @@ export class DriveStore {
     if (added.length > 0) {
       index.folders.push(...added)
       await this.writeIndex(index)
+    }
+  }
+
+  /**
+   * moveRecords in one transaction. The transaction registers every
+   * manifest at once, but each one's data is stored separately afterwards,
+   * so the order still matters: destinations (and the index) are stored
+   * first, and the source only once they all stored and sealed. A failure
+   * part-way therefore leaves the files listed in both folders (the
+   * source's new version stays empty, so readers keep its older one),
+   * never in neither.
+   */
+  private async moveRecordsBatched(
+    from: string,
+    source: FolderManifest,
+    byDest: Map<string, string[]>
+  ): Promise<void> {
+    const enc = { type: 'aes256' as const, key: this.masterKey }
+    const item = (value: unknown, tags: string): BatchItem => ({
+      data: new TextEncoder().encode(JSON.stringify(value)),
+      encryption: enc,
+      tags,
+    })
+    const destinations: BatchItem[] = []
+    const moved = new Set<string>()
+    for (const [to, ids] of byDest) {
+      const records = source.files.filter((f) => ids.includes(f.id))
+      if (records.length === 0) continue
+      const dest =
+        (await this.loadFolder(to)) ?? { path: to, files: [], updatedAt: 0, version: 0 }
+      const present = new Set(dest.files.map((f) => f.id))
+      dest.files.push(...records.filter((f) => !present.has(f.id)))
+      dest.updatedAt = Date.now()
+      dest.version += 1
+      destinations.push(item(dest, folderTag(to)))
+      records.forEach((f) => moved.add(f.id))
+    }
+    if (moved.size === 0) return
+
+    const index = await this.loadIndex()
+    const added = [...byDest.keys()].filter((p) => p !== '' && !index.folders.includes(p))
+    if (added.length > 0) {
+      index.folders.push(...added)
+      index.updatedAt = Date.now()
+      index.version += 1
+      destinations.push(item(index, indexTag()))
+    }
+
+    source.files = source.files.filter((f) => !moved.has(f.id))
+    source.updatedAt = Date.now()
+    source.version += 1
+    const res = await uploadBatch(destinations, this.network, this.signer, {
+      finalize: async () => [item(source, folderTag(from))],
+      finalityRequired: this.opts.finalityRequired ?? true,
+      onProgress: (msg) => this.progress(msg),
+    })
+    const failed = res.items.find((r) => !r.ok)
+    if (failed && !failed.ok) {
+      throw new Error(`nothing was moved: a destination folder could not be stored (${failed.error})`)
+    }
+    const src = res.extras[0]
+    if (src && !src.ok) {
+      throw new Error(
+        `the files were copied to their new folders but are still listed in the old one too (${src.error}). Move them again to finish.`
+      )
     }
   }
 

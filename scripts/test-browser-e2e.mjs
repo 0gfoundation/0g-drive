@@ -218,7 +218,7 @@ try {
     }
     await page.locator('.suggest-actions button').click()
     await page.locator('.activity li', { hasText: 'Moved 1 file' }).waitFor({ timeout: 10 * 60_000 })
-    check('move applied', true, `${prompts.tx - tx} tx (destination + source manifests)`)
+    check('move applied in one transaction', prompts.tx - tx === 1, `${prompts.tx - tx} tx (destination + source manifests)`)
   }
 
   // fresh load from chain: records written in batch must have txSeqs backfilled
