@@ -133,10 +133,29 @@ check('Docs renamed (files moved)',
   state.folders.get('Docs')?.files.length === 1)
 check('Temp removed', !state.index.folders.includes('Temp'))
 
-// ── 6. Cost report ────────────────────────────────────────────────────
+// ── 6. Moves: two destinations (one new folder) in ONE transaction ──
+console.log('\n— moveRecords: Inbox → Docs + Archive (new), one transaction —')
+await store.putFileRecords('Inbox', [fileMeta('f4', 'invoice.pdf'), fileMeta('f5', 'old-photo.jpg')])
+const nonceBefore = await provider.getTransactionCount(wallet.address)
+await store.moveRecords('Inbox', [
+  { id: 'f4', to: 'Docs' },
+  { id: 'f5', to: 'Archive' },
+])
+const moveTxs = (await provider.getTransactionCount(wallet.address)) - nonceBefore
+check('one transaction for 3 manifests + the index', moveTxs === 1, `${moveTxs} tx`)
+store = newStore()
+state = await store.loadDrive()
+check('after restart: invoice in Docs, photo in new Archive, Inbox empty',
+  state.folders.get('Docs')?.files.some((f) => f.id === 'f4') &&
+  state.folders.get('Archive')?.files.length === 1 &&
+  state.index.folders.includes('Archive') &&
+  state.folders.get('Inbox')?.files.length === 0,
+  state.index.folders.join(', '))
+
+// ── 7. Cost report ────────────────────────────────────────────────────
 const balanceAfter = await provider.getBalance(wallet.address)
 console.log(`\ndrive key:  ${masterKeyHex}`)
-console.log(`cost:       ${ethers.formatEther(balanceBefore - balanceAfter)} 0G for ~11 metadata txs`)
+console.log(`cost:       ${ethers.formatEther(balanceBefore - balanceAfter)} 0G for ~13 metadata txs`)
 
 if (failures > 0) {
   console.error(`\n${failures} CHECKS FAILED`)
