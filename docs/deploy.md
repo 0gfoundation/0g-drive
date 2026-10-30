@@ -1,10 +1,10 @@
 # Deploying 0GDrive
 
-0GDrive has no backend. A deployment is two static sites, plus one small function that relays AI model downloads:
+0GDrive has no backend. A deployment is two static sites, plus two small stateless functions on the drive's site: one relays calls to 0G storage nodes, one relays AI model downloads.
 
 | Site | What it serves | Vercel project (root directory) |
 |---|---|---|
-| **Drive** | the app (`web/`), plus `/_models/…`, a download relay for on-device AI model files (`web/api/models.ts`) | `0g-drive` (`web`) |
+| **Drive** | the app (`web/`), plus `/_node/…`, the storage-node relay (`web/api/node.ts`), and `/_models/…`, a download relay for on-device AI model files (`web/api/models.ts`) | `0g-drive` (`web`) |
 | **Assistant** | the help assistant (`assistant/`) and its knowledge bundle; no server code | `0g-drive-assistant` (`assistant`) |
 
 The assistant is a separate site, not a folder of the drive, for two reasons:
@@ -56,11 +56,28 @@ The drive itself sends `frame-ancestors 'none'`, so no other site can frame it a
 4. **Domains:** add `drive.0g.ai` to the drive project and `drive-assistant.0g.ai` to the assistant project. For staging, add `drive-staging.0g.ai` and `drive-assistant-staging.0g.ai` and assign each to the `main` branch (Settings → Domains → Git Branch).
 5. **DNS** for `0g.ai`: a CNAME for each of the four names, pointing to the target Vercel shows for that domain.
 6. **Environment variables** as in the table above.
-7. **GitHub secrets** for the `Staging E2E` workflow (repo → Settings → Secrets and variables → Actions):
+7. **Deployment Protection:** turn off Vercel Authentication on both projects (Settings → Deployment Protection). Vercel counts the staging domains as preview domains, so its default login would cover them. The login page can't load in a frame, so the assistant would stay blank, and testers outside the Vercel team couldn't open the drive. Nothing on either site is secret; the lock layers above still apply.
+8. **GitHub secrets** for the `Staging E2E` workflow (repo → Settings → Secrets and variables → Actions):
    - `TEST_WALLET_KEY`: private key of a testnet-only wallet holding a few testnet 0G. Each suite funds a throwaway wallet from it and returns the rest.
    - `ZG_ROUTER_API_KEY`: a 0G Private Computer key with a small deposit, for the assistant suite (~0.5 0G per run).
 
 The hostnames are set in `assistant/vercel.json`, in `web/vercel.json` (the production host is excluded from `noindex`), in `.github/workflows/staging-e2e.yml`, and in the environment variables above. Change all of them together.
+
+## The storage-node relay
+
+0G storage nodes only accept plain HTTP (`http://<ip>:5678`), and browsers block plain-HTTP requests from an `https://` page ("mixed content"). So on any HTTPS deployment the drive can't reach the nodes directly. (In local dev the page is `http://localhost`, where browsers allow it.)
+
+As a temporary solution (see D10 in `decisions.md`), on HTTPS the app sends its node calls to its own site instead: core's `setNodeRelay` rewrites each node address the indexer returns, `http://34.83.53.209:5678` → `https://<drive host>/_node/34.83.53.209:5678`. Vercel rewrites that path to the `api/node` function, which forwards the JSON-RPC request to the node and streams the answer back. Every node call (upload, finality checks, repair, download) goes this way.
+
+The function:
+
+- stores nothing and only ever sees what the browser was sending anyway: encrypted file pieces and storage-node requests, never keys or file names;
+- forwards only POSTed storage-node methods (`zgs_*`), at most 4 MB per request, and only to nodes that a 0G indexer currently lists, so it can't be used as a general proxy;
+- scales with Vercel's functions; each 256 KB piece is one short call (about 4,000 calls per GB).
+
+To try the relay in local dev, start the dev server with `VITE_NODE_RELAY=1 npm run dev`.
+
+The 0G indexer also has an HTTPS upload/download API of its own (`POST /file/segment`, `GET /file?root=`, used by StorageScan). We don't use it, so that every user's file traffic doesn't depend on one shared service's capacity.
 
 ## The model download relay
 
