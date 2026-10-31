@@ -167,6 +167,9 @@ try {
   await page.locator('.activity li', { hasText: 'Renamed notes.txt → meeting notes.txt' }).waitFor({ timeout: 10 * 60_000 })
   await dialog.waitFor({ state: 'detached' })
   await row('meeting notes.txt').waitFor({ timeout: 2 * 60_000 })
+  const asked = (await page.locator('.activity li', { hasText: 'Asked your wallet to approve' }).first().textContent()) ?? ''
+  const askedSecs = Number(/approve, ([\d.]+) s after your click/.exec(asked)?.[1] ?? NaN)
+  check('Activity says when the wallet was asked (under 3 s after the click)', askedSecs >= 0 && askedSecs < 3, asked.trim())
   check('rename takes one transaction; the list shows the new name',
     txs - before === 1 && JSON.stringify(await names()) === JSON.stringify(['meeting notes.txt', LONG, 'todo.txt']), `${txs - before} tx, ${JSON.stringify(await names())}`)
 
