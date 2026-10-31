@@ -318,6 +318,22 @@ const ACTION_ICONS = {
 } as const
 
 /** Button content: icon always, label hidden on narrow screens. */
+/** Select-all checkbox: checked when every file is selected, a dash when
+ *  only some are; a click selects all, or clears when all are selected. */
+function SelectAllBox({ total, selected, onChange }: { total: number; selected: number; onChange: () => void }) {
+  return (
+    <input
+      type="checkbox"
+      ref={(el) => {
+        if (el) el.indeterminate = selected > 0 && selected < total
+      }}
+      checked={total > 0 && selected === total}
+      onChange={onChange}
+      aria-label="select all"
+    />
+  )
+}
+
 function ActionLabel({ icon }: { icon: keyof typeof ACTION_ICONS }) {
   return (
     <svg className="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -1844,6 +1860,8 @@ export default function App() {
     view === 'trash'
       ? drive?.trash?.files ?? []
       : drive?.folders.get(currentPath)?.files ?? []
+  const toggleAll = () =>
+    setSelectedIds(selectedIds.length === shownFiles.length ? [] : shownFiles.map((f) => f.id))
 
   return (
     <div className="app">
@@ -2465,6 +2483,11 @@ export default function App() {
               {view === 'trash' ? 'Trash is empty.' : ''}
             </p>
           ) : layout === 'grid' ? (
+            <>
+            <label className="grid-select-all">
+              <SelectAllBox total={shownFiles.length} selected={selectedIds.length} onChange={toggleAll} />
+              <span>Select all</span>
+            </label>
             <div className="grid">
               {shownFiles.map((f) => {
                 const selected = selectedIds.includes(f.id)
@@ -2503,23 +2526,13 @@ export default function App() {
                 )
               })}
             </div>
+            </>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th className="th-check">
-                    <input
-                      type="checkbox"
-                      checked={shownFiles.length > 0 && selectedIds.length === shownFiles.length}
-                      onChange={() =>
-                        setSelectedIds(
-                          selectedIds.length === shownFiles.length
-                            ? []
-                            : shownFiles.map((f) => f.id)
-                        )
-                      }
-                      aria-label="select all"
-                    />
+                    <SelectAllBox total={shownFiles.length} selected={selectedIds.length} onChange={toggleAll} />
                   </th>
                   <th>Name</th>
                   <th className="col-wide">Size</th>

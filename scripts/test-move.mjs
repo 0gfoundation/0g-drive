@@ -136,6 +136,41 @@ try {
   await upload([['a.txt', 'Alpha: moved by the picker.'], ['b.txt', 'Beta']])
   step(`set up; open: ${await crumbs()}`)
 
+  // ── grid view: "Select all" above the tiles (all, partial, none)
+  await page.getByRole('button', { name: 'Grid view' }).click()
+  const selectAll = page.locator('.grid-select-all input')
+  const gridSel = () => page.evaluate(() => ({
+    all: document.querySelector('.grid-select-all input').checked,
+    partial: document.querySelector('.grid-select-all input').indeterminate,
+    tiles: [...document.querySelectorAll('.tile-check')].map((c) => c.checked),
+    bar: document.querySelector('.sel-count')?.textContent ?? '',
+  }))
+  await page.getByText('Select all', { exact: true }).click()
+  const allOn = await gridSel()
+  await page.locator('.tile-check').first().click()
+  const partial = await gridSel()
+  await selectAll.click()
+  const again = await gridSel()
+  await selectAll.click()
+  const none = await gridSel()
+  check('grid: Select all selects every tile, shows a dash when partial, clears when all',
+    allOn.all && allOn.tiles.every(Boolean) && allOn.bar === '2 selected' &&
+    !partial.all && partial.partial && partial.bar === '1 selected' &&
+    again.all && again.tiles.every(Boolean) &&
+    !none.all && !none.partial && none.tiles.every((c) => !c) && none.bar === '',
+    JSON.stringify({ allOn, partial, again, none }))
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForTimeout(300)
+  const phoneSel = await page.evaluate(() => {
+    const r = document.querySelector('.grid-select-all').getBoundingClientRect()
+    const box = document.querySelector('.grid-select-all input').getBoundingClientRect()
+    return { overflow: document.documentElement.scrollWidth - window.innerWidth, h: Math.round(r.height), right: Math.round(r.right), box: Math.round(box.width) }
+  })
+  check('phone: Select all ≥44 px tall, 20 px box, inside the screen',
+    phoneSel.overflow <= 0 && phoneSel.h >= 44 && phoneSel.box >= 20 && phoneSel.right <= 390, JSON.stringify(phoneSel))
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.getByRole('button', { name: 'List view' }).click()
+
   // ── folder: Work/Reports → Docs (clash) → new Docs/2026, one transaction
   const workReports = page.locator('.sidebar .tree-row', { has: page.locator('.tree-label[title="Work/Reports"]') })
   await workReports.getByRole('button', { name: 'Move folder' }).click()

@@ -78,7 +78,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
 | `npm run test:rename` | file rename: name checks, duplicates refused, one transaction, phone layout; file actions icon-only |
 | `npm run test:folder-rename` | folder rename: name checks, one transaction, open folder follows, subfolder kept, phone layout |
-| `npm run test:move` | "Move to…" picker for folders and files: greyed-out places, name clashes refused, new destination folder, one transaction, phone layout |
+| `npm run test:move` | "Move to…" picker for folders and files: greyed-out places, name clashes refused, new destination folder, one transaction, phone layout; grid "Select all" |
 | `node scripts/time-wallet-prompt.mjs` | Time from a drive action to its wallet prompt, request by request (testnet, throwaway wallet) |
 | `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
