@@ -4,6 +4,7 @@ import { uploadData, uploadBatch, downloadFile, type BatchItem } from './storage
 import type { FileMeta, SearchEntry } from './types.js'
 import { scanUploadsCached, type EventCache, type UploadEvent } from './events.js'
 import {
+  ROOT_ID,
   TRASH_PATH,
   folderTag,
   indexTag,
@@ -11,11 +12,21 @@ import {
   type DriveIndex,
   type FolderManifest,
 } from './manifest.js'
+import { FolderTree } from './tree.js'
 
 export interface DriveState {
-  index: DriveIndex
+  /** Every folder's path (not the root), parents before children. */
+  paths: string[]
+  tree: FolderTree
+  /** Folder manifests by path ('' = root); null = no files yet. */
   folders: Map<string, FolderManifest | null>
   trash: FolderManifest | null
+}
+
+/** The index as loaded: its tree, and the version the next write bumps. */
+interface LoadedIndex {
+  tree: FolderTree
+  version: number
 }
 
 export interface DriveStoreOpts {
@@ -57,17 +68,24 @@ export function fileNameProblem(name: string): string | null {
   return null
 }
 
-/** A fresh empty index each time — a shared constant's `folders` array
- *  would be mutated by the first createFolder (and leak across drives). */
-const emptyIndex = (): DriveIndex => ({ folders: [], updatedAt: 0, version: 0 })
+/** Why `name` (already trimmed) can't be a folder name, or null if it can. */
+export function folderNameProblem(name: string): string | null {
+  if (name === TRASH_PATH) return 'That name is reserved.'
+  return fileNameProblem(name)
+}
+
+const emptyFolder = (key: string): FolderManifest => ({ path: key, files: [], updatedAt: 0, version: 0 })
 
 /**
  * Serverless drive metadata on 0G: encrypted manifest files, discovered via
  * on-chain Submit events. See docs/decisions.md D3.
  *
  * All mutations upload a new manifest version (immutable history, latest
- * block wins) — one small transaction per touched folder, plus the index
- * manifest when the folder set changes.
+ * block wins) — one per touched folder, plus the index when the folder
+ * tree changes; one transaction in all where batchSubmit is on.
+ *
+ * The public API takes folder paths; the index's tree maps each path to
+ * the folder's permanent id, which is what its manifest is tagged with.
  */
 export class DriveStore {
   private events: UploadEvent[] = []
@@ -167,15 +185,28 @@ export class DriveStore {
     return null
   }
 
-  private async loadIndex(): Promise<DriveIndex> {
+  private async loadIndex(): Promise<LoadedIndex> {
     const candidates = manifestCandidates(this.events, 'index')
-    if (candidates.length === 0) return emptyIndex()
-    const index = await this.downloadManifest<DriveIndex>(candidates)
-    return index ?? emptyIndex()
+    const index = candidates.length > 0 ? await this.downloadManifest<DriveIndex>(candidates) : null
+    if (!index) return { tree: new FolderTree(), version: 0 }
+    return { tree: FolderTree.fromIndex(index), version: index.version }
   }
 
-  private async loadFolder(path: string): Promise<FolderManifest | null> {
-    const candidates = manifestCandidates(this.events, 'folder', path)
+  /** The index write for `index` as it stands (v2), as a batch item. */
+  private indexItem(index: LoadedIndex): BatchItem {
+    const stored: DriveIndex = { v: 2, folders: index.tree.nodes, updatedAt: Date.now(), version: index.version + 1 }
+    return this.manifestItem(stored, indexTag())
+  }
+
+  /** The folder id at `path`, or an error saying it's gone. */
+  private folderId(index: LoadedIndex, path: string): string {
+    const id = index.tree.idOf(path)
+    if (id === null) throw new Error(`The folder "${path}" no longer exists. Reload and try again.`)
+    return id
+  }
+
+  private async loadFolder(key: string): Promise<FolderManifest | null> {
+    const candidates = manifestCandidates(this.events, 'folder', key)
     if (candidates.length === 0) return null
     const folder = await this.downloadManifest<FolderManifest>(candidates)
     if (folder) this.backfillTxInfo(folder.files)
@@ -205,30 +236,33 @@ export class DriveStore {
   /** Load the whole drive state from the chain (fresh scan). */
   async loadDrive(): Promise<DriveState> {
     await this.refreshEvents()
-    const index = await this.loadIndex()
+    const { tree } = await this.loadIndex()
+    const paths = tree.paths()
     // folders are independent downloads: fetch them a few at a time
-    const paths = ['', ...index.folders, TRASH_PATH] // '' = drive root
-    const loaded: (FolderManifest | null)[] = new Array(paths.length)
+    const keys = [ROOT_ID, ...paths.map((p) => tree.idOf(p)!), TRASH_PATH]
+    const loaded: (FolderManifest | null)[] = new Array(keys.length)
     let next = 0
     const worker = async () => {
-      while (next < paths.length) {
+      while (next < keys.length) {
         const i = next++
-        loaded[i] = await this.loadFolder(paths[i])
+        loaded[i] = await this.loadFolder(keys[i])
       }
     }
-    await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, paths.length) }, worker))
+    await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, keys.length) }, worker))
     const folders = new Map<string, FolderManifest | null>()
-    paths.slice(0, -1).forEach((p, i) => folders.set(p, loaded[i]))
-    return { index, folders, trash: loaded[paths.length - 1] }
+    ;['', ...paths].forEach((p, i) => folders.set(p, loaded[i]))
+    const trash = loaded[keys.length - 1]
+    // show where trashed files came from as that folder is named now
+    for (const rec of trash?.files ?? []) {
+      const now = tree.has(originFolder(rec)) ? tree.pathOf(originFolder(rec)) : null
+      if (now !== null) rec.originalPath = now
+    }
+    return { paths, tree, folders, trash }
   }
 
-  private async writeIndex(index: DriveIndex): Promise<void> {
-    index.updatedAt = Date.now()
-    index.version += 1
-    await this.uploadManifest(
-      new TextEncoder().encode(JSON.stringify(index)),
-      indexTag()
-    )
+  private async writeIndex(index: LoadedIndex): Promise<void> {
+    const item = this.indexItem(index)
+    await this.uploadManifest(item.data as Uint8Array, indexTag())
   }
 
   /** Add or update a file record in a folder (creates the folder if new). */
@@ -242,44 +276,29 @@ export class DriveStore {
    * sealing wait). Files themselves are already uploaded by the caller.
    */
   async putFileRecords(folderPath: string, metas: FileMeta[]): Promise<void> {
-    const path = normalizePath(folderPath)
-    await this.refreshEvents()
-
-    const folder = (await this.loadFolder(path)) ?? {
-      path,
-      files: [],
-      updatedAt: 0,
-      version: 0,
-    }
-    for (const meta of metas) {
-      const idx = folder.files.findIndex((f) => f.id === meta.id)
-      if (idx >= 0) folder.files[idx] = meta
-      else folder.files.push(meta)
-    }
-    folder.updatedAt = Date.now()
-    folder.version += 1
-    await this.uploadManifest(
-      new TextEncoder().encode(JSON.stringify(folder)),
-      folderTag(path)
+    const items = await this.prepareFileRecords(folderPath, metas)
+    // a new folder's index entry first: a failure after it leaves an
+    // empty folder, not a listing no folder points to
+    await this.writeManifests(
+      items.slice(0, -1),
+      items.slice(-1),
+      'the folder was created but the files are not listed in it yet. Upload them again to finish.'
     )
-
-    const index = await this.loadIndex()
-    if (path !== '' && !index.folders.includes(path)) {
-      index.folders.push(path)
-      await this.writeIndex(index)
-    }
   }
 
   /**
    * The manifest write(s) for adding `metas` to a folder, as batch items
    * instead of uploads — so they can ride in the same transaction as the
    * files themselves (storage.uploadBatch → finalize). Same contents as
-   * putFileRecords would write.
+   * putFileRecords would write: the index first if the folder is new, then
+   * the folder.
    */
   async prepareFileRecords(folderPath: string, metas: FileMeta[]): Promise<BatchItem[]> {
     const path = normalizePath(folderPath)
     await this.refreshEvents()
-    const folder = (await this.loadFolder(path)) ?? { path, files: [], updatedAt: 0, version: 0 }
+    const index = await this.loadIndex()
+    const { id, created } = index.tree.ensure(path)
+    const folder = (created ? null : await this.loadFolder(id)) ?? emptyFolder(id)
     for (const meta of metas) {
       const idx = folder.files.findIndex((f) => f.id === meta.id)
       if (idx >= 0) folder.files[idx] = meta
@@ -287,19 +306,8 @@ export class DriveStore {
     }
     folder.updatedAt = Date.now()
     folder.version += 1
-    const enc = { type: 'aes256' as const, key: this.masterKey }
-    const out: BatchItem[] = [
-      { data: new TextEncoder().encode(JSON.stringify(folder)), encryption: enc, tags: folderTag(path) },
-    ]
-    if (path !== '') {
-      const index = await this.loadIndex()
-      if (!index.folders.includes(path)) {
-        index.folders.push(path)
-        index.updatedAt = Date.now()
-        index.version += 1
-        out.push({ data: new TextEncoder().encode(JSON.stringify(index)), encryption: enc, tags: indexTag() })
-      }
-    }
+    const out: BatchItem[] = created ? [this.indexItem(index)] : []
+    out.push(this.manifestItem(folder, folderTag(id)))
     return out
   }
 
@@ -324,10 +332,18 @@ export class DriveStore {
     toTrash = true
   ): Promise<void> {
     if (ids.length === 0) return
-    const path = normalizePath(folderPath)
     await this.refreshEvents()
+    let path: string
+    let key: string
+    if (folderPath === TRASH_PATH) {
+      if (toTrash) throw new Error('Files in trash are already in trash')
+      path = key = TRASH_PATH
+    } else {
+      path = normalizePath(folderPath)
+      key = this.folderId(await this.loadIndex(), path)
+    }
 
-    const folder = await this.loadFolder(path)
+    const folder = await this.loadFolder(key)
     if (folder === null) return
     const removed = folder.files.filter((f) => ids.includes(f.id))
     if (removed.length === 0) return
@@ -337,12 +353,12 @@ export class DriveStore {
     folder.version += 1
     const first: BatchItem[] = []
     if (toTrash) {
-      const trash = await this.trashWith(removed.map((rec) => ({ ...rec, originalPath: path })))
+      const trash = await this.trashWith(removed.map((rec) => ({ ...rec, originalPath: path, originalFolder: key })))
       first.push(this.manifestItem(trash, folderTag(TRASH_PATH)))
     }
     await this.writeManifests(
       first,
-      [this.manifestItem(folder, folderTag(path))],
+      [this.manifestItem(folder, folderTag(key))],
       'the files were added to trash but are still listed in their folder too. Move them to trash again to finish.'
     )
   }
@@ -366,7 +382,8 @@ export class DriveStore {
     if (problem) throw new Error(problem)
     await this.refreshEvents()
 
-    const folder = await this.loadFolder(path)
+    const key = this.folderId(await this.loadIndex(), path)
+    const folder = await this.loadFolder(key)
     const rec = folder?.files.find((f) => f.id === id)
     if (!folder || !rec) throw new Error('That file is no longer in this folder. Reload and try again.')
     if (rec.name === name) return rec
@@ -377,32 +394,37 @@ export class DriveStore {
     if (search) rec.search = search
     folder.updatedAt = Date.now()
     folder.version += 1
-    await this.uploadManifest(new TextEncoder().encode(JSON.stringify(folder)), folderTag(path))
+    await this.uploadManifest(new TextEncoder().encode(JSON.stringify(folder)), folderTag(key))
     return rec
   }
 
-  /** Create a folder (index entry; manifest materializes on first file). */
+  /** Create a folder and any missing parents (index only; the manifest
+   *  materializes on the first file). */
   async createFolder(folderPath: string): Promise<void> {
     const path = normalizePath(folderPath)
     if (path === '') return // the root always exists
+    for (const name of path.split('/')) {
+      const problem = folderNameProblem(name)
+      if (problem) throw new Error(problem)
+    }
     await this.refreshEvents()
     const index = await this.loadIndex()
-    if (index.folders.includes(path)) return
-    index.folders.push(path)
-    await this.writeIndex(index)
+    if (index.tree.ensure(path).created) await this.writeIndex(index)
   }
 
-  /** Remove an empty folder from the index. */
+  /** Remove an empty folder (no files, no subfolders) from the index. */
   async removeFolder(folderPath: string): Promise<void> {
     const path = normalizePath(folderPath)
     if (path === '') throw new Error('The drive root cannot be removed')
     await this.refreshEvents()
-    const folder = await this.loadFolder(path)
-    if (folder !== null && folder.files.length > 0) {
+    const index = await this.loadIndex()
+    const id = index.tree.idOf(path)
+    if (id === null) return
+    const folder = await this.loadFolder(id)
+    if ((folder !== null && folder.files.length > 0) || index.tree.children(id).length > 0) {
       throw new Error(`Folder "${path}" is not empty — trash its files first`)
     }
-    const index = await this.loadIndex()
-    index.folders = index.folders.filter((f) => f !== path)
+    index.tree.remove([id])
     await this.writeIndex(index)
   }
 
@@ -410,12 +432,12 @@ export class DriveStore {
    * Move a folder and everything inside it (including all descendant
    * folders) to trash, in one transaction where batchSubmit is on:
    *   1. trash manifest update — all file records, each tagged with its
-   *      original folder path (restorable individually); stored first
-   *   2. index update — the folder and its descendants stop existing
-   * Descendant folder manifests are NOT rewritten: they become unreferenced
-   * the moment the index drops their paths, so their old versions simply
-   * stop being loaded. Empty descendant folders are not preserved (folder
-   * existence lives only in the index).
+   *      original folder (restorable individually); stored first
+   *   2. index update — the folder and its descendants leave the tree
+   * Folder manifests are NOT rewritten: no tree node points to them any
+   * more, and a folder made later under the same name gets a new id, so
+   * they are never loaded again. Empty descendant folders are not
+   * preserved.
    */
   async trashFolder(folderPath: string): Promise<void> {
     const path = normalizePath(folderPath)
@@ -423,18 +445,14 @@ export class DriveStore {
     await this.refreshEvents()
 
     const index = await this.loadIndex()
-    const descendants = index.folders.filter(
-      (f) => f.startsWith(path + '/')
-    )
-    const affected = [path, ...descendants]
+    const id = this.folderId(index, path)
+    const affected = index.tree.subtree(id)
 
     const records: FileMeta[] = []
     for (const f of affected) {
       const manifest = await this.loadFolder(f)
-      if (manifest !== null) {
-        for (const rec of manifest.files) {
-          records.push({ ...rec, originalPath: f })
-        }
+      for (const rec of manifest?.files ?? []) {
+        records.push({ ...rec, originalPath: index.tree.pathOf(f) ?? path, originalFolder: f })
       }
     }
 
@@ -442,45 +460,37 @@ export class DriveStore {
     if (records.length > 0) {
       first.push(this.manifestItem(await this.trashWith(records), folderTag(TRASH_PATH)))
     }
-    index.folders = index.folders.filter((f) => !affected.includes(f))
-    index.updatedAt = Date.now()
-    index.version += 1
+    index.tree.remove(affected)
     await this.writeManifests(
       first,
-      [this.manifestItem(index, indexTag())],
+      [this.indexItem(index)],
       'the files were added to trash but the folder still shows. Delete it again to finish.'
     )
   }
 
-  /** Rename a folder: re-manifest its files under the new path. */
-  async renameFolder(oldPath: string, newPath: string): Promise<void> {
-    const old = normalizePath(oldPath)
-    const next = normalizePath(newPath)
-    if (old === '' || next === '') {
-      throw new Error('The drive root cannot be renamed')
-    }
-    if (old === next) return
+  /**
+   * Rename a folder: one index write (one transaction), however many files
+   * and subfolders it holds — manifests are tagged by folder id, not path.
+   * Refuses an invalid name or one a sibling folder already has (ignoring
+   * case). Returns the folder's new path.
+   */
+  async renameFolder(folderPath: string, newName: string): Promise<string> {
+    const path = normalizePath(folderPath)
+    if (path === '') throw new Error('The drive root cannot be renamed')
+    const name = newName.trim()
+    const problem = folderNameProblem(name)
+    if (problem) throw new Error(problem)
     await this.refreshEvents()
 
-    const folder = await this.loadFolder(old)
-    if (folder !== null && folder.files.length > 0) {
-      const moved: FolderManifest = {
-        ...folder,
-        path: next,
-        updatedAt: Date.now(),
-        version: folder.version + 1,
-      }
-      await this.uploadManifest(
-        new TextEncoder().encode(JSON.stringify(moved)),
-        folderTag(next)
-      )
-    }
     const index = await this.loadIndex()
-    index.folders = index.folders
-      .filter((f) => f !== old)
-      .concat(next)
-      .filter((f, i, arr) => arr.indexOf(f) === i)
+    const id = this.folderId(index, path)
+    const node = index.tree.get(id)!
+    if (node.name === name) return path
+    const clash = index.tree.child(node.parent, name, true)
+    if (clash && clash.id !== id) throw new Error(`There is already a folder named "${clash.name}" here.`)
+    index.tree.rename(id, name)
     await this.writeIndex(index)
+    return index.tree.pathOf(id)!
   }
 
   /** Restore a trashed file record to its original folder (or a given one). */
@@ -504,32 +514,35 @@ export class DriveStore {
     const restored = trash.files.filter((f) => ids.includes(f.id))
     if (restored.length === 0) return
 
+    // each record goes back to its folder by id (wherever it is now), else
+    // to its old path, re-creating the folder if it's gone
+    const index = await this.loadIndex()
+    let treeChanged = false
     const byFolder = new Map<string, FileMeta[]>()
     for (const rec of restored) {
-      const dest = normalizePath(targetPath ?? rec.originalPath ?? '')
-      const list = byFolder.get(dest) ?? []
-      const { originalPath: _op, ...clean } = rec
-      list.push(clean)
-      byFolder.set(dest, list)
+      let dest: string
+      if (targetPath === undefined && index.tree.has(originFolder(rec))) {
+        dest = originFolder(rec)
+      } else {
+        const ensured = index.tree.ensure(normalizePath(targetPath ?? rec.originalPath ?? ''))
+        dest = ensured.id
+        treeChanged ||= ensured.created
+      }
+      const { originalPath: _op, originalFolder: _of, ...clean } = rec
+      byFolder.set(dest, [...(byFolder.get(dest) ?? []), clean])
     }
 
-    const first: BatchItem[] = []
+    // a re-created folder's index entry first: a failure after it leaves
+    // the files in trash and an empty folder, never listed nowhere
+    const first: BatchItem[] = treeChanged ? [this.indexItem(index)] : []
     for (const [dest, records] of byFolder) {
-      const folder =
-        (await this.loadFolder(dest)) ?? {
-          path: dest,
-          files: [],
-          updatedAt: 0,
-          version: 0,
-        }
+      const folder = (await this.loadFolder(dest)) ?? emptyFolder(dest)
       const back = new Set(records.map((f) => f.id))
       folder.files = [...folder.files.filter((f) => !back.has(f.id)), ...records]
       folder.updatedAt = Date.now()
       folder.version += 1
       first.push(this.manifestItem(folder, folderTag(dest)))
     }
-    const indexItem = await this.indexWith([...byFolder.keys()])
-    if (indexItem) first.push(indexItem)
 
     trash.files = trash.files.filter((f) => !ids.includes(f.id))
     trash.updatedAt = Date.now()
@@ -560,32 +573,36 @@ export class DriveStore {
     if (byDest.size === 0) return
     await this.refreshEvents()
 
-    const source = await this.loadFolder(from)
+    const index = await this.loadIndex()
+    const fromId = this.folderId(index, from)
+    const source = await this.loadFolder(fromId)
     if (source === null) return
-    const first: BatchItem[] = []
+    let treeChanged = false
+    const writes: BatchItem[] = []
     const moved = new Set<string>()
     for (const [to, ids] of byDest) {
       const records = source.files.filter((f) => ids.includes(f.id))
       if (records.length === 0) continue
-      const dest =
-        (await this.loadFolder(to)) ?? { path: to, files: [], updatedAt: 0, version: 0 }
+      const { id: toId, created } = index.tree.ensure(to)
+      treeChanged ||= created
+      const dest = (created ? null : await this.loadFolder(toId)) ?? emptyFolder(toId)
       const present = new Set(dest.files.map((f) => f.id))
       dest.files.push(...records.filter((f) => !present.has(f.id)))
       dest.updatedAt = Date.now()
       dest.version += 1
-      first.push(this.manifestItem(dest, folderTag(to)))
+      writes.push(this.manifestItem(dest, folderTag(toId)))
       records.forEach((f) => moved.add(f.id))
     }
     if (moved.size === 0) return
-    const indexItem = await this.indexWith([...byDest.keys()])
-    if (indexItem) first.push(indexItem)
+    // new destinations' index entry first (see restoreRecords)
+    const first = treeChanged ? [this.indexItem(index), ...writes] : writes
 
     source.files = source.files.filter((f) => !moved.has(f.id))
     source.updatedAt = Date.now()
     source.version += 1
     await this.writeManifests(
       first,
-      [this.manifestItem(source, folderTag(from))],
+      [this.manifestItem(source, folderTag(fromId))],
       'the files were copied to their new folders but are still listed in the old one too. Move them again to finish.'
     )
   }
@@ -602,24 +619,12 @@ export class DriveStore {
 
   /** The trash with `records` added (a record already there is replaced). */
   private async trashWith(records: FileMeta[]): Promise<FolderManifest> {
-    const trash =
-      (await this.loadFolder(TRASH_PATH)) ?? { path: TRASH_PATH, files: [], updatedAt: 0, version: 0 }
+    const trash = (await this.loadFolder(TRASH_PATH)) ?? emptyFolder(TRASH_PATH)
     const adding = new Set(records.map((r) => r.id))
     trash.files = [...trash.files.filter((f) => !adding.has(f.id)), ...records]
     trash.updatedAt = Date.now()
     trash.version += 1
     return trash
-  }
-
-  /** The index write that adds any of `paths` it lacks, or null if none. */
-  private async indexWith(paths: string[]): Promise<BatchItem | null> {
-    const index = await this.loadIndex()
-    const added = paths.filter((p, i) => p !== '' && !index.folders.includes(p) && paths.indexOf(p) === i)
-    if (added.length === 0) return null
-    index.folders.push(...added)
-    index.updatedAt = Date.now()
-    index.version += 1
-    return this.manifestItem(index, indexTag())
   }
 
   /**
@@ -678,4 +683,10 @@ function manifestCandidates(
   folderPath?: string
 ): UploadEvent[] {
   return findManifestEvents(events, purpose, folderPath)
+}
+
+/** The id of the folder a trashed record came from. Records trashed before
+ *  folder ids have only the path — which is the id of a pre-tree folder. */
+function originFolder(rec: FileMeta): string {
+  return rec.originalFolder ?? rec.originalPath ?? ROOT_ID
 }

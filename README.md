@@ -68,7 +68,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run net-check` | read-only indexer and node connectivity probe |
 | `npm run smoke` | strict E2E: 1 MB upload → finality → download → decrypt → verify, with a cost report |
 | `npm run roundtrip` | fast E2E roundtrip (same flow, 256 KB) |
-| `npm run test:drive` | drive semantics: folders, files, trash, rename, restart recovery |
+| `npm run test:drive` | drive semantics: folder tree, files, trash, folder rename, restart recovery, drives from before the folder tree |
 | `npm run test:e2e` | the full drive UI in a real browser |
 | `npm run test:batch` | one-approval batch uploads |
 | `npm run test:share-wallet` | wallet-locked share links |

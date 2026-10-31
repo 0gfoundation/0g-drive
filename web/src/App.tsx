@@ -107,7 +107,7 @@ function shortHash(hash: string): string {
 /** Immediate subfolders of `path` according to the drive index. */
 function subFolders(drive: DriveState, path: string): string[] {
   const prefix = path === '' ? '' : path + '/'
-  return drive.index.folders
+  return drive.paths
     .filter((f) => f.startsWith(prefix) && f.slice(prefix.length).indexOf('/') === -1)
     .sort()
 }
@@ -1590,7 +1590,7 @@ export default function App() {
       if (!store) return
       // count files in this folder and all descendants for the confirm
       const count =
-        drive?.index.folders
+        drive?.paths
           .filter((f) => f === path || f.startsWith(path + '/'))
           .reduce((n, f) => n + (drive.folders.get(f)?.files.length ?? 0), 0) ?? 0
       const msg =
@@ -1964,7 +1964,7 @@ export default function App() {
                   <FolderGlyph />
                   <span>My Drive</span>
                 </button>
-                {buildTree(drive.index.folders).map((node) => (
+                {buildTree(drive.paths).map((node) => (
                   <TreeRow
                     key={node.path}
                     node={node}

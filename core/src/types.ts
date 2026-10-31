@@ -49,8 +49,12 @@ export interface FileMeta {
    *  kept so older manifests still parse. */
   shares?: ShareRecord[]
   network: string // e.g. "testnet:turbo"
-  /** Set on records in the trash folder: the folder they were removed from. */
+  /** Set on records in the trash folder: the path of the folder they were
+   *  removed from (as it is now, while that folder exists). */
   originalPath?: string
+  /** Set on records in the trash folder: the id of that folder, so restore
+   *  finds it after a rename. Absent on records trashed before ids. */
+  originalFolder?: string
   /**
    * Small thumbnail (data:image/webp|jpeg, a few KB), generated client-side
    * at upload. Lives inside the folder manifest, which is encrypted with the
