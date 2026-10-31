@@ -31,6 +31,7 @@ import {
   DriveStore,
   TRASH_PATH,
   fileNameProblem,
+  folderNameProblem,
   type DriveState,
   type FileMeta,
   type SharePayload,
@@ -102,6 +103,14 @@ function fmtDate(ts: number): string {
 
 function shortHash(hash: string): string {
   return hash.length > 14 ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : hash
+}
+
+/** What the rename dialog is renaming. */
+type RenameTarget = { kind: 'file'; meta: FileMeta } | { kind: 'folder'; path: string }
+
+/** The last segment of a folder path. */
+function baseName(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1)
 }
 
 /** Immediate subfolders of `path` according to the drive index. */
@@ -315,7 +324,7 @@ function FolderGlyph({ open }: { open?: boolean }) {
 }
 
 function TreeRow({
-  node, depth, currentPath, expanded, onToggle, onSelect, onRemove, disabled,
+  node, depth, currentPath, expanded, onToggle, onSelect, onRename, onRemove, disabled,
 }: {
   node: TreeNode
   depth: number
@@ -323,6 +332,7 @@ function TreeRow({
   expanded: string[]
   onToggle(p: string): void
   onSelect(p: string): void
+  onRename(p: string): void
   onRemove(p: string): void
   disabled: boolean
 }) {
@@ -342,7 +352,14 @@ function TreeRow({
           <FolderGlyph open={isOpen} />
           <span className="tree-name">{node.name}</span>
         </button>
-        <button className="tree-remove" disabled={disabled} onClick={() => onRemove(node.path)}
+        <button className="tree-act tree-rename" disabled={disabled} onClick={() => onRename(node.path)}
+          title="Rename folder" aria-label="Rename folder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d={ACTION_ICONS.rename} />
+          </svg>
+        </button>
+        <button className="tree-act tree-remove" disabled={disabled} onClick={() => onRemove(node.path)}
           title="Move folder (and contents) to trash">
           🗑
         </button>
@@ -350,7 +367,7 @@ function TreeRow({
       {isOpen &&
         node.children.map((ch) => (
           <TreeRow key={ch.path} node={ch} depth={depth + 1} currentPath={currentPath}
-            expanded={expanded} onToggle={onToggle} onSelect={onSelect} onRemove={onRemove}
+            expanded={expanded} onToggle={onToggle} onSelect={onSelect} onRename={onRename} onRemove={onRemove}
             disabled={disabled} />
         ))}
     </div>
@@ -583,7 +600,7 @@ export default function App() {
   const [profileState, setProfileState] = useState<string>('checking')
   const [publishing, setPublishing] = useState(false)
   const [shareFor, setShareFor] = useState<FileMeta | null>(null)
-  const [renameFor, setRenameFor] = useState<FileMeta | null>(null)
+  const [renameFor, setRenameFor] = useState<RenameTarget | null>(null)
   const [renameTo, setRenameTo] = useState('')
   const [renameError, setRenameError] = useState<string | null>(null)
   const [previewFor, setPreviewFor] = useState<FileMeta | null>(null)
@@ -1476,26 +1493,44 @@ export default function App() {
   )
 
   const openRename = useCallback((meta: FileMeta) => {
-    setRenameFor(meta)
+    setRenameFor({ kind: 'file', meta })
     setRenameTo(meta.name)
     setRenameError(null)
   }, [])
 
+  const openFolderRename = useCallback((path: string) => {
+    setRenameFor({ kind: 'folder', path })
+    setRenameTo(baseName(path))
+    setRenameError(null)
+    setNavOpen(false)
+  }, [])
+
   const submitRename = useCallback(async () => {
     const store = storeRef.current
-    const meta = renameFor
-    if (!store || !meta) return
+    const target = renameFor
+    if (!store || !target) return
     const name = renameTo.trim()
-    if (name === meta.name) {
+    const oldName = target.kind === 'file' ? target.meta.name : baseName(target.path)
+    if (name === oldName) {
       setRenameFor(null)
       return
     }
     setRenameError(null)
-    setBusy(`Renaming ${meta.name}…`)
+    setBusy(`Renaming ${oldName}…`)
     try {
-      const search = await entryForRename(meta.search, name)
-      await store.renameFile(currentPath, meta.id, name, search)
-      log(`Renamed ${meta.name} → ${name}.`)
+      if (target.kind === 'file') {
+        const search = await entryForRename(target.meta.search, name)
+        await store.renameFile(currentPath, target.meta.id, name, search)
+        log(`Renamed ${oldName} → ${name}.`)
+      } else {
+        const newPath = await store.renameFolder(target.path, name)
+        log(`Renamed folder ${target.path} → ${newPath}.`)
+        // the open folder and expanded tree rows follow the new path
+        const moved = (p: string) =>
+          p === target.path ? newPath : p.startsWith(target.path + '/') ? newPath + p.slice(target.path.length) : p
+        setCurrentPath(moved)
+        setExpandedFolders((prev) => prev.map(moved))
+      }
       setRenameFor(null)
       await reloadDrive()
     } catch (err) {
@@ -1973,6 +2008,7 @@ export default function App() {
                     expanded={expandedFolders}
                     onToggle={toggleFolder}
                     onSelect={(p) => { setView('drive'); setCurrentPath(p) }}
+                    onRename={openFolderRename}
                     onRemove={removeFolder}
                     disabled={busy !== null || readOnly}
                   />
@@ -2538,13 +2574,23 @@ export default function App() {
       )}
 
       {renameFor && (() => {
+        const isFile = renameFor.kind === 'file'
+        const oldName = isFile ? renameFor.meta.name : baseName(renameFor.path)
         const name = renameTo.trim()
         const ext = (n: string) => (/\.([^./]+)$/.exec(n)?.[1] ?? '').toLowerCase()
-        const clash =
-          name.toLowerCase() !== renameFor.name.toLowerCase() &&
-          shownFiles.some((f) => f.id !== renameFor.id && f.name.toLowerCase() === name.toLowerCase())
-        const problem = fileNameProblem(name) ?? (clash ? `There is already a file named “${name}” in this folder.` : null)
-        const extChanged = !problem && ext(name) !== ext(renameFor.name)
+        const same = (n: string) => n.toLowerCase() === name.toLowerCase()
+        let problem: string | null
+        if (isFile) {
+          const clash = !same(oldName) && shownFiles.some((f) => f.id !== renameFor.meta.id && same(f.name))
+          problem = fileNameProblem(name) ?? (clash ? `There is already a file named “${name}” in this folder.` : null)
+        } else {
+          const parent = renameFor.path.includes('/') ? renameFor.path.slice(0, renameFor.path.lastIndexOf('/')) : ''
+          const clash = drive && !same(oldName)
+            ? subFolders(drive, parent).map(baseName).find((n) => same(n))
+            : undefined
+          problem = folderNameProblem(name) ?? (clash ? `There is already a folder named “${clash}” here.` : null)
+        }
+        const extChanged = isFile && !problem && ext(name) !== ext(oldName)
         return (
           <div className="modal-backdrop" onClick={() => busy === null && setRenameFor(null)}>
             <form
@@ -2556,7 +2602,7 @@ export default function App() {
                 if (!problem) void submitRename()
               }}
             >
-              <h2>Rename file</h2>
+              <h2>{isFile ? 'Rename file' : 'Rename folder'}</h2>
               <input
                 className="key-input wide"
                 aria-label="New name"
@@ -2565,18 +2611,18 @@ export default function App() {
                 onChange={(e) => setRenameTo(e.target.value)}
                 onFocus={(e) => {
                   // select the name without its extension, like a desktop file manager
-                  const dot = renameFor.name.lastIndexOf('.')
-                  e.target.setSelectionRange(0, dot > 0 ? dot : renameFor.name.length)
+                  const dot = isFile ? oldName.lastIndexOf('.') : -1
+                  e.target.setSelectionRange(0, dot > 0 ? dot : oldName.length)
                 }}
                 autoFocus
                 spellCheck={false}
                 autoComplete="off"
               />
-              {problem && name !== renameFor.name && <p className="error-text">⚠ {problem}</p>}
+              {problem && name !== oldName && <p className="error-text">⚠ {problem}</p>}
               {extChanged && (
                 <p className="muted">
                   {ext(name)
-                    ? `The extension changes from “.${ext(renameFor.name) || '(none)'}” to “.${ext(name)}”. `
+                    ? `The extension changes from “.${ext(oldName) || '(none)'}” to “.${ext(name)}”. `
                     : 'The name has no extension. '}
                   0GDrive keeps opening it as the type it was uploaded as; other apps may treat it differently after download.
                 </p>
@@ -2586,11 +2632,15 @@ export default function App() {
                 <button className="btn" type="button" onClick={() => setRenameFor(null)} disabled={busy !== null}>
                   Cancel
                 </button>
-                <button className="btn primary" type="submit" disabled={busy !== null || !!problem || name === renameFor.name}>
+                <button className="btn primary" type="submit" disabled={busy !== null || !!problem || name === oldName}>
                   {busy !== null ? 'Renaming…' : 'Rename'}
                 </button>
               </div>
-              <p className="muted small-print">1 transaction · the file itself isn’t re-uploaded · links you already shared keep the old name</p>
+              <p className="muted small-print">
+                {isFile
+                  ? '1 transaction · the file itself isn’t re-uploaded · links you already shared keep the old name'
+                  : '1 transaction · nothing inside is re-uploaded · subfolders and files keep their place'}
+              </p>
             </form>
           </div>
         )
