@@ -11,7 +11,12 @@ import {
   DriveStore,
   getNetworkConfig,
   bytesToHex,
+  uploadBatch,
+  folderTag,
+  indexTag,
+  TRASH_PATH,
 } from '../core/dist/index.js'
+import { refund } from './lib/refund.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 let privateKey = process.env.PRIVATE_KEY
@@ -44,9 +49,9 @@ const masterKeyHex = bytesToHex(masterKey)
 // still starts with NO cached events — restart recovery is still proven
 // from chain state alone, just not across years of unrelated history.
 const startBlock = (await provider.getBlockNumber()) - 5
-const newStore = () => {
+const newStore = (signer = wallet, key = masterKey) => {
   let cache = { events: [], toBlock: startBlock }
-  return new DriveStore(network, wallet, masterKey, {
+  return new DriveStore(network, signer, key, {
     onProgress: (msg) => {
       if (msg.includes('sealed') || msg.includes('Repair')) console.log(`    ${msg}`)
     },
@@ -83,7 +88,7 @@ function check(label, cond, detail = '') {
 console.log('— load fresh drive —')
 let store = newStore()
 let state = await store.loadDrive()
-check('index empty', state.index.folders.length === 0)
+check('index empty', state.paths.length === 0)
 
 // ── 2. Folder + files ─────────────────────────────────────────────────
 console.log('\n— createFolder("Photos") + putFileRecord ×2 —')
@@ -97,8 +102,8 @@ console.log('  (3 manifest txs + 2 index txs submitted, sealed)')
 console.log('\n— restart: fresh DriveStore, reconstruct from chain —')
 store = newStore() // same key, zero cached state
 state = await store.loadDrive()
-check('folders', JSON.stringify(state.index.folders.sort()) === JSON.stringify(['Documents', 'Photos']),
-  state.index.folders.join(', '))
+check('folders', JSON.stringify(state.paths.sort()) === JSON.stringify(['Documents', 'Photos']),
+  state.paths.join(', '))
 check('Photos files', state.folders.get('Photos')?.files.length === 2,
   state.folders.get('Photos')?.files.map((f) => f.name).join(', '))
 check('Documents files', state.folders.get('Documents')?.files.length === 1)
@@ -116,7 +121,10 @@ const txsSince = async () => {
 await store.removeFileRecord('Photos', 'f1')
 const trashTxs = await txsSince()
 check('move to trash: one transaction (folder + trash)', trashTxs === 1, `${trashTxs} tx`)
+await txsSince()
 await store.renameFolder('Documents', 'Docs')
+const renameTxs = await txsSince()
+check('rename folder: one transaction (index only)', renameTxs === 1, `${renameTxs} tx`)
 await store.createFolder('Temp')
 await store.removeFolder('Temp')
 
@@ -138,9 +146,9 @@ check('trash has sunset.jpg with originalPath',
   state.trash.files[0].name === 'sunset.jpg' &&
   state.trash.files[0].originalPath === 'Photos')
 check('Docs renamed (files moved)',
-  JSON.stringify(state.index.folders.sort()) === JSON.stringify(['Docs', 'Photos']) &&
+  JSON.stringify(state.paths.sort()) === JSON.stringify(['Docs', 'Photos']) &&
   state.folders.get('Docs')?.files.length === 1)
-check('Temp removed', !state.index.folders.includes('Temp'))
+check('Temp removed', !state.paths.includes('Temp'))
 
 // ── 6. Moves: two destinations (one new folder) in ONE transaction ──
 console.log('\n— moveRecords: Inbox → Docs + Archive (new), one transaction —')
@@ -157,9 +165,9 @@ state = await store.loadDrive()
 check('after restart: invoice in Docs, photo in new Archive, Inbox empty',
   state.folders.get('Docs')?.files.some((f) => f.id === 'f4') &&
   state.folders.get('Archive')?.files.length === 1 &&
-  state.index.folders.includes('Archive') &&
+  state.paths.includes('Archive') &&
   state.folders.get('Inbox')?.files.length === 0,
-  state.index.folders.join(', '))
+  state.paths.join(', '))
 
 // ── 7. Folder trash + restore, each in ONE transaction ───────────────
 console.log('\n— trashFolder(Archive), then restore its file —')
@@ -177,14 +185,86 @@ state = await store.loadDrive()
 check('after restart: both restored to their own folders, trash keeps only sunset.jpg',
   state.folders.get('Archive')?.files.some((f) => f.id === 'f5') &&
   state.folders.get('Archive/2025')?.files.some((f) => f.id === 'f6') &&
-  state.index.folders.includes('Archive') && state.index.folders.includes('Archive/2025') &&
+  state.paths.includes('Archive') && state.paths.includes('Archive/2025') &&
   JSON.stringify(state.trash?.files.map((f) => f.name)) === '["sunset.jpg"]',
-  `${state.index.folders.join(', ')} | trash: ${state.trash?.files.map((f) => f.name).join(', ')}`)
+  `${state.paths.join(', ')} | trash: ${state.trash?.files.map((f) => f.name).join(', ')}`)
 
-// ── 8. Cost report ────────────────────────────────────────────────────
+// ── 8. Folder ids: rename with subfolders, trash follows, no reuse ───
+console.log('\n— trash tax.pdf, rename Archive → Old, restore it; trash Old, re-create it —')
+await store.removeFileRecord('Archive/2025', 'f6')
+await txsSince()
+const newPath = await store.renameFolder('Archive', 'Old')
+const renameTreeTxs = await txsSince()
+check('rename a folder with a subfolder: one transaction', renameTreeTxs === 1 && newPath === 'Old', `${renameTreeTxs} tx → ${newPath}`)
+try {
+  await store.renameFolder('Old', 'docs')
+  check('rename to a sibling’s name (other case) refused', false)
+} catch (err) {
+  check('rename to a sibling’s name (other case) refused', /already a folder named "Docs"/.test(err.message), err.message)
+}
+store = newStore()
+state = await store.loadDrive()
+check('after restart: files and subfolder under the new name; trash shows the new path',
+  state.folders.get('Old')?.files.some((f) => f.id === 'f5') &&
+  state.paths.includes('Old/2025') && !state.paths.some((p) => p.startsWith('Archive')) &&
+  state.trash?.files.find((f) => f.id === 'f6')?.originalPath === 'Old/2025',
+  `${state.paths.join(', ')} | f6 from ${state.trash?.files.find((f) => f.id === 'f6')?.originalPath}`)
+await store.restoreRecords(['f6'])
+await store.trashFolder('Old')
+await store.createFolder('Old')
+store = newStore()
+state = await store.loadDrive()
+check('restore went to the renamed folder; a re-created "Old" starts empty',
+  state.paths.includes('Old') && !state.paths.includes('Old/2025') && !state.paths.includes('Archive/2025') &&
+  (state.folders.get('Old')?.files.length ?? 0) === 0 &&
+  state.trash?.files.find((f) => f.id === 'f6')?.originalPath === 'Old/2025',
+  `${state.paths.join(', ')} | Old: ${state.folders.get('Old')?.files.length ?? 0} files`)
+
+// ── 9. A drive made before folder ids (v1 index of paths) ─────────────
+// Written raw, as the old code did: on a fresh wallet so its index is
+// the only one.
+console.log('\n— v1 drive (folder paths): read, rename, restore, no stale lists —')
+const legacy = ethers.Wallet.createRandom().connect(provider)
+await (await wallet.sendTransaction({ to: legacy.address, value: ethers.parseEther('0.05') })).wait()
+const legacyKey = crypto.getRandomValues(new Uint8Array(32))
+const raw = (value, tag) => ({
+  data: new TextEncoder().encode(JSON.stringify(value)),
+  encryption: { type: 'aes256', key: legacyKey },
+  tags: tag,
+})
+const m = (path, files) => raw({ path, files, updatedAt: Date.now(), version: 1 }, folderTag(path))
+await uploadBatch([
+  raw({ folders: ['Work', 'Work/2025'], updatedAt: Date.now(), version: 3 }, indexTag()),
+  m('Work', [fileMeta('g1', 'plan.md')]),
+  m('Work/2025', [fileMeta('g2', 'report.pdf')]),
+  m(TRASH_PATH, [{ ...fileMeta('g3', 'draft.md'), originalPath: 'Work' }]),
+  m('Gone', [fileMeta('g4', 'stale.txt')]), // a folder the old code trashed
+], network, legacy, {})
+let lstore = newStore(legacy, legacyKey)
+state = await lstore.loadDrive()
+check('v1 drive loads: folders, files, trash',
+  JSON.stringify(state.paths) === '["Work","Work/2025"]' &&
+  state.folders.get('Work')?.files[0]?.id === 'g1' && state.folders.get('Work/2025')?.files[0]?.id === 'g2' &&
+  state.trash?.files[0]?.originalPath === 'Work', state.paths.join(', '))
+let lnonce = await provider.getTransactionCount(legacy.address)
+await lstore.renameFolder('Work', 'Projects')
+check('rename a v1 folder: one transaction', (await provider.getTransactionCount(legacy.address)) - lnonce === 1)
+await lstore.createFolder('Gone')
+await lstore.restoreRecords(['g3'])
+lstore = newStore(legacy, legacyKey)
+state = await lstore.loadDrive()
+check('after restart: renamed with its subfolder, old trash restored into it, "Gone" empty',
+  state.folders.get('Projects')?.files.map((f) => f.id).sort().join() === 'g1,g3' &&
+  state.folders.get('Projects/2025')?.files[0]?.id === 'g2' &&
+  !state.paths.includes('Work') && state.paths.includes('Gone') &&
+  (state.folders.get('Gone')?.files.length ?? 0) === 0,
+  `${state.paths.join(', ')} | Projects: ${state.folders.get('Projects')?.files.map((f) => f.name).join(', ')}`)
+await refund(legacy, wallet.address)
+
+// ── 10. Cost report ───────────────────────────────────────────────────
 const balanceAfter = await provider.getBalance(wallet.address)
 console.log(`\ndrive key:  ${masterKeyHex}`)
-console.log(`cost:       ${ethers.formatEther(balanceBefore - balanceAfter)} 0G for ~17 metadata txs`)
+console.log(`cost:       ${ethers.formatEther(balanceBefore - balanceAfter)} 0G for ~25 metadata txs`)
 
 if (failures > 0) {
   console.error(`\n${failures} CHECKS FAILED`)
