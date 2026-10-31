@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { setNodeRelay } from '@0gdrive/core'
 import App from './App'
+import { ErrorBoundary } from './ErrorBoundary'
 import { WalletPicker } from './WalletPicker'
 import './style.css'
 
@@ -12,7 +13,9 @@ if (location.protocol === 'https:' || import.meta.env.VITE_NODE_RELAY) setNodeRe
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
-    <WalletPicker />
+    <ErrorBoundary>
+      <App />
+      <WalletPicker />
+    </ErrorBoundary>
   </React.StrictMode>
 )

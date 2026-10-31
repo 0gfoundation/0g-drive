@@ -12,11 +12,30 @@ export type { QueryVectors }
 
 const SETTING_KEY = '0gdrive:smart-search'
 
+/**
+ * A phone: touch screen, small. The text model alone takes the tab to about
+ * 1.1 GB of memory, past where many phones (iPhones especially) close it,
+ * so smart search starts off there; it can still be turned on.
+ */
+export function isPhone(): boolean {
+  try {
+    return matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600
+  } catch {
+    return false
+  }
+}
+
+export const PHONE_MEMORY_WARNING =
+  'Smart search runs AI models on this phone. They need about 1 GB of memory, ' +
+  'and some phones close the page when it runs short (it turns white). ' +
+  'Search by file name works without it.\n\nTurn smart search on?'
+
 export function smartSearchEnabled(): boolean {
   try {
-    return localStorage.getItem(SETTING_KEY) !== 'off'
+    const v = localStorage.getItem(SETTING_KEY)
+    return v === null ? !isPhone() : v !== 'off'
   } catch {
-    return true
+    return !isPhone()
   }
 }
 
@@ -294,7 +313,7 @@ export function warmUpModels(): Promise<unknown> {
 }
 
 /**
- * Ask the browser not to evict the ~300 MB model cache under storage
+ * Ask the browser not to evict the model cache (up to ~320 MB) under storage
  * pressure. Chrome decides silently (it favours sites in use); Firefox may
  * prompt once. A refusal just means a re-download if the cache is evicted.
  */

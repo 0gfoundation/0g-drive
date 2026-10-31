@@ -82,6 +82,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `node scripts/time-wallet-prompt.mjs` | Time from a drive action to its wallet prompt, request by request (testnet, throwaway wallet) |
 | `node scripts/time-wallet-prompt-browser.mjs [url]` | The same in a real browser: click → the wallet's `eth_sendTransaction`, with every page and wallet request in between |
 | `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
+| `node scripts/test-ai-loading.mjs` | AI model loading: off on phones (asks before turning on), text model first, photo models on the first photo |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
 | `node scripts/gen-test-wallet.mjs` | create a throwaway test wallet in `.env` |

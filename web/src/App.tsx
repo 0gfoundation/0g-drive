@@ -56,7 +56,7 @@ import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
 import { AssistantPanel, highlight, isNarrow, type DriveStatus } from './Assistant'
 import { SearchBox, SearchResults, SuggestionsPanel, useSmartDrive } from './SmartSearch'
-import { describeModelStatus, entryForRename, getModelStatus, indexFile, modelEta, modelsLoading, smartSearchEnabled, subscribeModelStatus } from './ai/client'
+import { describeModelStatus, entryForRename, getModelStatus, indexFile, isPhone, modelEta, modelsLoading, smartSearchEnabled, subscribeModelStatus } from './ai/client'
 
 const NETWORK = getNetworkConfig('testnet', 'turbo')
 
@@ -2257,7 +2257,9 @@ export default function App() {
                     : smart.model.error && smart.enabled
                       ? 'Models failed to load — search matches names only. Retry from the search box.'
                       : smart.enabled
-                      ? 'Runs on this device. Models (~300 MB) download once.'
+                      ? 'Runs on this device. Models (~155 MB, ~150 MB more for photos) download once.'
+                      : isPhone()
+                      ? 'Off — search matches file names only. Off on phones at first: the models need about 1 GB of memory.'
                       : 'Off — search matches file names only.'}
                 </div>
               </div>

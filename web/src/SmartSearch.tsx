@@ -8,7 +8,9 @@ import {
   embedSearchQuery,
   embedTexts,
   indexFile,
+  isPhone,
   needsContent,
+  PHONE_MEMORY_WARNING,
   setSmartSearchEnabled,
   smartSearchEnabled,
   subscribeModelStatus,
@@ -67,6 +69,7 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
   }, [enabled, driveOpen])
 
   const toggle = useCallback((on: boolean) => {
+    if (on && isPhone() && !window.confirm(PHONE_MEMORY_WARNING)) return
     setSmartSearchEnabled(on)
     setEnabled(on)
   }, [])
@@ -257,7 +260,7 @@ export function SearchBox({
       {model.loading ? (
         <span
           className="searchbox-status"
-          title={`One-time download of the on-device search models (~300 MB), cached by your browser afterwards.${
+          title={`One-time download of the on-device search models (~155 MB, and ~150 MB more for photos), cached by your browser afterwards.${
             model.viaServer ? ' Downloading through the app server — the model CDN was slow or unreachable.' : ''
           } Until it finishes, search matches file names.`}
         >

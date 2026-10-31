@@ -60,6 +60,7 @@ self.onmessage = (e: MessageEvent<AiRequest>) => {
       let result: unknown
       switch (req.op) {
         case 'indexPhoto':
+          await planDownloads(env.cacheKey, ['clipImage', 'clipText'])
           result = await indexPhoto(req.name, await toRawImage(req.image))
           break
         case 'indexText':
@@ -69,10 +70,11 @@ self.onmessage = (e: MessageEvent<AiRequest>) => {
           result = await renameEntry(req.name, req.entry)
           break
         case 'query':
+          if (req.photos) await planDownloads(env.cacheKey, ['clipText'])
           result = await embedQuery(req.text, req.photos)
           break
         case 'warm':
-          await planDownloads(env.cacheKey)
+          await planDownloads(env.cacheKey, ['text'])
           result = await warmUp()
           break
         case 'embed':
