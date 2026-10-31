@@ -113,6 +113,22 @@ function baseName(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1)
 }
 
+/** The folder a path sits in ('' = My drive). */
+function parentOf(path: string): string {
+  return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+}
+
+/** What the move picker is moving: a folder, or files from one folder. */
+type MoveTarget = { kind: 'folder'; path: string } | { kind: 'files'; ids: string[]; from: string; label: string }
+
+/** Folder paths in tree order (each folder followed by its subfolders). */
+function treeOrder(paths: string[]): string[] {
+  const out: string[] = []
+  const walk = (nodes: TreeNode[]) => nodes.forEach((n) => { out.push(n.path); walk(n.children) })
+  walk(buildTree(paths))
+  return out
+}
+
 /** Immediate subfolders of `path` according to the drive index. */
 function subFolders(drive: DriveState, path: string): string[] {
   const prefix = path === '' ? '' : path + '/'
@@ -298,6 +314,7 @@ const ACTION_ICONS = {
   restore: 'M4 12a8 8 0 108-8 8 8 0 00-6 2.7M4 4v4h4',
   close: 'M6 6l12 12M18 6L6 18',
   rename: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
+  move: 'M3 6h6l2 2h10v11H3zM10 14h7M14 11l3 3-3 3',
 } as const
 
 /** Button content: icon always, label hidden on narrow screens. */
@@ -324,7 +341,7 @@ function FolderGlyph({ open }: { open?: boolean }) {
 }
 
 function TreeRow({
-  node, depth, currentPath, expanded, onToggle, onSelect, onRename, onRemove, disabled,
+  node, depth, currentPath, expanded, onToggle, onSelect, onRename, onMove, onRemove, disabled,
 }: {
   node: TreeNode
   depth: number
@@ -333,6 +350,7 @@ function TreeRow({
   onToggle(p: string): void
   onSelect(p: string): void
   onRename(p: string): void
+  onMove(p: string): void
   onRemove(p: string): void
   disabled: boolean
 }) {
@@ -359,6 +377,13 @@ function TreeRow({
             <path d={ACTION_ICONS.rename} />
           </svg>
         </button>
+        <button className="tree-act tree-move" disabled={disabled} onClick={() => onMove(node.path)}
+          title="Move folder" aria-label="Move folder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d={ACTION_ICONS.move} />
+          </svg>
+        </button>
         <button className="tree-act tree-remove" disabled={disabled} onClick={() => onRemove(node.path)}
           title="Move folder (and contents) to trash">
           🗑
@@ -367,7 +392,7 @@ function TreeRow({
       {isOpen &&
         node.children.map((ch) => (
           <TreeRow key={ch.path} node={ch} depth={depth + 1} currentPath={currentPath}
-            expanded={expanded} onToggle={onToggle} onSelect={onSelect} onRename={onRename} onRemove={onRemove}
+            expanded={expanded} onToggle={onToggle} onSelect={onSelect} onRename={onRename} onMove={onMove} onRemove={onRemove}
             disabled={disabled} />
         ))}
     </div>
@@ -603,6 +628,12 @@ export default function App() {
   const [renameFor, setRenameFor] = useState<RenameTarget | null>(null)
   const [renameTo, setRenameTo] = useState('')
   const [renameError, setRenameError] = useState<string | null>(null)
+  const [moveFor, setMoveFor] = useState<MoveTarget | null>(null)
+  const [moveDest, setMoveDest] = useState<string | null>(null)
+  /** folders added with "New folder here", created by the move itself */
+  const [movePending, setMovePending] = useState<string[]>([])
+  const [moveNewName, setMoveNewName] = useState<string | null>(null)
+  const [moveError, setMoveError] = useState<string | null>(null)
   const [previewFor, setPreviewFor] = useState<FileMeta | null>(null)
   const [shareMode, setShareMode] = useState<'A' | 'B'>('A')
   const [shareRecipient, setShareRecipient] = useState('')
@@ -1566,6 +1597,46 @@ export default function App() {
     )
   }, [])
 
+  const openMove = useCallback((target: MoveTarget) => {
+    setMoveFor(target)
+    setMoveDest(null)
+    setMovePending([])
+    setMoveNewName(null)
+    setMoveError(null)
+    setNavOpen(false)
+  }, [])
+
+  const submitMove = useCallback(async () => {
+    const store = storeRef.current
+    const target = moveFor
+    const dest = moveDest
+    if (!store || !target || dest === null) return
+    const where = dest === '' ? 'My drive' : dest
+    setMoveError(null)
+    setBusy(target.kind === 'folder' ? `Moving ${target.path}…` : `Moving ${target.label}…`)
+    try {
+      if (target.kind === 'folder') {
+        const newPath = await store.moveFolder(target.path, dest)
+        log(`Moved folder ${target.path} → ${newPath}.`)
+        // the open folder and expanded tree rows follow the new path
+        const moved = (p: string) =>
+          p === target.path ? newPath : p.startsWith(target.path + '/') ? newPath + p.slice(target.path.length) : p
+        setCurrentPath(moved)
+        setExpandedFolders((prev) => [...prev.map(moved), dest])
+      } else {
+        await store.moveRecords(target.from, target.ids.map((id) => ({ id, to: dest })), { refuseNameClash: true })
+        log(`Moved ${target.label} to ${where}.`)
+        setSelectedIds([])
+      }
+      setMoveFor(null)
+      await reloadDrive()
+    } catch (err) {
+      setMoveError((err as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }, [moveFor, moveDest, log, reloadDrive])
+
   const trashSelected = useCallback(async () => {
     const store = storeRef.current
     if (!store || selectedIds.length === 0) return
@@ -1753,6 +1824,12 @@ export default function App() {
         >
           <ActionLabel icon="share" label="Share" />
         </button>
+        {!readOnly && (
+          <button className="btn small" disabled={busy !== null} title="Move to…" aria-label="Move to…"
+            onClick={() => openMove({ kind: 'files', ids: [f.id], from: currentPath, label: f.name })}>
+            <ActionLabel icon="move" />
+          </button>
+        )}
         {!readOnly && (
           <button className="btn small" disabled={busy !== null} onClick={() => openRename(f)} title="Rename" aria-label="Rename">
             <ActionLabel icon="rename" />
@@ -2009,6 +2086,7 @@ export default function App() {
                     onToggle={toggleFolder}
                     onSelect={(p) => { setView('drive'); setCurrentPath(p) }}
                     onRename={openFolderRename}
+                    onMove={(p) => openMove({ kind: 'folder', path: p })}
                     onRemove={removeFolder}
                     disabled={busy !== null || readOnly}
                   />
@@ -2194,9 +2272,22 @@ export default function App() {
                       Restore selected
                     </button>
                   ) : (
-                    <button className="btn small danger" disabled={busy !== null} onClick={trashSelected}>
-                      Trash selected
-                    </button>
+                    <>
+                      <button className="btn small" disabled={busy !== null}
+                        onClick={() => openMove({
+                          kind: 'files',
+                          ids: selectedIds,
+                          from: currentPath,
+                          label: selectedIds.length === 1
+                            ? shownFiles.find((f) => f.id === selectedIds[0])?.name ?? '1 file'
+                            : `${selectedIds.length} files`,
+                        })}>
+                        Move to…
+                      </button>
+                      <button className="btn small danger" disabled={busy !== null} onClick={trashSelected}>
+                        Trash selected
+                      </button>
+                    </>
                   )}
                   <button className="btn small" onClick={() => setSelectedIds([])}>Clear</button>
                 </div>
@@ -2641,6 +2732,124 @@ export default function App() {
                   ? '1 transaction · the file itself isn’t re-uploaded · links you already shared keep the old name'
                   : '1 transaction · nothing inside is re-uploaded · subfolders and files keep their place'}
               </p>
+            </form>
+          </div>
+        )
+      })()}
+
+      {moveFor && drive && (() => {
+        const close = () => busy === null && setMoveFor(null)
+        const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+        const all = [...drive.paths, ...movePending]
+        const children = (p: string) => all.filter((x) => parentOf(x) === p).map(baseName)
+        const here = moveFor.kind === 'folder' ? parentOf(moveFor.path) : moveFor.from
+        const blocked = (p: string) =>
+          moveFor.kind === 'folder' && (p === moveFor.path || p.startsWith(moveFor.path + '/'))
+        const moving = moveFor.kind === 'files'
+          ? shownFiles.filter((f) => moveFor.ids.includes(f.id)).map((f) => f.name)
+          : []
+        let problem: string | null = null
+        if (moveDest !== null) {
+          const where = moveDest === '' ? 'My drive' : `“${moveDest}”`
+          if (moveFor.kind === 'folder') {
+            const clash = children(moveDest).find((n) => same(n, baseName(moveFor.path)))
+            if (clash) problem = `There is already a folder named “${clash}” in ${where}.`
+          } else {
+            const names = (drive.folders.get(moveDest)?.files ?? []).map((f) => f.name)
+            const clash = moving.find((m) => names.some((n) => same(n, m)))
+            if (clash) problem = `There is already a file named “${clash}” in ${where}.`
+          }
+        }
+        const newName = moveNewName?.trim() ?? ''
+        const parentForNew = moveDest ?? here
+        const newProblem = moveNewName === null || newName === ''
+          ? null
+          : folderNameProblem(newName) ??
+            (children(parentForNew).some((n) => same(n, newName)) ? `There is already a folder named “${newName}” there.` : null)
+        const addNew = () => {
+          if (newName === '' || newProblem) return
+          const p = parentForNew === '' ? newName : `${parentForNew}/${newName}`
+          setMovePending((prev) => [...prev, p])
+          setMoveDest(p)
+          setMoveNewName(null)
+        }
+        const options = ['', ...treeOrder(all)]
+        return (
+          <div className="modal-backdrop" onClick={close}>
+            <form
+              className="modal move-modal"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.key === 'Escape' && moveNewName === null && close()}
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (moveDest !== null && !problem) void submitMove()
+              }}
+            >
+              <h2>Move “{moveFor.kind === 'folder' ? baseName(moveFor.path) : moveFor.label}”</h2>
+              <p className="muted">Choose where it goes.</p>
+              <div className="move-list" role="listbox" aria-label="Destination folder">
+                {options.map((p) => {
+                  const isHere = p === here
+                  const disabled = isHere || blocked(p)
+                  const depth = p === '' ? 0 : p.split('/').length
+                  return (
+                    <button
+                      key={p || '(root)'}
+                      type="button"
+                      role="option"
+                      aria-selected={moveDest === p}
+                      className={`move-opt${moveDest === p ? ' selected' : ''}`}
+                      style={{ paddingLeft: 10 + depth * 16 }}
+                      disabled={disabled || busy !== null}
+                      onClick={() => setMoveDest(p)}
+                    >
+                      <FolderGlyph />
+                      <span className="move-name">{p === '' ? 'My drive' : baseName(p)}</span>
+                      {isHere && <span className="muted move-note">current</span>}
+                      {movePending.includes(p) && <span className="muted move-note">new</span>}
+                    </button>
+                  )
+                })}
+              </div>
+              {moveNewName === null ? (
+                <button type="button" className="btn small move-new" disabled={busy !== null}
+                  onClick={() => setMoveNewName('')}>
+                  + New folder in {parentForNew === '' ? 'My drive' : `“${baseName(parentForNew)}”`}
+                </button>
+              ) : (
+                <div className="move-new-row">
+                  <input
+                    className="key-input"
+                    aria-label="New folder name"
+                    placeholder="Folder name"
+                    value={moveNewName}
+                    maxLength={300}
+                    autoFocus
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => setMoveNewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); addNew() }
+                      if (e.key === 'Escape') { e.stopPropagation(); setMoveNewName(null) }
+                    }}
+                  />
+                  <button type="button" className="btn small" disabled={newName === '' || !!newProblem} onClick={addNew}>
+                    Add
+                  </button>
+                </div>
+              )}
+              {newProblem && <p className="error-text">⚠ {newProblem}</p>}
+              {problem && <p className="error-text">⚠ {problem}</p>}
+              {moveError && <p className="error-text">⚠ {moveError}</p>}
+              <div className="modal-actions">
+                <button className="btn" type="button" onClick={() => setMoveFor(null)} disabled={busy !== null}>
+                  Cancel
+                </button>
+                <button className="btn primary" type="submit" disabled={busy !== null || moveDest === null || !!problem}>
+                  {busy !== null ? 'Moving…' : 'Move here'}
+                </button>
+              </div>
+              <p className="muted small-print">1 transaction · nothing is re-uploaded{movePending.length > 0 ? ' · new folders are created by the same transaction' : ''}</p>
             </form>
           </div>
         )

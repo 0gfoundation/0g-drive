@@ -220,6 +220,31 @@ check('restore went to the renamed folder; a re-created "Old" starts empty',
   state.trash?.files.find((f) => f.id === 'f6')?.originalPath === 'Old/2025',
   `${state.paths.join(', ')} | Old: ${state.folders.get('Old')?.files.length ?? 0} files`)
 
+// ── 8b. Folder moves: one transaction, no cycles, no name clashes ─────
+console.log('\n— moveFolder: Photos into Docs; into itself and onto a name refused —')
+await txsSince()
+const movedTo = await store.moveFolder('Photos', 'Docs')
+const moveFolderTxs = await txsSince()
+check('move a folder: one transaction (index only)', moveFolderTxs === 1 && movedTo === 'Docs/Photos', `${moveFolderTxs} tx → ${movedTo}`)
+for (const [label, from, to, re] of [
+  ['into a folder inside itself refused', 'Docs', 'Docs/Photos', /into itself/],
+  ['onto a same-named folder (other case) refused', 'Docs/Photos', 'Old', null],
+]) {
+  if (re === null) await store.createFolder('Old/photos')
+  try {
+    await store.moveFolder(from, to)
+    check(label, false)
+  } catch (err) {
+    check(label, (re ?? /already a folder named "photos"/).test(err.message), err.message)
+  }
+}
+store = newStore()
+state = await store.loadDrive()
+check('after restart: Docs/Photos holds its file; trash shows sunset.jpg from Docs/Photos',
+  state.folders.get('Docs/Photos')?.files.some((f) => f.name === 'beach.png') && !state.paths.includes('Photos') &&
+  state.trash?.files.find((f) => f.name === 'sunset.jpg')?.originalPath === 'Docs/Photos',
+  `${state.paths.join(', ')} | sunset from ${state.trash?.files.find((f) => f.name === 'sunset.jpg')?.originalPath}`)
+
 // ── 9. A drive made before folder ids (v1 index of paths) ─────────────
 // Written raw, as the old code did: on a fresh wallet so its index is
 // the only one.

@@ -123,6 +123,11 @@ export class FolderTree {
     if (node) node.name = name
   }
 
+  move(id: string, parent: string): void {
+    const node = this.byId.get(id)
+    if (node) node.parent = parent
+  }
+
   remove(ids: string[]): void {
     for (const id of ids) this.byId.delete(id)
   }

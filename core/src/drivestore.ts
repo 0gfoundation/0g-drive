@@ -493,6 +493,38 @@ export class DriveStore {
     return index.tree.pathOf(id)!
   }
 
+  /**
+   * Move a folder (with everything inside it) into another folder, '' for
+   * the top level: one index write (one transaction) — manifests are
+   * tagged by folder id, not path. A destination that doesn't exist yet is
+   * created in the same write. Refuses a move into the folder itself or a
+   * folder inside it, and a destination that already has a folder of that
+   * name (ignoring case). Returns the folder's new path.
+   */
+  async moveFolder(folderPath: string, toParentPath: string): Promise<string> {
+    const path = normalizePath(folderPath)
+    const to = normalizePath(toParentPath)
+    if (path === '') throw new Error('The drive root cannot be moved')
+    await this.refreshEvents()
+
+    const index = await this.loadIndex()
+    const id = this.folderId(index, path)
+    const node = index.tree.get(id)!
+    const existing = index.tree.idOf(to)
+    if (existing !== null && index.tree.subtree(id).includes(existing)) {
+      throw new Error('A folder can’t be moved into itself or a folder inside it.')
+    }
+    if (existing === node.parent) return path
+    const dest = index.tree.ensure(to).id
+    const clash = index.tree.child(dest, node.name, true)
+    if (clash && clash.id !== id) {
+      throw new Error(`There is already a folder named "${clash.name}" in ${to === '' ? 'My drive' : `"${to}"`}.`)
+    }
+    index.tree.move(id, dest)
+    await this.writeIndex(index)
+    return index.tree.pathOf(id)!
+  }
+
   /** Restore a trashed file record to its original folder (or a given one). */
   async restoreFromTrash(id: string, targetPath?: string): Promise<void> {
     await this.restoreRecords([id], targetPath)
@@ -560,9 +592,15 @@ export class DriveStore {
    * index write if a destination is new — in one transaction where
    * batchSubmit is on. Destinations are stored first, so a failure
    * part-way leaves a file in both folders, never in neither. Metadata
-   * only — blobs don't move.
+   * only — blobs don't move. With `refuseNameClash`, nothing moves if a
+   * destination already has a file of the same name (ignoring case), or
+   * two moved files would share one.
    */
-  async moveRecords(fromPath: string, moves: { id: string; to: string }[]): Promise<void> {
+  async moveRecords(
+    fromPath: string,
+    moves: { id: string; to: string }[],
+    opts: { refuseNameClash?: boolean } = {}
+  ): Promise<void> {
     const from = normalizePath(fromPath)
     const byDest = new Map<string, string[]>()
     for (const m of moves) {
@@ -586,6 +624,15 @@ export class DriveStore {
       const { id: toId, created } = index.tree.ensure(to)
       treeChanged ||= created
       const dest = (created ? null : await this.loadFolder(toId)) ?? emptyFolder(toId)
+      if (opts.refuseNameClash) {
+        const taken = new Set(dest.files.map((f) => f.name.toLowerCase()))
+        for (const f of records) {
+          if (taken.has(f.name.toLowerCase())) {
+            throw new Error(`There is already a file named "${f.name}" in ${to === '' ? 'My drive' : `"${to}"`}.`)
+          }
+          taken.add(f.name.toLowerCase())
+        }
+      }
       const present = new Set(dest.files.map((f) => f.id))
       dest.files.push(...records.filter((f) => !present.has(f.id)))
       dest.updatedAt = Date.now()
