@@ -15,7 +15,7 @@ import {
 import type { UploadOption, ShardedNode, ShardedNodes } from '@0gfoundation/0g-storage-ts-sdk'
 import type { NetworkConfig } from './config.js'
 import { hexToBytes } from './keystore.js'
-import { foldNodesToRoot } from './events.js'
+import { foldNodesToRoot, rpcProvider } from './events.js'
 import type {
   DecryptionInput,
   DownloadOpts,
@@ -416,6 +416,39 @@ async function waitVisible(indexer: Indexer, root: string): Promise<void> {
   throw new Error(`storage nodes did not pick up the log entry for ${root} in time`)
 }
 
+/**
+ * The Flow market's price per sector. The contract takes whatever fee is
+ * sent (a simulated batchSubmit with no fee succeeds), so the price is
+ * never cached for long: drive actions fetch it fresh at the start, in the
+ * same batched request as their event scan, and the upload reuses that
+ * reading instead of spending two round trips right before the prompt.
+ * Only the market's address — fixed per Flow contract — is kept.
+ */
+const PRICE_MAX_AGE_MS = 30_000
+const priceCache = new Map<string, { at: number; price: Promise<bigint> }>()
+const marketAddress = new Map<string, Promise<string>>()
+
+export function storagePrice(network: NetworkConfig, maxAgeMs = PRICE_MAX_AGE_MS): Promise<bigint> {
+  const key = network.flowAddress.toLowerCase()
+  const hit = priceCache.get(key)
+  if (hit && Date.now() - hit.at <= maxAgeMs) return hit.price
+  const provider = rpcProvider(network)
+  let market = marketAddress.get(key)
+  if (!market) {
+    market = getFlowContract(network.flowAddress, provider as unknown as SdkSigner).market()
+    marketAddress.set(key, market)
+    market.catch(() => marketAddress.delete(key))
+  }
+  const price = market.then(async (address) =>
+    BigInt(await getMarketContract(address, provider as unknown as Parameters<typeof getMarketContract>[1]).pricePerSector())
+  )
+  priceCache.set(key, { at: Date.now(), price })
+  price.catch(() => {
+    if (priceCache.get(key)?.price === price) priceCache.delete(key)
+  })
+  return price
+}
+
 export async function uploadBatch(
   items: BatchItem[],
   network: NetworkConfig,
@@ -426,6 +459,9 @@ export async function uploadBatch(
   if (items.length === 0) throw new Error('empty batch')
   const submitter = await signer.getAddress()
   const onItem = opts.onItem ?? (() => undefined)
+  // fetched while hashing (or reused from the action's own scan)
+  const price = storagePrice(network)
+  price.catch(() => undefined) // awaited below
 
   type Prepared = {
     payload: Uploadable
@@ -454,14 +490,13 @@ export async function uploadBatch(
   const all = [...primary, ...extras]
 
   // 2. One transaction
-  const provider = new ethers.JsonRpcProvider(network.rpcUrl)
+  const provider = rpcProvider(network)
   const flow = getFlowContract(network.flowAddress, signer as unknown as SdkSigner)
-  const market = getMarketContract(await flow.market(), provider as unknown as Parameters<typeof getMarketContract>[1])
-  const pricePerSector = await market.pricePerSector()
-  const fee = all.reduce((acc, p) => {
-    const sectors = p.submission.data.nodes.reduce((n, node) => n + (1n << BigInt(node.height)), 0n)
-    return acc + sectors * pricePerSector
-  }, 0n)
+  const sectors = all.reduce(
+    (acc, p) => acc + p.submission.data.nodes.reduce((n, node) => n + (1n << BigInt(node.height)), 0n),
+    0n
+  )
+  const fee = sectors * (await price)
   all.forEach((_, i) => onItem(i, 'approve'))
   opts.onProgress?.('Waiting for wallet approval…')
   const sent = await flow.getFunction('batchSubmit').send(
