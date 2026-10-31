@@ -2047,3 +2047,31 @@ tbody tr:hover {
     width: 100%;
   }
 }
+
+/* ── Error boundary ─────────────────────────────────── */
+
+.crash {
+  max-width: 480px;
+  margin: 15vh auto 0;
+  padding: 0 16px;
+  text-align: center;
+}
+.crash h1 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+.crash-detail {
+  margin: 16px 0;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.crash .btn {
+  min-height: 44px;
+  padding: 0 24px;
+}

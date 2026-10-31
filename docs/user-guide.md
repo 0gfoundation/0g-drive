@@ -103,7 +103,9 @@ On the start screen (no wallet connected): **Lost access to your wallet? → Ope
 
 ## Search and organize (on-device AI)
 
-Sidebar → **On-device AI → Smart search & organize**. When on, AI models (~300 MB, downloaded once) run **inside your browser** — no file content or query leaves your device.
+Sidebar → **On-device AI → Smart search & organize**. When on, AI models run **inside your browser** — no file content or query leaves your device. They download once: ~160 MB for text, and ~155 MB more for photos the first time you upload or search photos.
+
+**On phones it starts off.** The models need about 1 GB of memory, and many phones close the page when it runs short (it turns white). You can still turn it on; the app asks first. Search by file name works either way.
 
 - **Search your drive — any language**: finds files by meaning, e.g. "猫" finds a cat photo named IMG_0001.jpg, "lease contract" finds a PDF named in Chinese. Matches names, text excerpts and photo content.
 - New uploads are indexed automatically. **Index N older files for search** indexes files uploaded before (downloads them, reads them on your device, saves the index: 1 approval).

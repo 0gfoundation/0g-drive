@@ -1,6 +1,7 @@
 // Model downloads (runs in the AI worker as transformers.js's `env.fetch`).
 //
-// A first visit pulls ~300 MB from the Hugging Face and jsDelivr CDNs. On
+// A first visit pulls ~160 MB (text model) from the Hugging Face and jsDelivr
+// CDNs, and ~155 MB more (photo models) the first time photos are involved. On
 // networks where those are slow or unreachable the stock fetch just hangs,
 // so this wrapper:
 //   • reports byte-accurate progress across all model files (one number that
@@ -23,13 +24,17 @@ const MAX_ATTEMPTS = 8
 // What a first visit downloads (q8 weights, tokenizers, ONNX Runtime wasm),
 // for a progress denominator that doesn't grow as files start. Sizes are
 // refined from Content-Length; small config files aren't counted.
-const PLANNED: { re: RegExp; size: number }[] = [
-  { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/onnx\/model_quantized\.onnx$/, size: 118_308_126 },
-  { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/tokenizer\.json$/, size: 17_082_913 },
-  { re: /clip-vit-base-patch32\/resolve\/[^/]+\/onnx\/vision_model_quantized\.onnx$/, size: 89_117_001 },
-  { re: /clip-vit-base-patch32\/resolve\/[^/]+\/onnx\/text_model_quantized\.onnx$/, size: 64_504_507 },
-  { re: /clip-vit-base-patch32\/resolve\/[^/]+\/tokenizer\.json$/, size: 2_224_119 },
-  { re: /\/ort-wasm-simd-threaded[^/]*\.wasm$/, size: 26_861_777 },
+// Grouped by what loads them: 'text' with the warm-up (the runtime comes
+// with the first model); CLIP's halves on first photo use — 'clipImage' to
+// index a photo, 'clipText' for its labels and for photo search.
+export type ModelGroup = 'text' | 'clipImage' | 'clipText'
+const PLANNED: { re: RegExp; size: number; group: ModelGroup }[] = [
+  { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/onnx\/model_quantized\.onnx$/, size: 118_308_126, group: 'text' },
+  { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/tokenizer\.json$/, size: 17_082_913, group: 'text' },
+  { re: /clip-vit-base-patch32\/resolve\/[^/]+\/onnx\/vision_model_quantized\.onnx$/, size: 89_117_001, group: 'clipImage' },
+  { re: /clip-vit-base-patch32\/resolve\/[^/]+\/onnx\/text_model_quantized\.onnx$/, size: 64_504_507, group: 'clipText' },
+  { re: /clip-vit-base-patch32\/resolve\/[^/]+\/tokenizer\.json$/, size: 2_224_119, group: 'clipText' },
+  { re: /\/ort-wasm-simd-threaded[^/]*\.wasm$/, size: 26_861_777, group: 'text' },
 ]
 
 type Route = 'direct' | 'server'
@@ -95,10 +100,11 @@ function countBytes(i: number, n: number) {
 }
 
 /**
- * Work out which planned files still need downloading (call before loading
- * the models). Without Cache Storage everything counts as needed.
+ * Work out which of `groups`' planned files still need downloading (call
+ * before loading their models). Without Cache Storage everything counts as
+ * needed.
  */
-export async function planDownloads(cacheKey: string): Promise<void> {
+export async function planDownloads(cacheKey: string, groups: ModelGroup[]): Promise<void> {
   const cached = new Set<number>()
   try {
     const cache = await caches.open(cacheKey)
@@ -110,7 +116,7 @@ export async function planDownloads(cacheKey: string): Promise<void> {
     // no Cache Storage (private mode) — assume nothing is cached
   }
   PLANNED.forEach((p, i) => {
-    if (!cached.has(i) && !sizes.has(i)) sizes.set(i, p.size)
+    if (groups.includes(p.group) && !cached.has(i) && !sizes.has(i)) sizes.set(i, p.size)
   })
   post(true)
 }

@@ -128,6 +128,13 @@ Bugs this run found and fixed:
 - **Vite dev reload:** lazily imported pdf.js/transformers made the dev server re-optimize and reload the page on first use (mid-upload); both are now pre-bundled (`optimizeDeps.include`).
 - **SVG files had no thumbnail (reported by the user, 2026-10-30):** thumbnails were made with `createImageBitmap`, which Chrome refuses for SVG, so SVGs were skipped. They are now loaded into an `<img>` (as an image an SVG runs no script and loads nothing external) and drawn to a canvas, so only pixels are kept: the 96 px WebP in the manifest and a PNG grid preview that keeps transparency. Size comes from width/height, else the viewBox; small icons are drawn at full size. Test: `npm run test:svg`.
 
+**Memory on phones (2026-10-31).** Phones showed a white page when the models finished loading: the tab is killed for memory. Measured in Chromium (renderer RSS, 390 px emulation): ~150 MB with the drive open, **~1.18 GB** with all three models loaded. Loading them one at a time: 1.13 GB. The multilingual text model alone: **1.12 GB** — its 250k-token vocabulary dominates (the English-only all-MiniLM-L6-v2 peaks at 0.47 GB; turning ORT graph optimization off saves ~30 MB). iPhones kill a Safari tab around 1–1.5 GB, older ones lower. So:
+- smart search starts **off on phones** (`isPhone()`: coarse pointer and a screen under 600 px) unless the user turned it on; turning it on asks first, naming the ~1 GB;
+- the warm-up loads only the text model; CLIP loads on first use (photo upload, or a search in a drive with photos), and the download plan counts only what each step fetches;
+- an error boundary replaces a blank page after a render error with "Something went wrong" and Reload.
+
+Next, for real phone support: prune the text model's vocabulary to the languages needed and re-check quality with `scripts/test-search.mjs`. Verified: `scripts/test-ai-loading.mjs`.
+
 ### D9 — Help assistant: an agent in the browser, isolated, on the user's own 0G key (2026-10-29)
 A chat assistant ("Ask", bottom right) answers questions about using 0GDrive, how it works, and 0G — as an agent loop running **in the browser**, no 0GDrive backend:
 

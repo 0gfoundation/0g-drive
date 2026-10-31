@@ -157,13 +157,18 @@ export async function renameEntry(name: string, entry: SearchEntry): Promise<Sea
   return { ...entry, e }
 }
 
-/** Load every model now (download + init), so the first upload isn't kept waiting. */
+/**
+ * Load the text model now (download + init), so the first upload isn't
+ * kept waiting. The photo models (CLIP, ~155 MB) load on first use — a
+ * photo upload or a search in a drive with photos — instead of with it:
+ * the text model alone already takes the tab past 1 GB.
+ */
 export async function warmUp(): Promise<true> {
   try {
-    await Promise.all([textModel(), visionModel(), clipTextModel(), photoLabelVectors()])
+    await textModel()
   } catch (err) {
-    // forget the failed loads so a retry starts over (cached files stay)
-    textPipe = clipVision = clipText = labelVecs = null
+    // forget the failed load so a retry starts over (cached files stay)
+    textPipe = null
     throw err
   }
   return true
