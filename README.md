@@ -29,7 +29,7 @@ You get the usual drive features: folders, drag-and-drop upload, preview, downlo
 
 | Area | What you can do |
 |---|---|
-| Files | Drag-and-drop upload (many files, one wallet approval), folders, rename files and folders, list/grid view with photo, video and SVG thumbnails, trash and restore, sync across devices |
+| Files | Drag-and-drop upload (many files, one wallet approval), folders, rename and move files and folders, list/grid view with photo, video and SVG thumbnails, trash and restore, sync across devices |
 | Preview | Images, PDF, text and code, audio and video, decrypted in the browser |
 | Sharing | Secret links for anyone; wallet-locked links for a specific recipient |
 | Security | On-chain key backup, recovery password, offline key file, share key for receiving locked links |
@@ -78,6 +78,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
 | `npm run test:rename` | file rename: name checks, duplicates refused, one transaction, phone layout |
 | `npm run test:folder-rename` | folder rename: name checks, one transaction, open folder follows, subfolder kept, phone layout |
+| `npm run test:move` | "Move to…" picker for folders and files: greyed-out places, name clashes refused, new destination folder, one transaction, phone layout |
 | `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |

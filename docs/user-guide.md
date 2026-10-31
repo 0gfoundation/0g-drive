@@ -21,7 +21,7 @@ Storing data on 0G costs a small fee in 0G (storage fee + gas), paid by a wallet
 | Action | Wallet prompts |
 |---|---|
 | Upload one or many files (one drop) | 1 transaction (all files + the folder listing in one batch) |
-| New folder, rename a file or folder, move to trash, restore, remove from trash, organize moves | 1 transaction each, however many files or folders (updates small listing files) |
+| New folder, rename a file or folder, move files or folders, move to trash, restore, remove from trash, organize moves | 1 transaction each, however many files or folders (updates small listing files) |
 | Set up recovery | 2 signatures + 1 transaction |
 | Set or change the recovery password | 1 signature + 1 transaction |
 | Publish / update share key | 2 signatures + 1 transaction |
@@ -47,6 +47,7 @@ Every file gets its own random key; the file is encrypted with it before upload,
 - **+ New folder** creates a folder in the current folder (1 transaction). The sidebar shows the folder tree; click a folder to open it, the arrow to expand it.
 - **Rename** (pencil icon on a file) changes its name in 1 transaction. The file itself isn't re-uploaded: names live only in your folder's encrypted listing. A name already used in the folder (ignoring upper/lower case), an empty name or one containing “/” is refused. Changing the extension doesn't change how 0GDrive opens the file. With on-device AI on, the file's search data is updated for the new name. Share links you already sent keep showing the old name, and still work.
 - **Rename a folder** with the pencil next to it in the folder list on the left (on a phone, open the ☰ menu). It takes 1 transaction however much is inside: nothing is re-uploaded, and its files and subfolders stay where they are. A name another folder beside it already has (ignoring upper/lower case), an empty name or one containing “/” is refused. If you have the folder open, you stay in it under its new name.
+- **Move files or folders** with "Move to…": the arrow-folder icon on a file or on a folder in the left list, or "Move to…" when you've selected several files. Pick where they go, or make a new folder right there with "+ New folder in …". It takes 1 transaction, even with a new folder, and nothing is re-uploaded; a moved folder keeps everything inside it. A name already used where you're moving to (ignoring upper/lower case) is refused, and a folder can't go into itself. If you have the moved folder open, you stay in it at its new place.
 - **Move to trash** (trash icon on a file, or select several and **Trash selected**). Folders can be moved to trash from the tree.
 - **Trash** (sidebar): **Restore** puts a file back where it was; the × button removes its record from the trash.
 - Storage on 0G is **immutable**: "deleting" removes the file from your drive's listings, but the encrypted data stays on the network until its storage period ends. Nobody can read it without your keys.
