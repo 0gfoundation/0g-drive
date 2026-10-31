@@ -1163,6 +1163,24 @@ tbody tr:hover {
   gap: 12px;
   margin-top: 10px;
 }
+.grid-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.grid-select-all input {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
 .tile {
   position: relative;
   background: var(--panel);
@@ -1377,6 +1395,7 @@ tbody tr:hover {
   }
   .td-check input,
   .th-check input,
+  .grid-select-all input,
   .tile-check {
     width: 20px;
     height: 20px;
@@ -1389,6 +1408,13 @@ tbody tr:hover {
 /* ── Phone layout ───────────────────────────────────── */
 
 @media (max-width: 760px) {
+  .grid-select-all {
+    min-height: 44px;
+  }
+  .grid-select-all input {
+    width: 20px;
+    height: 20px;
+  }
   .app {
     padding: 0 max(12px, env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom))
       max(12px, env(safe-area-inset-left));
