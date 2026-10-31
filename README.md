@@ -73,7 +73,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:batch` | one-approval batch uploads |
 | `npm run test:share-wallet` | wallet-locked share links |
 | `npm run test:password` | recovery password and read-only open without the wallet |
-| `npm run test:wallets` | wallet picker with several wallets installed, switching accounts, disconnect and quiet reconnect, and the signature check (spends nothing) |
+| `npm run test:wallets` | wallet picker with several wallets installed, switching accounts, disconnect and quiet reconnect, keeping connections warm, and the signature check (spends nothing) |
 | `npm run test:svg` | SVG thumbnails, including that an SVG's scripts and external images never load |
 | `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
 | `npm run test:rename` | file rename: name checks, duplicates refused, one transaction, phone layout; file actions icon-only; Activity notes when the wallet was asked |

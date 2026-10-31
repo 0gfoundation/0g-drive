@@ -240,6 +240,45 @@ try {
     await context.close()
   }
 
+  // ── keeping connections warm while idle ──
+  {
+    const w = mockWallet('Delta Wallet', 'com.example.delta')
+    const { context, page } = await open([w])
+    const rpc = []
+    page.on('request', (r) => r.url().startsWith('https://evmrpc-testnet.0g.ai') && rpc.push(r.postData() ?? ''))
+    await page.goto(base)
+    const preconnected = await page.evaluate(() =>
+      [...document.querySelectorAll('link[rel=preconnect]')].some((l) => l.href.startsWith('https://evmrpc-testnet.0g.ai')))
+    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
+    await page.waitForTimeout(5000) // let the connect traffic settle
+    const pings = () => ({ wallet: w.count('eth_blockNumber'), app: rpc.filter((b) => b.includes('eth_blockNumber')).length })
+    const a = pings()
+    await page.waitForTimeout(45_000)
+    const b = pings()
+    check('idle and visible: the app and the wallet are pinged about every 20 s (read-only), and the RPC is preconnected',
+      preconnected && b.wallet - a.wallet >= 2 && b.app - a.app >= 2 && w.count('eth_sendTransaction') === 0,
+      JSON.stringify({ preconnected, wallet: b.wallet - a.wallet, app: b.app - a.app }))
+    // a background tab: no pings; back in front: one right away
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    const c = pings()
+    await page.waitForTimeout(45_000)
+    const d = pings()
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await page.waitForTimeout(2000)
+    const e = pings()
+    check('hidden: no pings; visible again: one right away',
+      d.wallet === c.wallet && d.app === c.app && e.wallet > d.wallet && e.app > d.app,
+      JSON.stringify({ hidden: { wallet: d.wallet - c.wallet, app: d.app - c.app }, back: { wallet: e.wallet - d.wallet, app: e.app - d.app } }))
+    await context.close()
+  }
+
   // ── phone width ──
   {
     const { context, page } = await open([alpha, beta], { viewport: { width: 390, height: 844 } })

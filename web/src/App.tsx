@@ -43,6 +43,7 @@ import {
   type UploadEvent,
 } from '@0gdrive/core'
 import {
+  activeProvider,
   chooseWallet,
   connectWallet,
   disconnectWallet,
@@ -55,6 +56,7 @@ import {
   type WalletState,
 } from './wallet'
 import { Logo } from './Logo'
+import { keepConnectionsWarm, preconnect } from './keepWarm'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
 import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
@@ -63,6 +65,7 @@ import { SearchBox, SearchResults, SuggestionsPanel, useSmartDrive } from './Sma
 import { describeModelStatus, entryForRename, getModelStatus, indexFile, isPhone, isPhoto, modelEta, modelsLoading, smartSearchEnabled, subscribeModelStatus } from './ai/client'
 
 const NETWORK = getNetworkConfig('testnet', 'turbo')
+preconnect(NETWORK)
 
 /**
  * When the user last acted (click, key, file drop or pick): the start of
@@ -839,6 +842,10 @@ export default function App() {
       log(`Wallet error: ${(err as Error).message}`)
     }
   }, [log, adoptWallet])
+
+  // keep the app's and the wallet's RPC connections open while connected
+  const connected = wallet !== null && !readOnly
+  useEffect(() => (connected ? keepConnectionsWarm(NETWORK, activeProvider) : undefined), [connected])
 
   // back into the last-used wallet without a click, if it still allows it
   useEffect(() => {
