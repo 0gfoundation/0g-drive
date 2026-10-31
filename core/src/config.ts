@@ -43,7 +43,10 @@ const NETWORK_BASE: Record<NetworkName, Omit<NetworkConfig, 'mode' | 'indexerRpc
     chainName: '0G Mainnet',
     rpcUrl: 'https://evmrpc.0g.ai',
     flowAddress: '0x62D4144dB0F0a6fBBaeb6296c785C71B3D57C526',
-    batchSubmit: false, // not yet verified on mainnet
+    // same Flow contract code as Galileo; a simulated batchSubmit succeeds
+    // (scripts/check-batch-submit.mjs). A real upload on mainnet is still
+    // to be run: NETWORK=mainnet node scripts/test-batch-submit.mjs
+    batchSubmit: true,
     explorerTxUrl: 'https://chainscan.0g.ai/tx/',
     storageScanUrl: 'https://storagescan.0g.ai',
     nativeCurrency: { name: '0G', symbol: '0G', decimals: 18 },
