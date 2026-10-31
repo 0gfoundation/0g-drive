@@ -3,6 +3,9 @@
 //     turning it on asks first (needs ~1 GB of memory), and a "no" keeps it off
 //   desktop: the warm-up loads only the text model (no CLIP files), and the
 //     photo models load on the first photo upload
+//   reopening that drive with an empty model cache: desktop also preloads
+//     CLIP's text half (photo search), not the image half; a phone with
+//     smart search turned on loads no CLIP at all
 // Each part makes a drive on a FRESH key funded from .env's test wallet,
 // refunded at the end. Needs the model CDNs (or the app's /_models route).
 // Usage: node scripts/test-ai-loading.mjs [http://localhost:5173]
@@ -43,6 +46,16 @@ const browser = await chromium.launch()
 async function openDrive(contextOpts) {
   const wallet = ethers.Wallet.createRandom().connect(provider)
   await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.3') })).wait()
+  const s = await openPage(contextOpts, wallet)
+  await s.page.goto(base)
+  await s.page.getByRole('button', { name: 'Connect wallet' }).click()
+  await s.page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
+  await s.page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  return s
+}
+
+/** A context with `wallet` injected (and `storageState`, e.g. a drive key), not yet loaded. */
+async function openPage(contextOpts, wallet, extraInit = '') {
   const context = await browser.newContext(contextOpts)
   const page = await context.newPage()
   const errors = []
@@ -83,6 +96,7 @@ async function openDrive(contextOpts) {
       return { err: e.shortMessage ?? e.message }
     }
   })
+  if (extraInit) await context.addInitScript(extraInit)
   await context.addInitScript(() => {
     localStorage.setItem('0gdrive:layout', 'list')
     window.ethereum = {
@@ -95,10 +109,6 @@ async function openDrive(contextOpts) {
       removeListener() {},
     }
   })
-  await page.goto(base)
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
-  await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
   return { wallet, context, page, errors, models }
 }
 
@@ -176,7 +186,38 @@ try {
       desk.models.some((u) => /clip-vit.*text_model_quantized\.onnx/.test(u)),
     `${desk.models.filter((u) => /clip-vit/.test(u)).length} CLIP files`)
   check('desktop: no page errors', desk.errors.length === 0, desk.errors.join(' | '))
+  const state = await desk.context.storageState() // the drive key, the last-used wallet
   await desk.context.close()
+
+  // ── the same drive (it has an indexed photo) reopened, empty model cache
+  const again = await openPage({ viewport: { width: 1280, height: 900 }, storageState: state }, desk.wallet)
+  await again.page.goto(base) // reconnects by itself
+  await again.page.locator('table .fname-btn', { hasText: 'sun.png' }).waitFor({ timeout: 5 * 60_000 })
+  const clipText = /clip-vit.*text_model_quantized\.onnx/
+  const until2 = Date.now() + 5 * 60_000
+  while (Date.now() < until2 && !again.models.some((u) => clipText.test(u))) await again.page.waitForTimeout(1000)
+  await again.page.waitForTimeout(5000)
+  check('desktop, drive with photos: CLIP\'s text half preloads for search, not the image half',
+    again.models.some((u) => clipText.test(u)) && !again.models.some((u) => /clip-vit.*vision_model/.test(u)),
+    `${again.models.filter((u) => /clip-vit/.test(u)).map((u) => u.split('/').pop()).join(', ')}`)
+  await again.context.close()
+
+  const phoneOn = await openPage(
+    { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3, storageState: state },
+    desk.wallet,
+    "localStorage.setItem('0gdrive:smart-search', 'on')"
+  )
+  await phoneOn.page.goto(base)
+  await phoneOn.page.locator('table .fname-btn', { hasText: 'sun.png' }).waitFor({ timeout: 5 * 60_000 })
+  const until3 = Date.now() + 5 * 60_000
+  while (Date.now() < until3 && !phoneOn.models.some((u) => /MiniLM-L12-v2.*model_quantized\.onnx/.test(u))) await phoneOn.page.waitForTimeout(1000)
+  await phoneOn.page.waitForFunction(() => !document.querySelector('.searchbox-status .sb-long'), null, { timeout: 5 * 60_000 })
+  await phoneOn.page.waitForTimeout(15_000)
+  check('phone with smart search on, drive with photos: text model only, no CLIP',
+    phoneOn.models.some((u) => /MiniLM/.test(u)) && !phoneOn.models.some((u) => /clip-vit/.test(u)),
+    `${phoneOn.models.length} model files`)
+  check('reopened: no page errors', again.errors.length === 0 && phoneOn.errors.length === 0, [...again.errors, ...phoneOn.errors].join(' | '))
+  await phoneOn.context.close()
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {

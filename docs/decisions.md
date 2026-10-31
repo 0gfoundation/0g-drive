@@ -131,6 +131,7 @@ Bugs this run found and fixed:
 **Memory on phones (2026-10-31).** Phones showed a white page when the models finished loading: the tab is killed for memory. Measured in Chromium (renderer RSS, 390 px emulation): ~150 MB with the drive open, **~1.18 GB** with all three models loaded. Loading them one at a time: 1.13 GB. The multilingual text model alone: **1.12 GB** — its 250k-token vocabulary dominates (the English-only all-MiniLM-L6-v2 peaks at 0.47 GB; turning ORT graph optimization off saves ~30 MB). iPhones kill a Safari tab around 1–1.5 GB, older ones lower. So:
 - smart search starts **off on phones** (`isPhone()`: coarse pointer and a screen under 600 px) unless the user turned it on; turning it on asks first, naming the ~1 GB;
 - the warm-up loads only the text model; CLIP loads on first use (photo upload, or a search in a drive with photos), and the download plan counts only what each step fetches;
+- on desktop, a drive that already has indexed photos also preloads CLIP's text half (~64 MB file, ~250 MB of memory) once the text model is ready, so the first search doesn't wait for it; the photos' own vectors are stored with their records, so the image half is never needed just to search. Not on phones.
 - an error boundary replaces a blank page after a render error with "Something went wrong" and Reload.
 
 Next, for real phone support: prune the text model's vocabulary to the languages needed and re-check quality with `scripts/test-search.mjs`. Verified: `scripts/test-ai-loading.mjs`.

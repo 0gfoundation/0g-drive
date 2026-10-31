@@ -158,6 +158,21 @@ export async function renameEntry(name: string, entry: SearchEntry): Promise<Sea
 }
 
 /**
+ * Load CLIP's text half now — what a search in a drive with indexed photos
+ * needs (the photos' vectors are stored; only the query is embedded). See
+ * warmUpPhotoSearch in client.ts for when.
+ */
+export async function warmPhotoSearch(): Promise<true> {
+  try {
+    await clipTextModel()
+  } catch (err) {
+    clipText = null
+    throw err
+  }
+  return true
+}
+
+/**
  * Load the text model now (download + init), so the first upload isn't
  * kept waiting. The photo models (CLIP, ~150 MB) load on first use — a
  * photo upload or a search in a drive with photos — instead of with it:
