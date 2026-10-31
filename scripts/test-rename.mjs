@@ -116,6 +116,17 @@ try {
   )
   step('3 files uploaded')
 
+  // file actions are icon-only: no text, named for tooltips and screen readers, one square size
+  const rowButtons = () => page.evaluate(() =>
+    [...document.querySelector('table tbody tr .row-actions').querySelectorAll('button')].map((b) => {
+      const r = b.getBoundingClientRect()
+      return { name: b.getAttribute('aria-label'), title: b.title, text: b.textContent.trim(), w: Math.round(r.width), h: Math.round(r.height) }
+    }))
+  const iconOnly = (btns) =>
+    btns.length === 5 && btns.every((b) => b.text === '' && b.name && b.title && b.w === btns[0].w && b.h === btns[0].h)
+  const desk = await rowButtons()
+  check('desktop: file actions are icons only, each named, all one size', iconOnly(desk), JSON.stringify(desk))
+
   await row('notes.txt').getByRole('button', { name: 'Rename' }).click()
   await input.waitFor()
   const sel = await input.evaluate((i) => [i.selectionStart, i.selectionEnd, i.value])
@@ -169,6 +180,8 @@ try {
     wide: [...document.querySelectorAll('body *')].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 1).slice(0, 8).map((e) => `${e.tagName}.${e.className}:${Math.round(e.getBoundingClientRect().right)}`),
   }))
   check('phone: every row fits, long names truncated', rowFit.overflow <= 0 && rowFit.rename <= 390, JSON.stringify(rowFit))
+  const phoneBtns = await rowButtons()
+  check('phone: file actions are icons only, ≥34 px', iconOnly(phoneBtns) && phoneBtns[0].w >= 34 && phoneBtns[0].h >= 34, JSON.stringify(phoneBtns))
   await page.setViewportSize({ width: 1280, height: 900 })
 
   await page.reload()

@@ -49,18 +49,18 @@ Every file gets its own random key; the file is encrypted with it before upload,
 - **Rename a folder** with the pencil next to it in the folder list on the left (on a phone, open the ☰ menu). It takes 1 transaction however much is inside: nothing is re-uploaded, and its files and subfolders stay where they are. A name another folder beside it already has (ignoring upper/lower case), an empty name or one containing “/” is refused. If you have the folder open, you stay in it under its new name.
 - **Move files or folders** with "Move to…": the arrow-folder icon on a file or on a folder in the left list, or "Move to…" when you've selected several files. Pick where they go, or make a new folder right there with "+ New folder in …". It takes 1 transaction, even with a new folder, and nothing is re-uploaded; a moved folder keeps everything inside it. A name already used where you're moving to (ignoring upper/lower case) is refused, and a folder can't go into itself. If you have the moved folder open, you stay in it at its new place.
 - **Move to trash** (trash icon on a file, or select several and **Trash selected**). Folders can be moved to trash from the tree.
-- **Trash** (sidebar): **Restore** puts a file back where it was; the × button removes its record from the trash.
+- **Trash** (sidebar): the restore button (↺) puts a file back where it was; the × button removes its record from the trash.
 - Storage on 0G is **immutable**: "deleting" removes the file from your drive's listings, but the encrypted data stays on the network until its storage period ends. Nobody can read it without your keys.
 - **⟳ Sync** reloads the drive from the chain — useful after using the drive on another device.
 - **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails.
 
 ## Preview and download
 
-Click a file name to preview it (images, PDFs, text and code up to 2 MB, audio, video; files up to 100 MB), or use **Download**. Files are downloaded from storage nodes and decrypted in your browser. Previewed files are kept on this device **still encrypted**, so the next preview is instant. Thumbnails made by the browser are kept on this device (unencrypted, never uploaded) for speed; clearing the site's data removes them.
+File buttons show icons only; point at one to see its name. Click a file name to preview it (images, PDFs, text and code up to 2 MB, audio, video; files up to 100 MB), or use the download button (↓). Files are downloaded from storage nodes and decrypted in your browser. Previewed files are kept on this device **still encrypted**, so the next preview is instant. Thumbnails made by the browser are kept on this device (unencrypted, never uploaded) for speed; clearing the site's data removes them.
 
 ## Sharing
 
-Click **Share** on a file. Two kinds of link:
+Click the share button on a file. Two kinds of link:
 
 - **Secret link** — anyone with the link can download and decrypt that one file. The file's key rides in the part of the URL after `#`, which browsers never send to a server. Treat the link like the file itself. Works for anyone, no wallet needed.
 - **Encrypted to recipient** — enter the recipient's wallet address; click **Wrap & create link**. The file key is locked to the recipient's published **share key**, so only their wallet can open it: they connect the same wallet, sign once ("Unlock with wallet & download"), no transaction. Someone else opening the link is refused before signing.

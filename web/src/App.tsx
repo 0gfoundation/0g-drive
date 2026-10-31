@@ -318,15 +318,12 @@ const ACTION_ICONS = {
 } as const
 
 /** Button content: icon always, label hidden on narrow screens. */
-function ActionLabel({ icon, label }: { icon: keyof typeof ACTION_ICONS; label?: string }) {
+function ActionLabel({ icon }: { icon: keyof typeof ACTION_ICONS }) {
   return (
-    <>
-      <svg className="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d={ACTION_ICONS[icon]} />
-      </svg>
-      {label && <span className="btn-label">{label}</span>}
-    </>
+    <svg className="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={ACTION_ICONS[icon]} />
+    </svg>
   )
 }
 
@@ -1802,8 +1799,8 @@ export default function App() {
     view === 'trash' ? (
       readOnly ? null : (
       <>
-        <button className="btn small" disabled={busy !== null} onClick={() => restoreFile(f)} aria-label="Restore">
-          <ActionLabel icon="restore" label="Restore" />
+        <button className="btn small" disabled={busy !== null} onClick={() => restoreFile(f)} title="Restore" aria-label="Restore">
+          <ActionLabel icon="restore" />
         </button>
         <button className="btn small danger" disabled={busy !== null} onClick={() => trashFile(f)} title="Remove record from trash" aria-label="Remove from trash">
           <ActionLabel icon="close" />
@@ -1812,8 +1809,8 @@ export default function App() {
       )
     ) : (
       <>
-        <button className="btn small" disabled={busy !== null} onClick={() => download(f)} aria-label="Download">
-          <ActionLabel icon="download" label="Download" />
+        <button className="btn small" disabled={busy !== null} onClick={() => download(f)} title="Download" aria-label="Download">
+          <ActionLabel icon="download" />
         </button>
         <button
           className="btn small"
@@ -1822,7 +1819,7 @@ export default function App() {
           onClick={() => openShare(f)}
           aria-label="Share"
         >
-          <ActionLabel icon="share" label="Share" />
+          <ActionLabel icon="share" />
         </button>
         {!readOnly && (
           <button className="btn small" disabled={busy !== null} title="Move to…" aria-label="Move to…"
@@ -2411,16 +2408,17 @@ export default function App() {
             }}
             actions={(m) => (
               <>
-                <button className="btn small" disabled={busy !== null} onClick={() => download(m)} aria-label="Download">
-                  <ActionLabel icon="download" label="Download" />
+                <button className="btn small" disabled={busy !== null} onClick={() => download(m)} title="Download" aria-label="Download">
+                  <ActionLabel icon="download" />
                 </button>
                 <button
                   className="btn small"
                   disabled={busy !== null || !m.wrappedKey}
+                  title={m.wrappedKey ? 'Share this file' : 'Legacy file — re-upload to enable sharing'}
                   onClick={() => openShare(m)}
                   aria-label="Share"
                 >
-                  <ActionLabel icon="share" label="Share" />
+                  <ActionLabel icon="share" />
                 </button>
               </>
             )}
