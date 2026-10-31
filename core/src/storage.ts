@@ -499,10 +499,23 @@ export async function uploadBatch(
   const fee = sectors * (await price)
   all.forEach((_, i) => onItem(i, 'approve'))
   opts.onProgress?.('Waiting for wallet approval…')
-  const sent = await flow.getFunction('batchSubmit').send(
-    all.map((p) => p.submission),
-    { value: fee }
-  )
+  const tx = {
+    to: network.flowAddress,
+    data: flow.interface.encodeFunctionData('batchSubmit', [all.map((p) => p.submission)]),
+    value: fee,
+  }
+  // A browser wallet gets the transaction as is: ethers' JsonRpcSigner
+  // would first ask it for the block number and a gas estimate (two
+  // round trips through the extension, ~0.9 s) that the wallet then
+  // works out again itself before its prompt.
+  const sent = {
+    hash:
+      signer instanceof ethers.JsonRpcSigner
+        ? ((await signer.provider.send('eth_sendTransaction', [
+            { from: submitter, to: tx.to, data: tx.data, value: ethers.toQuantity(tx.value) },
+          ])) as string)
+        : (await signer.sendTransaction(tx)).hash,
+  }
   opts.onProgress?.(`Transaction submitted: ${sent.hash}`)
   const receipt = await provider.waitForTransaction(sent.hash)
   if (!receipt || receipt.status !== 1) throw new Error(`batch transaction failed (${sent.hash})`)

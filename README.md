@@ -80,6 +80,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:folder-rename` | folder rename: name checks, one transaction, open folder follows, subfolder kept, phone layout |
 | `npm run test:move` | "Move to…" picker for folders and files: greyed-out places, name clashes refused, new destination folder, one transaction, phone layout |
 | `node scripts/time-wallet-prompt.mjs` | Time from a drive action to its wallet prompt, request by request (testnet, throwaway wallet) |
+| `node scripts/time-wallet-prompt-browser.mjs [url]` | The same in a real browser: click → the wallet's `eth_sendTransaction`, with every page and wallet request in between |
 | `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
