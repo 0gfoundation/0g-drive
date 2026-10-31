@@ -1,6 +1,7 @@
 import { ethers } from 'ethers'
 import type { NetworkConfig } from './config.js'
-import { uploadData, uploadBatch, downloadFile, storagePrice, type BatchItem } from './storage.js'
+import { uploadData, uploadBatch, downloadFile, storagePrice, wakeWallet, type BatchItem } from './storage.js'
+import { timed } from './timing.js'
 import type { FileMeta, SearchEntry } from './types.js'
 import { scanUploadsCached, type EventCache, type UploadEvent } from './events.js'
 import {
@@ -115,11 +116,11 @@ export class DriveStore {
   async refreshEvents(): Promise<UploadEvent[]> {
     // this action's fee: a fresh price, in the same request as the scan
     if (this.network.batchSubmit) storagePrice(this.network, 0).catch(() => undefined)
+    wakeWallet(this.signer)
     const address = await this.signer.getAddress()
-    const { events, scannedToBlock } = await scanUploadsCached(
-      address,
-      this.network,
-      this.opts.eventCache
+    const { events, scannedToBlock } = await timed(
+      'chain',
+      scanUploadsCached(address, this.network, this.opts.eventCache)
     )
     this.events = events
     this.scannedToBlock = scannedToBlock
@@ -158,7 +159,7 @@ export class DriveStore {
       const cached = this.manifests.get(event.rootHash.toLowerCase())
       if (cached !== undefined) return JSON.parse(cached) as T
       try {
-        const { data, decrypted } = await downloadFile(
+        const { data, decrypted } = await timed('listings', downloadFile(
           [event.rootHash],
           this.network,
           {
@@ -168,7 +169,7 @@ export class DriveStore {
             txSeqs: [event.txSeq],
             onProgress: () => undefined, // quiet for metadata reads
           }
-        )
+        ))
         if (!decrypted) {
           throw new Error(
             'Manifest decryption failed — wrong drive key for this account'

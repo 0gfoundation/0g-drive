@@ -30,7 +30,10 @@ import {
   unlockShareKey,
   DriveStore,
   TRASH_PATH,
+  actionTiming,
   fileNameProblem,
+  startActionTiming,
+  timed,
   folderNameProblem,
   type DriveState,
   type FileMeta,
@@ -68,12 +71,33 @@ const NETWORK = getNetworkConfig('testnet', 'turbo')
  * (prompt/confirm) counts as acting too — see markAction.
  */
 let lastActionAt = 0
+let aiBusyAtAction = false
 const markAction = () => {
   lastActionAt = performance.now()
+  aiBusyAtAction = getModelStatus().loading
+  startActionTiming()
 }
 for (const ev of ['click', 'keydown', 'drop', 'change']) window.addEventListener(ev, markAction, true)
-const walletAskedMessage = () =>
-  `Asked your wallet to approve, ${((performance.now() - lastActionAt) / 1000).toFixed(1)} s after your click.`
+const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
+/** "Asked your wallet to approve, 3.9 s after your click (chain check 3.4 s · …)": the steps
+ *  core and the upload timed (see core timing.ts), what's left as "other", and whether the
+ *  AI model download was competing for the network meanwhile. */
+const walletAskedMessage = () => {
+  const total = performance.now() - lastActionAt
+  const t = actionTiming()
+  const steps: [string, number | undefined][] = [
+    ['chain check', t.chain],
+    ['listings', t.listings],
+    ['search indexing', t.indexing],
+    ['preparing', t.preparing],
+    ['price', t.price],
+  ]
+  const parts = steps.filter(([, ms]) => ms !== undefined && ms >= 50).map(([label, ms]) => `${label} ${secs(ms!)}`)
+  const other = total - steps.reduce((n, [, ms]) => n + (ms ?? 0), 0)
+  if (other >= 200) parts.push(`other ${secs(other)}`)
+  if (aiBusyAtAction || getModelStatus().loading) parts.push('AI download running')
+  return `Asked your wallet to approve, ${secs(total)} after your click${parts.length ? ` (${parts.join(' · ')})` : ''}.`
+}
 
 interface Activity {
   id: number
@@ -1177,7 +1201,7 @@ export default function App() {
             finalize: async (roots) => {
               // entries not ready within the time box are left out — the
               // folder's "Index older files" picks them up later
-              const searches = await awaitSearches()
+              const searches = await timed('indexing', awaitSearches())
               metas = files.map((file, i) => ({
                 id: ids[i],
                 name: file.name,
