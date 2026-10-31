@@ -2,7 +2,7 @@
 // organize suggestions. Everything is computed on this device; the only
 // chain writes are the (batched) folder-manifest updates the user approves.
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { DriveState, DriveStore, FileMeta, SearchEntry } from '@0gdrive/core'
 import {
   embedSearchQuery,
@@ -15,6 +15,7 @@ import {
   smartSearchEnabled,
   subscribeModelStatus,
   warmUpModels,
+  warmUpPhotoSearch,
   describeModelStatus,
   type ModelStatus,
 } from './ai/client'
@@ -67,6 +68,12 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
   useEffect(() => {
     if (enabled && driveOpen) void warmUpModels()
   }, [enabled, driveOpen])
+
+  // and, on desktop, photo search too if the drive has indexed photos
+  const hasPhotoEntries = useMemo(() => (drive ? allFiles(drive).some((f) => f.meta.search?.c) : false), [drive])
+  useEffect(() => {
+    if (enabled && hasPhotoEntries) warmUpPhotoSearch()
+  }, [enabled, hasPhotoEntries])
 
   const toggle = useCallback((on: boolean) => {
     if (on && isPhone() && !window.confirm(PHONE_MEMORY_WARNING)) return

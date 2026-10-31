@@ -312,6 +312,23 @@ export function warmUpModels(): Promise<unknown> {
   return warming
 }
 
+let photoWarming: Promise<unknown> | null = null
+/**
+ * On desktop, once the text model is ready, also load CLIP's text half
+ * (~64 MB, ~250 MB of memory) when the drive has indexed photos, so the
+ * first search doesn't wait for it. Not on phones (memory, see isPhone):
+ * there the first search loads it.
+ */
+export function warmUpPhotoSearch(): void {
+  if (photoWarming || isPhone()) return
+  photoWarming = warmUpModels()
+    .then(() => (warmed ? call<true>({ op: 'warmPhotoSearch' }) : (photoWarming = null)))
+    .catch((err) => {
+      photoWarming = null // a later drive load tries again
+      console.warn('photo search warm-up failed', err)
+    })
+}
+
 /**
  * Ask the browser not to evict the model cache (up to ~320 MB) under storage
  * pressure. Chrome decides silently (it favours sites in use); Firefox may

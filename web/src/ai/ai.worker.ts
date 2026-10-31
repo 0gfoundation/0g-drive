@@ -5,7 +5,7 @@
 
 import { RawImage, env } from '@huggingface/transformers'
 import type { SearchEntry } from '@0gdrive/core'
-import { embedPassage, embedQuery, indexPhoto, indexText, onModelProgress, renameEntry, warmUp } from './engine'
+import { embedPassage, embedQuery, indexPhoto, indexText, onModelProgress, renameEntry, warmPhotoSearch, warmUp } from './engine'
 import { modelFetch, onNetStats, planDownloads, type NetStats } from './netfetch'
 
 env.allowLocalModels = false // weights come from the HF CDN, then the browser cache
@@ -19,6 +19,7 @@ export type AiRequest =
   | { id: number; op: 'query'; text: string; photos: boolean }
   | { id: number; op: 'embed'; texts: string[] }
   | { id: number; op: 'warm' }
+  | { id: number; op: 'warmPhotoSearch' }
 
 export type AiMessage =
   | { type: 'result'; id: number; result: unknown }
@@ -76,6 +77,10 @@ self.onmessage = (e: MessageEvent<AiRequest>) => {
         case 'warm':
           await planDownloads(env.cacheKey, ['text'])
           result = await warmUp()
+          break
+        case 'warmPhotoSearch':
+          await planDownloads(env.cacheKey, ['clipText'])
+          result = await warmPhotoSearch()
           break
         case 'embed':
           result = await Promise.all(req.texts.map((t) => embedPassage(t)))
