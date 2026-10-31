@@ -1,7 +1,7 @@
 // Model downloads (runs in the AI worker as transformers.js's `env.fetch`).
 //
-// A first visit pulls ~160 MB (text model) from the Hugging Face and jsDelivr
-// CDNs, and ~155 MB more (photo models) the first time photos are involved. On
+// A first visit pulls ~155 MB (text model) from the Hugging Face and jsDelivr
+// CDNs, and ~150 MB more (photo models) the first time photos are involved. On
 // networks where those are slow or unreachable the stock fetch just hangs,
 // so this wrapper:
 //   • reports byte-accurate progress across all model files (one number that

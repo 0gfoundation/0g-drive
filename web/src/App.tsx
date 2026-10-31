@@ -2257,7 +2257,7 @@ export default function App() {
                     : smart.model.error && smart.enabled
                       ? 'Models failed to load — search matches names only. Retry from the search box.'
                       : smart.enabled
-                      ? 'Runs on this device. Models (~160 MB, ~155 MB more for photos) download once.'
+                      ? 'Runs on this device. Models (~155 MB, ~150 MB more for photos) download once.'
                       : isPhone()
                       ? 'Off — search matches file names only. Off on phones at first: the models need about 1 GB of memory.'
                       : 'Off — search matches file names only.'}
