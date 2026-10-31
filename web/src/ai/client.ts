@@ -237,6 +237,22 @@ export async function indexFile(
   }
 }
 
+/**
+ * A file's search entry after a rename. Only redone when on-device AI is
+ * on and its models are already loaded (a rename never starts a model
+ * download); otherwise, or on failure, the old entry is kept — name search
+ * uses the record's name anyway.
+ */
+export async function entryForRename(entry: SearchEntry | undefined, name: string): Promise<SearchEntry | undefined> {
+  if (!entry || !smartSearchEnabled() || !warmed || status.error) return entry
+  try {
+    return await call<SearchEntry>({ op: 'renameEntry', name, entry })
+  } catch (err) {
+    console.warn('search entry not updated for', name, err)
+    return entry
+  }
+}
+
 /** Whether indexing this file needs its content (vs. name only). */
 export function needsContent(name: string, mime: string, size: number): boolean {
   return (

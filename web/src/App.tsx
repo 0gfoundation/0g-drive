@@ -30,6 +30,7 @@ import {
   unlockShareKey,
   DriveStore,
   TRASH_PATH,
+  fileNameProblem,
   type DriveState,
   type FileMeta,
   type SharePayload,
@@ -54,7 +55,7 @@ import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
 import { AssistantPanel, highlight, isNarrow, type DriveStatus } from './Assistant'
 import { SearchBox, SearchResults, SuggestionsPanel, useSmartDrive } from './SmartSearch'
-import { describeModelStatus, getModelStatus, indexFile, modelEta, modelsLoading, smartSearchEnabled, subscribeModelStatus } from './ai/client'
+import { describeModelStatus, entryForRename, getModelStatus, indexFile, modelEta, modelsLoading, smartSearchEnabled, subscribeModelStatus } from './ai/client'
 
 const NETWORK = getNetworkConfig('testnet', 'turbo')
 
@@ -287,6 +288,7 @@ const ACTION_ICONS = {
   trash: 'M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13',
   restore: 'M4 12a8 8 0 108-8 8 8 0 00-6 2.7M4 4v4h4',
   close: 'M6 6l12 12M18 6L6 18',
+  rename: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
 } as const
 
 /** Button content: icon always, label hidden on narrow screens. */
@@ -581,6 +583,9 @@ export default function App() {
   const [profileState, setProfileState] = useState<string>('checking')
   const [publishing, setPublishing] = useState(false)
   const [shareFor, setShareFor] = useState<FileMeta | null>(null)
+  const [renameFor, setRenameFor] = useState<FileMeta | null>(null)
+  const [renameTo, setRenameTo] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
   const [previewFor, setPreviewFor] = useState<FileMeta | null>(null)
   const [shareMode, setShareMode] = useState<'A' | 'B'>('A')
   const [shareRecipient, setShareRecipient] = useState('')
@@ -1470,6 +1475,36 @@ export default function App() {
     [currentPath, view, log, reloadDrive]
   )
 
+  const openRename = useCallback((meta: FileMeta) => {
+    setRenameFor(meta)
+    setRenameTo(meta.name)
+    setRenameError(null)
+  }, [])
+
+  const submitRename = useCallback(async () => {
+    const store = storeRef.current
+    const meta = renameFor
+    if (!store || !meta) return
+    const name = renameTo.trim()
+    if (name === meta.name) {
+      setRenameFor(null)
+      return
+    }
+    setRenameError(null)
+    setBusy(`Renaming ${meta.name}…`)
+    try {
+      const search = await entryForRename(meta.search, name)
+      await store.renameFile(currentPath, meta.id, name, search)
+      log(`Renamed ${meta.name} → ${name}.`)
+      setRenameFor(null)
+      await reloadDrive()
+    } catch (err) {
+      setRenameError((err as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }, [renameFor, renameTo, currentPath, log, reloadDrive])
+
   const restoreFile = useCallback(
     async (meta: FileMeta) => {
       const store = storeRef.current
@@ -1683,6 +1718,11 @@ export default function App() {
         >
           <ActionLabel icon="share" label="Share" />
         </button>
+        {!readOnly && (
+          <button className="btn small" disabled={busy !== null} onClick={() => openRename(f)} title="Rename" aria-label="Rename">
+            <ActionLabel icon="rename" />
+          </button>
+        )}
         {!readOnly && (
           <button className="btn small danger" disabled={busy !== null} onClick={() => trashFile(f)} title="Move to trash" aria-label="Move to trash">
             <ActionLabel icon="trash" />
@@ -2496,6 +2536,65 @@ export default function App() {
           </form>
         </div>
       )}
+
+      {renameFor && (() => {
+        const name = renameTo.trim()
+        const ext = (n: string) => (/\.([^./]+)$/.exec(n)?.[1] ?? '').toLowerCase()
+        const clash =
+          name.toLowerCase() !== renameFor.name.toLowerCase() &&
+          shownFiles.some((f) => f.id !== renameFor.id && f.name.toLowerCase() === name.toLowerCase())
+        const problem = fileNameProblem(name) ?? (clash ? `There is already a file named “${name}” in this folder.` : null)
+        const extChanged = !problem && ext(name) !== ext(renameFor.name)
+        return (
+          <div className="modal-backdrop" onClick={() => busy === null && setRenameFor(null)}>
+            <form
+              className="modal rename-modal"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.key === 'Escape' && busy === null && setRenameFor(null)}
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (!problem) void submitRename()
+              }}
+            >
+              <h2>Rename file</h2>
+              <input
+                className="key-input wide"
+                aria-label="New name"
+                value={renameTo}
+                maxLength={300}
+                onChange={(e) => setRenameTo(e.target.value)}
+                onFocus={(e) => {
+                  // select the name without its extension, like a desktop file manager
+                  const dot = renameFor.name.lastIndexOf('.')
+                  e.target.setSelectionRange(0, dot > 0 ? dot : renameFor.name.length)
+                }}
+                autoFocus
+                spellCheck={false}
+                autoComplete="off"
+              />
+              {problem && name !== renameFor.name && <p className="error-text">⚠ {problem}</p>}
+              {extChanged && (
+                <p className="muted">
+                  {ext(name)
+                    ? `The extension changes from “.${ext(renameFor.name) || '(none)'}” to “.${ext(name)}”. `
+                    : 'The name has no extension. '}
+                  0GDrive keeps opening it as the type it was uploaded as; other apps may treat it differently after download.
+                </p>
+              )}
+              {renameError && <p className="error-text">⚠ {renameError}</p>}
+              <div className="modal-actions">
+                <button className="btn" type="button" onClick={() => setRenameFor(null)} disabled={busy !== null}>
+                  Cancel
+                </button>
+                <button className="btn primary" type="submit" disabled={busy !== null || !!problem || name === renameFor.name}>
+                  {busy !== null ? 'Renaming…' : 'Rename'}
+                </button>
+              </div>
+              <p className="muted small-print">1 transaction · the file itself isn’t re-uploaded · links you already shared keep the old name</p>
+            </form>
+          </div>
+        )
+      })()}
 
       {shareFor && (
         <div className="modal-backdrop" onClick={() => setShareFor(null)}>

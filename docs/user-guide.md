@@ -21,7 +21,7 @@ Storing data on 0G costs a small fee in 0G (storage fee + gas), paid by a wallet
 | Action | Wallet prompts |
 |---|---|
 | Upload one or many files (one drop) | 1 transaction (all files + the folder listing in one batch) |
-| New folder, move to trash, restore, remove from trash, organize moves | 1 transaction each, however many files or folders (updates small listing files) |
+| New folder, rename a file, move to trash, restore, remove from trash, organize moves | 1 transaction each, however many files or folders (updates small listing files) |
 | Set up recovery | 2 signatures + 1 transaction |
 | Set or change the recovery password | 1 signature + 1 transaction |
 | Publish / update share key | 2 signatures + 1 transaction |
@@ -45,6 +45,7 @@ Every file gets its own random key; the file is encrypted with it before upload,
 ## Folders, trash and sync
 
 - **+ New folder** creates a folder in the current folder (1 transaction). The sidebar shows the folder tree; click a folder to open it, the arrow to expand it.
+- **Rename** (pencil icon on a file) changes its name in 1 transaction. The file itself isn't re-uploaded: names live only in your folder's encrypted listing. A name already used in the folder (ignoring upper/lower case), an empty name or one containing “/” is refused. Changing the extension doesn't change how 0GDrive opens the file. With on-device AI on, the file's search data is updated for the new name. Share links you already sent keep showing the old name, and still work.
 - **Move to trash** (trash icon on a file, or select several and **Trash selected**). Folders can be moved to trash from the tree.
 - **Trash** (sidebar): **Restore** puts a file back where it was; the × button removes its record from the trash.
 - Storage on 0G is **immutable**: "deleting" removes the file from your drive's listings, but the encrypted data stays on the network until its storage period ends. Nobody can read it without your keys.
