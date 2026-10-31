@@ -409,7 +409,7 @@ a:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tree-remove {
+.tree-act {
   background: none;
   border: none;
   color: var(--muted);
@@ -419,9 +419,19 @@ a:hover {
   cursor: pointer;
   opacity: 0;
   flex: none;
+  display: inline-flex;
+  align-items: center;
 }
-.tree-row:hover .tree-remove {
+.tree-act svg {
+  width: 13px;
+  height: 13px;
+}
+.tree-row:hover .tree-act,
+.tree-act:focus-visible {
   opacity: 1;
+}
+.tree-rename:hover {
+  color: var(--accent);
 }
 .tree-remove:hover {
   color: var(--danger);
@@ -1231,7 +1241,7 @@ tbody tr:hover {
     display: inline;
   }
   /* no hover on touch screens: keep hover-revealed controls visible */
-  .tree-remove {
+  .tree-act {
     opacity: 1;
   }
   .tile-check {
@@ -1277,6 +1287,11 @@ tbody tr:hover {
   .tree-label {
     padding-top: 8px;
     padding-bottom: 8px;
+  }
+  .tree-act {
+    min-width: 34px;
+    min-height: 34px;
+    justify-content: center;
   }
   .td-check input,
   .th-check input,

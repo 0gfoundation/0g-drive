@@ -32,7 +32,8 @@
     "dev:assistant": "npm run dev -w assistant",
     "knowledge": "node scripts/build-knowledge.mjs",
     "test:assistant": "node scripts/test-assistant.mjs",
-    "test:rename": "npm run build -w core && node scripts/test-rename.mjs"
+    "test:rename": "npm run build -w core && node scripts/test-rename.mjs",
+    "test:folder-rename": "npm run build -w core && node scripts/test-folder-rename.mjs"
   },
   "engines": {
     "node": ">=20"
