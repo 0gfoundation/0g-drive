@@ -16,6 +16,7 @@ import type { UploadOption, ShardedNode, ShardedNodes } from '@0gfoundation/0g-s
 import type { NetworkConfig } from './config.js'
 import { hexToBytes } from './keystore.js'
 import { foldNodesToRoot, rpcProvider } from './events.js'
+import { addActionTiming, timed } from './timing.js'
 import type {
   DecryptionInput,
   DownloadOpts,
@@ -449,6 +450,17 @@ export function storagePrice(network: NetworkConfig, maxAgeMs = PRICE_MAX_AGE_MS
   return price
 }
 
+/**
+ * Nudge a browser wallet awake as an action starts. MetaMask-style
+ * extensions run in a background worker the browser suspends after ~30 s
+ * idle; the first request then waits for it to start. This read-only call
+ * (never a prompt) wakes it — and its RPC connection — while the app does
+ * its own ~0.3 s of work, so it's ready when the transaction arrives.
+ */
+export function wakeWallet(signer: ethers.Signer): void {
+  if (signer instanceof ethers.JsonRpcSigner) signer.provider.send('eth_blockNumber', []).catch(() => undefined)
+}
+
 export async function uploadBatch(
   items: BatchItem[],
   network: NetworkConfig,
@@ -457,6 +469,7 @@ export async function uploadBatch(
 ): Promise<BatchResult> {
   if (!network.batchSubmit) throw new Error(`batch submission is not enabled on ${network.chainName}`)
   if (items.length === 0) throw new Error('empty batch')
+  wakeWallet(signer)
   const submitter = await signer.getAddress()
   const onItem = opts.onItem ?? (() => undefined)
   // fetched while hashing (or reused from the action's own scan)
@@ -482,11 +495,15 @@ export async function uploadBatch(
   }
 
   // 1. Hash everything (the only pass before the prompt)
+  let started = performance.now()
   const primary: Prepared[] = []
   for (let i = 0; i < items.length; i++) primary.push(await prepare(items[i], i))
+  addActionTiming('preparing', performance.now() - started)
   const extraItems = opts.finalize ? await opts.finalize(primary.map((p) => p.root)) : []
+  started = performance.now()
   const extras: Prepared[] = []
   for (let i = 0; i < extraItems.length; i++) extras.push(await prepare(extraItems[i], items.length + i))
+  addActionTiming('preparing', performance.now() - started)
   const all = [...primary, ...extras]
 
   // 2. One transaction
@@ -496,7 +513,7 @@ export async function uploadBatch(
     (acc, p) => acc + p.submission.data.nodes.reduce((n, node) => n + (1n << BigInt(node.height)), 0n),
     0n
   )
-  const fee = sectors * (await price)
+  const fee = sectors * (await timed('price', price))
   all.forEach((_, i) => onItem(i, 'approve'))
   opts.onProgress?.('Waiting for wallet approval…')
   const tx = {

@@ -43,7 +43,9 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 900 
 const page = await context.newPage()
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 let txs = 0
+const walletCalls = [] // method names, in order
 await page.exposeFunction('__eth', async (method, params) => {
+  walletCalls.push(method)
   try {
     switch (method) {
       case 'eth_requestAccounts':
@@ -163,13 +165,19 @@ try {
 
   await input.fill('meeting notes.txt')
   const before = txs
+  const callsBefore = walletCalls.length
   await submit.click()
   await page.locator('.activity li', { hasText: 'Renamed notes.txt → meeting notes.txt' }).waitFor({ timeout: 10 * 60_000 })
   await dialog.waitFor({ state: 'detached' })
   await row('meeting notes.txt').waitFor({ timeout: 2 * 60_000 })
   const asked = (await page.locator('.activity li', { hasText: 'Asked your wallet to approve' }).first().textContent()) ?? ''
   const askedSecs = Number(/approve, ([\d.]+) s after your click/.exec(asked)?.[1] ?? NaN)
-  check('Activity says when the wallet was asked (under 3 s after the click)', askedSecs >= 0 && askedSecs < 3, asked.trim())
+  check('Activity says when the wallet was asked (under 3 s after the click), with its steps',
+    askedSecs >= 0 && askedSecs < 3 && /after your click \(chain check [\d.]+ s/.test(asked), asked.trim())
+  const renameCalls = walletCalls.slice(callsBefore)
+  check('the wallet is woken (a read-only call) before the transaction reaches it',
+    renameCalls.indexOf('eth_blockNumber') >= 0 && renameCalls.indexOf('eth_blockNumber') < renameCalls.indexOf('eth_sendTransaction'),
+    renameCalls.join(', '))
   check('rename takes one transaction; the list shows the new name',
     txs - before === 1 && JSON.stringify(await names()) === JSON.stringify(['meeting notes.txt', LONG, 'todo.txt']), `${txs - before} tx, ${JSON.stringify(await names())}`)
 
