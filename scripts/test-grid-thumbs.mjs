@@ -151,8 +151,7 @@ try {
   await page.waitForTimeout(5000)
   step('before reload: ' + JSON.stringify(await tiles()))
   async function afterReload(label) {
-    await page.reload()
-    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await page.reload() // reconnects by itself
     await page.waitForFunction((n) => document.querySelectorAll('.grid img, .grid .thumb-pending').length >= n, N, { timeout: 5 * 60_000 })
     const tl = Date.now()
     net.length = 0

@@ -187,8 +187,7 @@ try {
   check('phone: file actions are icons only, ≥34 px', iconOnly(phoneBtns) && phoneBtns[0].w >= 34 && phoneBtns[0].h >= 34, JSON.stringify(phoneBtns))
   await page.setViewportSize({ width: 1280, height: 900 })
 
-  await page.reload()
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await page.reload() // reconnects by itself
   await row('meeting notes.txt').waitFor({ timeout: 5 * 60_000 })
   check('after reload, the new name comes back from the chain', JSON.stringify(await names()) === JSON.stringify(['meeting notes.txt', LONG, 'todo.txt']), JSON.stringify(await names()))
 

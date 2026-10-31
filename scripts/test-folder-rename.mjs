@@ -182,8 +182,7 @@ try {
   await page.getByRole('button', { name: 'Folders and settings' }).click({ force: true }).catch(() => {})
   await page.setViewportSize({ width: 1280, height: 900 })
 
-  await page.reload()
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await page.reload() // reconnects by itself
   await treeRow('Projects').waitFor({ timeout: 5 * 60_000 })
   await treeRow('Projects').locator('.tree-label').click()
   await treeRow('2025').locator('.tree-label').click()

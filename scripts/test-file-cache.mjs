@@ -124,8 +124,7 @@ async function openPreview(label) {
   return r
 }
 async function reopen() {
-  await page.reload()
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await page.reload() // reconnects by itself
   await page.locator('table .fname-btn', { hasText: 'scan.png' }).waitFor({ timeout: 5 * 60_000 })
   await page.waitForTimeout(3000) // let thumbnails settle
 }

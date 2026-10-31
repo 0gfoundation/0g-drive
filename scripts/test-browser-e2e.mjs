@@ -222,8 +222,7 @@ try {
   }
 
   // fresh load from chain: records written in batch must have txSeqs backfilled
-  await page.reload()
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await page.reload() // reconnects by itself
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).waitFor({ timeout: 5 * 60_000 })
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).click()
   await page.locator('table .fname-btn', { hasText: 'carbonara.md' }).waitFor({ timeout: 5 * 60_000 })

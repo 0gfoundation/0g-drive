@@ -32,10 +32,14 @@ const ICON = 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.
 
 /** sign: 'ok' (RFC 6979), 'random' (random nonce), 'contract' (not ECDSA) */
 function mockWallet(name, rdns, sign = 'ok') {
-  const key = ethers.Wallet.createRandom()
+  // two accounts: wallet_requestPermissions stands for the user picking the other one
+  const keys = [ethers.Wallet.createRandom(), ethers.Wallet.createRandom()]
+  let current = 0
+  let connected = false
   const calls = []
   const personalSign = async (data) => {
     const msg = ethers.isHexString(data) ? ethers.getBytes(data) : data
+    const key = keys[current]
     if (sign === 'ok') return key.signMessage(msg)
     if (sign === 'contract') return '0x' + 'ab'.repeat(300)
     const sig = secp256k1.sign(ethers.getBytes(ethers.hashMessage(msg)), ethers.getBytes(key.privateKey), { extraEntropy: true })
@@ -45,8 +49,17 @@ function mockWallet(name, rdns, sign = 'ok') {
     calls.push(method)
     switch (method) {
       case 'eth_requestAccounts':
+        connected = true
+        return [keys[current].address]
       case 'eth_accounts':
-        return [key.address]
+        return connected ? [keys[current].address] : []
+      case 'wallet_requestPermissions':
+        current = connected ? 1 - current : current
+        connected = true
+        return [{ parentCapability: 'eth_accounts' }]
+      case 'wallet_revokePermissions':
+        connected = false
+        return null
       case 'eth_chainId':
         return network.chainIdHex.toLowerCase()
       case 'net_version':
@@ -59,7 +72,13 @@ function mockWallet(name, rdns, sign = 'ok') {
         return provider.send(method, params ?? [])
     }
   }
-  return { name, rdns, key, calls, handle, count: (m) => calls.filter((c) => c === m).length }
+  return {
+    name, rdns, calls, handle,
+    count: (m) => calls.filter((c) => c === m).length,
+    address: () => keys[current].address,
+    use: (i) => { current = i; connected = true },
+    drop: () => { connected = false },
+  }
 }
 
 const browser = await chromium.launch()
@@ -85,9 +104,16 @@ async function open(wallets, { announce = true, viewport = { width: 1280, height
         if (r.err) throw Object.assign(new Error(r.err), { code: -32000 })
         return r.ok
       },
-      on() {},
-      removeListener() {},
+      on(ev, h) {
+        ;((window.__handlers ??= {})[`${i}:${ev}`] ??= []).push(h)
+      },
+      removeListener(ev, h) {
+        const list = window.__handlers?.[`${i}:${ev}`] ?? []
+        list.splice(list.indexOf(h), 1)
+      },
     }))
+    // the test makes a wallet fire an event, as when the user acts in it
+    window.__emit = (i, ev, arg) => (window.__handlers?.[`${i}:${ev}`] ?? []).forEach((h) => h(arg))
     window.ethereum = providers[0]
     if (!announce) return
     const fire = () =>
@@ -127,11 +153,90 @@ try {
       beta.count('eth_requestAccounts') === 1 && alpha.calls.length === 0, JSON.stringify({ alpha: alpha.calls.length, beta: beta.calls.length }))
 
     await page.reload()
-    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
+    check('after a reload, the last-used wallet reconnects by itself, without a prompt',
+      beta.count('eth_requestAccounts') === 1 && alpha.count('eth_requestAccounts') === 0,
+      JSON.stringify({ beta: beta.calls.slice(-4) }))
+    await page.getByRole('button', { name: 'Wallet menu' }).click()
+    await page.getByRole('menuitem', { name: 'Switch wallet or account' }).click()
     await page.locator('.wallet-picker').waitFor()
     const first = await page.$eval('.wallet-picker .wallet-option', (e) => e.textContent)
-    check('after a reload, the last-used wallet is first and marked', first === 'Beta WalletLast used', JSON.stringify(first))
+    check('Switch wallet: the picker opens, the last-used wallet first and marked', first === 'Beta WalletLast used', JSON.stringify(first))
     await page.keyboard.press('Escape')
+    await context.close()
+  }
+
+  // ── switching accounts and disconnecting ──
+  {
+    const w = mockWallet('Gamma Wallet', 'com.example.gamma')
+    const { context, page } = await open([w])
+    const shown = () => page.locator('.address').getAttribute('title')
+    const emit = (addr) => page.evaluate((a) => window.__emit(0, 'accountsChanged', a ? [a] : []), addr).catch(() => {})
+    const onAccount = (addr) =>
+      page.waitForFunction((a) => document.querySelector('.address')?.getAttribute('title') === a, addr, { timeout: 120_000 })
+    await page.goto(base)
+    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
+    const A = w.address()
+
+    // wallets also announce the account on connect: the same one changes nothing
+    await page.evaluate(() => (window.__marker = 1))
+    await emit(A)
+    await page.waitForTimeout(1500)
+    check('the same account announced again: nothing happens', await page.evaluate(() => window.__marker === 1))
+
+    // the user picks another account in the wallet
+    w.use(1)
+    const B = w.address()
+    await emit(B)
+    await onAccount(B)
+    await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
+    check('another account in the wallet: the app starts over in it, nothing of the first left',
+      (await page.evaluate(() => window.__marker)) === undefined && (await shown()) === B)
+
+    // the menu at phone width
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByRole('button', { name: 'Wallet menu' }).click()
+    const menu = await page.evaluate(() => {
+      const m = document.querySelector('.wallet-menu').getBoundingClientRect()
+      const items = [...document.querySelectorAll('.wallet-menu [role=menuitem]')].map((b) => Math.round(b.getBoundingClientRect().height))
+      const btn = document.querySelector('.wallet-menu-btn').getBoundingClientRect()
+      return { left: Math.round(m.left), right: Math.round(m.right), items, btn: Math.round(btn.width), overflow: document.documentElement.scrollWidth - innerWidth }
+    })
+    await page.keyboard.press('Escape')
+    const closed = (await page.locator('.wallet-menu').count()) === 0
+    check('phone: wallet menu inside the screen, ≥44 px items, Escape closes it',
+      menu.left >= 0 && menu.right <= 390 && menu.overflow <= 0 && menu.items.length === 2 && menu.items.every((h) => h >= 44) && menu.btn >= 30 && closed,
+      JSON.stringify({ ...menu, closed }))
+    await page.setViewportSize({ width: 1280, height: 900 })
+
+    // Switch wallet or account: the wallet shows its accounts (here: picks A)
+    await page.getByRole('button', { name: 'Wallet menu' }).click()
+    await page.getByRole('menuitem', { name: 'Switch wallet or account' }).click()
+    await onAccount(A)
+    await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
+    check('Switch wallet or account: asks the wallet, then the app reloads into the chosen account',
+      w.count('wallet_requestPermissions') === 1 && (await shown()) === A)
+
+    // Disconnect, and stay disconnected across a reload
+    await page.getByRole('button', { name: 'Wallet menu' }).click()
+    await page.getByRole('menuitem', { name: 'Disconnect' }).click()
+    await page.getByRole('button', { name: 'Connect wallet' }).waitFor({ timeout: 60_000 })
+    await page.reload()
+    await page.getByRole('button', { name: 'Connect wallet' }).waitFor({ timeout: 60_000 })
+    check('Disconnect: back to the start screen, and a reload stays disconnected',
+      w.count('wallet_revokePermissions') === 1 && (await page.locator('.address').count()) === 0)
+    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
+    await page.reload()
+    await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
+    check('connecting again: the next reload reconnects by itself', (await shown()) === A)
+
+    // the wallet disconnects the site itself
+    w.drop()
+    await emit(null)
+    await page.getByRole('button', { name: 'Connect wallet' }).waitFor({ timeout: 60_000 })
+    check('the wallet drops the site: back to the start screen', (await page.locator('.address').count()) === 0)
     await context.close()
   }
 

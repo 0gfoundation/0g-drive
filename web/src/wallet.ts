@@ -176,9 +176,95 @@ export async function connectWallet(
   const eth = selectWallet(option)
   const provider = new ethers.BrowserProvider(eth)
   await provider.send('eth_requestAccounts', [])
+  setDisconnected(false)
   await ensureNetwork(network, eth, provider)
   const signer = await provider.getSigner()
   return await readWalletState(signer, network)
+}
+
+// ─── Staying connected, switching, disconnecting ──────────────────────
+// Any change of wallet or account reloads the page: everything the app
+// holds belongs to one account (drive, key, recovery state, open dialogs,
+// uploads), and a fresh page is the one reset that can't miss any of it.
+// The reload then reconnects quietly (reconnectWallet).
+
+const DISCONNECTED_KEY = '0gdrive:disconnected'
+
+function setDisconnected(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(DISCONNECTED_KEY, '1')
+    else localStorage.removeItem(DISCONNECTED_KEY)
+  } catch {
+    // per-browser convenience only
+  }
+}
+
+/**
+ * Reconnect the last-used wallet without a prompt, if it still lets this
+ * site see an account (eth_accounts never opens the wallet) and is on
+ * `network` (switching would prompt — that's left to "Connect wallet").
+ * Null after "Disconnect", or when there's nothing to reconnect.
+ */
+export async function reconnectWallet(network: NetworkConfig): Promise<WalletState | null> {
+  try {
+    if (localStorage.getItem(DISCONNECTED_KEY)) return null
+  } catch {
+    return null
+  }
+  const last = lastUsedWallet()
+  if (!last) return null
+  let option = walletOptions().find((o) => o.id === last)
+  if (!option) {
+    // extensions announce themselves just after the page loads
+    await new Promise((r) => setTimeout(r, 300))
+    option = walletOptions().find((o) => o.id === last)
+  }
+  if (!option) return null
+  const accounts = (await option.provider.request({ method: 'eth_accounts' })) as string[] | undefined
+  if (!accounts?.length) return null
+  if (Number(await option.provider.request({ method: 'eth_chainId' })) !== network.chainId) return null
+  const eth = selectWallet(option)
+  const signer = await new ethers.BrowserProvider(eth).getSigner(accounts[0])
+  return await readWalletState(signer, network)
+}
+
+/**
+ * Let the user pick a wallet (if several) and an account in it, then
+ * reload into that account. Resolves false when they cancel or keep the
+ * same wallet and account (nothing to do).
+ */
+export async function switchWallet(network: NetworkConfig, current: string): Promise<boolean> {
+  const option = await chooseWallet()
+  if (!option) return false
+  let accounts: string[]
+  try {
+    // asks the wallet to show its account choice (MetaMask, Rabby, …)
+    await option.provider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] })
+    accounts = (await option.provider.request({ method: 'eth_accounts' })) as string[]
+  } catch (err) {
+    if ((err as { code?: number }).code === 4001) return false // closed the wallet's window
+    // no permissions API: a plain connect request
+    accounts = (await option.provider.request({ method: 'eth_requestAccounts' })) as string[]
+  }
+  if (!accounts?.length) return false
+  if (option.provider === active && accounts[0].toLowerCase() === current.toLowerCase()) return false
+  const eth = selectWallet(option)
+  await ensureNetwork(network, eth, new ethers.BrowserProvider(eth))
+  setDisconnected(false)
+  location.reload()
+  return true
+}
+
+/** Forget the connection on this device (and in the wallet, where it lets
+ *  a site do that), then reload to the start screen. */
+export async function disconnectWallet(): Promise<void> {
+  setDisconnected(true)
+  try {
+    await active?.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] })
+  } catch {
+    // not supported by every wallet: the flag above keeps this device disconnected
+  }
+  location.reload()
 }
 
 export async function readWalletState(
