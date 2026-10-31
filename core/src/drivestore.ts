@@ -1,6 +1,6 @@
 import { ethers } from 'ethers'
 import type { NetworkConfig } from './config.js'
-import { uploadData, uploadBatch, downloadFile, type BatchItem } from './storage.js'
+import { uploadData, uploadBatch, downloadFile, storagePrice, type BatchItem } from './storage.js'
 import type { FileMeta, SearchEntry } from './types.js'
 import { scanUploadsCached, type EventCache, type UploadEvent } from './events.js'
 import {
@@ -90,6 +90,13 @@ const emptyFolder = (key: string): FolderManifest => ({ path: key, files: [], up
 export class DriveStore {
   private events: UploadEvent[] = []
   private scannedToBlock = 0
+  /**
+   * Manifest JSON by the root hash of its stored (encrypted) bytes. A root
+   * names one immutable upload, so an entry never goes stale; which root
+   * is current still comes from the event scan. Saves re-downloading the
+   * index and folders before every action's wallet prompt.
+   */
+  private manifests = new Map<string, string>()
 
   constructor(
     private network: NetworkConfig,
@@ -106,6 +113,8 @@ export class DriveStore {
   /** (Re)scan the wallet's upload events from the chain — incrementally
    *  when an eventCache is configured. */
   async refreshEvents(): Promise<UploadEvent[]> {
+    // this action's fee: a fresh price, in the same request as the scan
+    if (this.network.batchSubmit) storagePrice(this.network, 0).catch(() => undefined)
     const address = await this.signer.getAddress()
     const { events, scannedToBlock } = await scanUploadsCached(
       address,
@@ -146,6 +155,8 @@ export class DriveStore {
     const sorted = [...candidates].sort((a, b) => b.blockNumber - a.blockNumber)
     const skipped: string[] = []
     for (const event of sorted) {
+      const cached = this.manifests.get(event.rootHash.toLowerCase())
+      if (cached !== undefined) return JSON.parse(cached) as T
       try {
         const { data, decrypted } = await downloadFile(
           [event.rootHash],
@@ -163,7 +174,9 @@ export class DriveStore {
             'Manifest decryption failed — wrong drive key for this account'
           )
         }
-        const parsed = JSON.parse(new TextDecoder().decode(data)) as T
+        const text = new TextDecoder().decode(data)
+        const parsed = JSON.parse(text) as T
+        this.manifests.set(event.rootHash.toLowerCase(), text)
         if (skipped.length) {
           console.warn(
             `[drive] newest manifest version(s) unreadable, using block ${event.blockNumber}: ${skipped.join('; ')}`
@@ -261,8 +274,7 @@ export class DriveStore {
   }
 
   private async writeIndex(index: LoadedIndex): Promise<void> {
-    const item = this.indexItem(index)
-    await this.uploadManifest(item.data as Uint8Array, indexTag())
+    await this.writeManifests([], [this.indexItem(index)], '')
   }
 
   /** Add or update a file record in a folder (creates the folder if new). */
@@ -394,7 +406,7 @@ export class DriveStore {
     if (search) rec.search = search
     folder.updatedAt = Date.now()
     folder.version += 1
-    await this.uploadManifest(new TextEncoder().encode(JSON.stringify(folder)), folderTag(key))
+    await this.writeManifests([], [this.manifestItem(folder, folderTag(key))], '')
     return rec
   }
 
@@ -685,10 +697,14 @@ export class DriveStore {
   private async writeManifests(first: BatchItem[], then: BatchItem[], partial: string): Promise<void> {
     const all = [...first, ...then]
     if (all.length === 0) return
-    if (!this.network.batchSubmit || all.length === 1) {
+    // what was stored is known: the next action reads it back from here
+    const remember = (item: BatchItem, rootHash: string) =>
+      this.manifests.set(rootHash.toLowerCase(), new TextDecoder().decode(item.data as Uint8Array))
+    if (!this.network.batchSubmit) {
       for (let i = 0; i < all.length; i++) {
         try {
-          await this.uploadManifest(all[i].data as Uint8Array, all[i].tags ?? '0x')
+          const { rootHash } = await this.uploadManifest(all[i].data as Uint8Array, all[i].tags ?? '0x')
+          remember(all[i], rootHash)
         } catch (err) {
           if (i < first.length || first.length === 0) throw err
           throw new Error(`${partial} (${(err as Error).message})`)
@@ -696,11 +712,17 @@ export class DriveStore {
       }
       return
     }
-    const res = await uploadBatch(first.length > 0 ? first : then, this.network, this.signer, {
-      finalize: first.length > 0 && then.length > 0 ? async () => then : undefined,
+    // a single manifest goes this way too: unlike the SDK's own upload, it
+    // asks no storage node anything before the wallet prompt
+    const primary = first.length > 0 ? first : then
+    const extras = first.length > 0 ? then : []
+    const res = await uploadBatch(primary, this.network, this.signer, {
+      finalize: extras.length > 0 ? async () => extras : undefined,
       finalityRequired: this.opts.finalityRequired ?? true,
       onProgress: (msg) => this.progress(msg),
     })
+    res.items.forEach((r, i) => r.ok && remember(primary[i], r.result.rootHash))
+    res.extras.forEach((r, i) => r.ok && remember(extras[i], r.result.rootHash))
     for (const r of res.items) {
       if (!r.ok) throw new Error(`nothing was changed: a listing could not be stored (${r.error})`)
     }
@@ -717,10 +739,7 @@ export class DriveStore {
     trash.files = trash.files.filter((f) => f.id !== id)
     trash.updatedAt = Date.now()
     trash.version += 1
-    await this.uploadManifest(
-      new TextEncoder().encode(JSON.stringify(trash)),
-      folderTag(TRASH_PATH)
-    )
+    await this.writeManifests([], [this.manifestItem(trash, folderTag(TRASH_PATH))], '')
   }
 }
 

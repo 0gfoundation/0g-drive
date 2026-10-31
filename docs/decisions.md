@@ -80,6 +80,14 @@ Records written this way can't know their txSeqs (assigned at mining); `DriveSto
 
 Verified: `scripts/test-batch-submit.mjs` (raw protocol, 3 blobs → 3 `Submit` events, consecutive txSeqs, visible to the sender-topic history scan) and `scripts/test-batch-upload.mjs` (production path: 3 encrypted files + manifest stand-in, **1 transaction**, all sealed in 30 s, byte-identical, 0.0028 0G).
 
+**Time to the wallet prompt (2026-10-31).** Every drive action used to make 10–12 sequential requests before the wallet was asked to sign (2.4–3.4 s from a well-connected server): event scan, a fresh download of the index and folder manifests the app had just loaded, the SDK's single-file checks (node status, does the file already exist on two nodes), and two price lookups. Now it is one batched JSON-RPC request (~0.25 s on testnet; ~0.75 s for the first, on a cold connection):
+- **Manifest cache** (`DriveStore`): manifests by the root hash of their stored bytes — a root names one immutable upload, so an entry can't go stale; which version is current still comes from the event scan before every action. Seeded on load and on every successful write.
+- **Single manifests take the batch path** (`uploadBatch` with one item) where `batchSubmit` is on, so no storage node is asked anything before the prompt.
+- **Price fetched with the scan**: the action's `refreshEvents` fetches `pricePerSector` fresh, in the same request as the scan, and `uploadBatch` reuses it (≤ 30 s old). It is not cached for longer because the contract takes any fee (a simulated `batchSubmit` with no fee succeeds on both networks), so a stale price would silently under- or overpay rather than fail. The market's address is cached.
+- **Incremental scan in one round trip**: `eth_blockNumber` and `eth_getLogs(from, 'latest')` together, on one shared provider per RPC URL with a static network (no `eth_chainId` calls) and ethers' 250 ms answer reuse off.
+
+In the browser, ethers' own gas estimate and the wallet's work come on top. File uploads still hash (and encrypt) every file before the prompt: the transaction carries their roots.
+
 ### D8 — On-device AI, Phase 1: search & organize (2026-10-27)
 All inference runs in the browser (transformers.js / ONNX Runtime WebAssembly, in a Web Worker); plaintext and queries never leave the device. Models download once from the Hugging Face CDN (ORT's wasm runtime from jsDelivr), with a fallback route through the app's server, and live in the browser cache.
 

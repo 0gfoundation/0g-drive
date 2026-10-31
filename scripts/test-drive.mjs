@@ -286,6 +286,25 @@ check('after restart: renamed with its subfolder, old trash restored into it, "G
   `${state.paths.join(', ')} | Projects: ${state.folders.get('Projects')?.files.map((f) => f.name).join(', ')}`)
 await refund(legacy, wallet.address)
 
+// ── 9b. Two devices: cached manifests never hide the other's writes ──
+// A store keeps every manifest it has read or written; the event scan
+// before each action still has to pick up what another device wrote since.
+console.log('\n— two devices: B renames and adds a file; A, with everything cached, adds one too —')
+const deviceA = newStore()
+await deviceA.loadDrive()
+const deviceB = newStore()
+await deviceB.renameFolder('Inbox', 'Inbox2')
+await deviceB.putFileRecords('Inbox2', [fileMeta('h1', 'from-b.txt')])
+await txsSince()
+await deviceA.putFileRecords('Inbox2', [fileMeta('h2', 'from-a.txt')])
+check('a single-manifest write: one transaction', (await txsSince()) === 1)
+store = newStore()
+state = await store.loadDrive()
+check("A saw B's rename and B's file: Inbox2 holds both, no Inbox",
+  !state.paths.includes('Inbox') && state.paths.filter((p) => p === 'Inbox2').length === 1 &&
+  ['h1', 'h2'].every((id) => state.folders.get('Inbox2')?.files.some((f) => f.id === id)),
+  `${state.paths.join(', ')} | Inbox2: ${state.folders.get('Inbox2')?.files.map((f) => f.name).join(', ')}`)
+
 // ── 10. Cost report ───────────────────────────────────────────────────
 const balanceAfter = await provider.getBalance(wallet.address)
 console.log(`\ndrive key:  ${masterKeyHex}`)

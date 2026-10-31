@@ -58,8 +58,27 @@ interface ScanCtx {
   flowAddress: string
 }
 
+const providers = new Map<string, ethers.JsonRpcProvider>()
+
+/**
+ * One JSON-RPC provider per RPC URL, shared by every scan and upload. A
+ * fresh provider asks for eth_chainId before its first call; a shared one
+ * with a static network never does, and calls made together go out as one
+ * batched request.
+ */
+export function rpcProvider(network: NetworkConfig): ethers.JsonRpcProvider {
+  let provider = providers.get(network.rpcUrl)
+  if (!provider) {
+    // cacheTimeout -1: no reusing a just-made call's answer — a scan right
+    // after a write must ask the chain again
+    provider = new ethers.JsonRpcProvider(network.rpcUrl, network.chainId, { staticNetwork: true, cacheTimeout: -1 })
+    providers.set(network.rpcUrl, provider)
+  }
+  return provider
+}
+
 function scanContext(address: string, network: NetworkConfig): ScanCtx {
-  const provider = new ethers.JsonRpcProvider(network.rpcUrl)
+  const provider = rpcProvider(network)
   const iface = new ethers.Interface(FixedPriceFlow__factory.abi)
   return {
     provider,
@@ -97,21 +116,27 @@ async function scanRange(ctx: ScanCtx, from: number, to: number): Promise<Upload
       continue
     }
     start = end + 1
-    for (const log of logs) {
-      try {
-        const parsed = ctx.iface.parseLog({ topics: log.topics, data: log.data })
-        if (parsed === null) continue
-        events.push({
-          blockNumber: log.blockNumber,
-          txHash: log.transactionHash,
-          rootHash: foldNodesToRoot(parsed.args.submission.nodes),
-          txSeq: Number(parsed.args.submissionIndex),
-          tags: String(parsed.args.submission?.tags ?? '0x'),
-          identityHash: String(parsed.args.identity),
-        })
-      } catch {
-        // skip malformed log
-      }
+    events.push(...parseSubmits(ctx, logs))
+  }
+  return events
+}
+
+function parseSubmits(ctx: ScanCtx, logs: ethers.Log[]): UploadEvent[] {
+  const events: UploadEvent[] = []
+  for (const log of logs) {
+    try {
+      const parsed = ctx.iface.parseLog({ topics: log.topics, data: log.data })
+      if (parsed === null) continue
+      events.push({
+        blockNumber: log.blockNumber,
+        txHash: log.transactionHash,
+        rootHash: foldNodesToRoot(parsed.args.submission.nodes),
+        txSeq: Number(parsed.args.submissionIndex),
+        tags: String(parsed.args.submission?.tags ?? '0x'),
+        identityHash: String(parsed.args.identity),
+      })
+    } catch {
+      // skip malformed log
     }
   }
   return events
@@ -167,6 +192,19 @@ export async function scanUploads(
   fromBlock = 0
 ): Promise<{ events: UploadEvent[]; scannedToBlock: number }> {
   const ctx = scanContext(address, network)
+  if (fromBlock > 0) {
+    // incremental: the head and the logs up to it in one batched round
+    // trip (this runs before every drive action's wallet prompt). Logs a
+    // lagging backend hasn't indexed yet are caught by the next scan's
+    // rescan window, as with the chunked path.
+    const [latest, logs] = await Promise.all([
+      ctx.provider.getBlockNumber(),
+      ctx.provider
+        .getLogs({ address: ctx.flowAddress, topics: ctx.topics, fromBlock, toBlock: 'latest' })
+        .catch(() => null), // range rejected: chunked scan below
+    ])
+    if (logs !== null) return { events: parseSubmits(ctx, logs), scannedToBlock: latest }
+  }
   const { latest, neverSent } = await head(ctx, address, fromBlock <= 0)
   if (neverSent) return { events: [], scannedToBlock: latest }
   // block 0 is outside the RPC's searchable range (and has no logs)
