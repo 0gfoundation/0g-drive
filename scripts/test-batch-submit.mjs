@@ -23,7 +23,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const privateKey =
   process.env.PRIVATE_KEY ??
   /^PRIVATE_KEY=(0x[0-9a-fA-F]{64})\s*$/m.exec(readFileSync(resolve(root, '.env'), 'utf8'))?.[1]
-const network = getNetworkConfig('testnet', 'turbo')
+// NETWORK=mainnet to verify there (spends real 0G: well under 0.001)
+const network = getNetworkConfig(process.env.NETWORK === 'mainnet' ? 'mainnet' : 'testnet', 'turbo')
 const provider = new ethers.JsonRpcProvider(network.rpcUrl)
 const wallet = new ethers.Wallet(privateKey, provider)
 const address = await wallet.getAddress()

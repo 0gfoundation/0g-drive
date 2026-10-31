@@ -951,7 +951,7 @@ export default function App() {
   // ─── Upload queue ───────────────────────────────────────────────────
 
   /**
-   * One-prompt upload (networks with verified batchSubmit): every file AND
+   * One-prompt upload (networks with batchSubmit on): every file AND
    * the folder manifest listing them go into a single storage transaction.
    * The manifest's segments are uploaded only after every file is stored
    * and sealed; if any file fails, the stored ones are registered with a
