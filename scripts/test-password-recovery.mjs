@@ -190,8 +190,7 @@ try {
   await page.keyboard.press('Escape')
   await page.setViewportSize({ width: 1280, height: 900 })
 
-  await page.reload()
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await page.reload() // reconnects by itself
   await page.locator('.sec-row[data-row=password] .sec-ok').waitFor({ timeout: 3 * 60_000 })
   check('status read back from chain after reload', true)
 

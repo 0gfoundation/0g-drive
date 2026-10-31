@@ -40,14 +40,15 @@ import {
   type UploadEvent,
 } from '@0gdrive/core'
 import {
-  activeProvider,
   chooseWallet,
   connectWallet,
+  disconnectWallet,
   hasWallet,
   onAccountsChanged,
   onChainChanged,
-  readWalletState,
+  reconnectWallet,
   selectWallet,
+  switchWallet,
   type WalletState,
 } from './wallet'
 import { Logo } from './Logo'
@@ -615,6 +616,9 @@ function eventCacheFor(address: string): EventCache {
 
 export default function App() {
   const [wallet, setWallet] = useState<WalletState | null>(null)
+  const walletAddressRef = useRef<string | null>(null)
+  const [reconnecting, setReconnecting] = useState(true)
+  const [walletMenu, setWalletMenu] = useState(false)
   const [masterKeyHex, setMasterKeyHex] = useState<string | null>(null)
   const [hasBackup, setHasBackup] = useState<boolean | null>(null)
   const [backupCheckError, setBackupCheckError] = useState<string | null>(null)
@@ -791,18 +795,73 @@ export default function App() {
     []
   )
 
-  const connect = useCallback(async () => {
-    try {
-      const state = await connectWallet(NETWORK)
-      if (!state) return // picker dismissed
+  const adoptWallet = useCallback(
+    (state: WalletState) => {
+      walletAddressRef.current = state.address
       setWallet(state)
       setMasterKeyHex(getMasterKeyHex(state.address))
       log(`Connected ${shortHash(state.address)} · balance ${Number(state.balance).toFixed(4)} 0G`)
       void checkBackup(state.address)
+    },
+    [log, checkBackup]
+  )
+
+  const connect = useCallback(async () => {
+    try {
+      const state = await connectWallet(NETWORK)
+      if (!state) return // picker dismissed
+      adoptWallet(state)
     } catch (err) {
       log(`Wallet error: ${(err as Error).message}`)
     }
-  }, [log, checkBackup])
+  }, [log, adoptWallet])
+
+  // back into the last-used wallet without a click, if it still allows it
+  useEffect(() => {
+    reconnectWallet(NETWORK)
+      .then((state) => {
+        if (state && !readOnlyRef.current && !walletAddressRef.current) adoptWallet(state)
+      })
+      .catch((err) => console.warn('[wallet] reconnect failed', err))
+      .finally(() => setReconnecting(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** Uploads or another action still running: say so before a reload drops them. */
+  const confirmLeave = (what: string) =>
+    (busy === null && queue.every((q) => q.state === 'done' || q.state === 'error')) ||
+    window.confirm(`Something is still in progress (${busy ?? 'uploads'}). ${what} anyway? It will stop.`)
+
+  const switchAccount = useCallback(async () => {
+    setWalletMenu(false)
+    if (!wallet || !confirmLeave('Switch wallet')) return
+    try {
+      await switchWallet(NETWORK, wallet.address)
+    } catch (err) {
+      log(`Wallet error: ${(err as Error).message}`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet, busy, queue, log])
+
+  useEffect(() => {
+    if (!walletMenu) return
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !(e.target as Element).closest?.('.address-wrap')) setWalletMenu(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [walletMenu])
+
+  const disconnect = useCallback(() => {
+    setWalletMenu(false)
+    if (!confirmLeave('Disconnect')) return
+    void disconnectWallet()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, queue])
 
   useEffect(() => {
     if (wallet && masterKeyHex && !busy && !storeRef.current) {
@@ -813,30 +872,14 @@ export default function App() {
 
   useEffect(() => {
     const offChain = onChainChanged(() => window.location.reload())
-    const offAccounts = onAccountsChanged(async (accounts) => {
-      if (readOnlyRef.current) return // no wallet in play
-      if (accounts.length === 0) {
-        setWallet(null)
-        setDrive(null)
-        setMasterKeyHex(null)
-        storeRef.current = null
-        setProfilePubKey(null)
-        return
-      }
-      try {
-        const eth = activeProvider()
-        if (!eth) return
-        const provider = new (await import('ethers')).BrowserProvider(eth)
-        const signer = await provider.getSigner()
-        const state = await readWalletState(signer, NETWORK)
-        setWallet(state)
-        setMasterKeyHex(getMasterKeyHex(state.address))
-        storeRef.current = null
-        setDrive(null)
-        setProfilePubKey(null)
-      } catch (err) {
-        log(`Wallet error: ${(err as Error).message}`)
-      }
+    // another account in the wallet: start over in it (a fresh page is the
+    // one reset that can't leave the previous account's state behind; it
+    // reconnects quietly). The event also fires when a wallet first
+    // connects — same account, nothing to do.
+    const offAccounts = onAccountsChanged((accounts) => {
+      if (readOnlyRef.current || !walletAddressRef.current) return
+      if (accounts[0]?.toLowerCase() === walletAddressRef.current.toLowerCase()) return
+      window.location.reload()
     })
     return () => {
       offChain()
@@ -1920,6 +1963,7 @@ export default function App() {
             </span>
           )}
           {wallet ? (
+            <span className="address-wrap">
             <span className="address" title={wallet.address}>
               {shortHash(wallet.address)}
               <button
@@ -1942,10 +1986,33 @@ export default function App() {
                   </svg>
                 )}
               </button>
+              {!readOnly && (
+                <button
+                  className="copy-btn wallet-menu-btn"
+                  onClick={() => setWalletMenu((o) => !o)}
+                  title="Switch wallet or disconnect"
+                  aria-label="Wallet menu"
+                  aria-haspopup="menu"
+                  aria-expanded={walletMenu}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+                </button>
+              )}
+            </span>
+            {walletMenu && (
+              <div className="wallet-menu" role="menu">
+                <button role="menuitem" onClick={() => void switchAccount()}>
+                  Switch wallet or account
+                </button>
+                <button role="menuitem" className="danger" onClick={disconnect}>
+                  Disconnect
+                </button>
+              </div>
+            )}
             </span>
           ) : (
-            <button className="btn primary" onClick={connect} data-guide="connect">
-              Connect wallet
+            <button className="btn primary" onClick={connect} disabled={reconnecting} data-guide="connect">
+              {reconnecting ? 'Connecting…' : 'Connect wallet'}
             </button>
           )}
         </div>

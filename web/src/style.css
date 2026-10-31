@@ -126,6 +126,43 @@ a:hover {
   color: var(--muted);
   cursor: pointer;
 }
+.address-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.wallet-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 210px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.wallet-menu button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.wallet-menu button:hover,
+.wallet-menu button:focus-visible {
+  background: var(--panel-2);
+}
+.wallet-menu button.danger {
+  color: var(--danger);
+}
 .copy-btn:hover {
   background: var(--panel-2);
   color: var(--text);
@@ -1435,6 +1472,14 @@ tbody tr:hover {
   }
   .balance-label {
     display: none;
+  }
+  .copy-btn {
+    flex: none;
+    width: 30px;
+    height: 30px;
+  }
+  .wallet-menu button {
+    min-height: 44px;
   }
 
   /* toolbar: breadcrumb on its own scrollable line, actions below */

@@ -169,8 +169,7 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 })
 
   await page.evaluate(() => localStorage.setItem('0gdrive:layout', 'list'))
-  await page.reload()
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await page.reload() // reconnects by itself
   await page.locator('table img.fthumb').nth(2).waitFor({ timeout: 3 * 60_000 })
   list = await thumbs('table img.fthumb')
   check('after reload: thumbnails come back from the folder listing', allCentred(list) && Object.values(list).every((t) => t.kind === 'data:'), JSON.stringify(list))

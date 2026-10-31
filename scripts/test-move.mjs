@@ -260,8 +260,7 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 })
 
   // ── after a reload everything is where it was moved to
-  await page.reload()
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await page.reload() // reconnects by itself
   await treeRow('Docs').waitFor({ timeout: 5 * 60_000 })
   await openFolder('Docs')
   await fileRow('a.txt').waitFor({ timeout: 5 * 60_000 })
