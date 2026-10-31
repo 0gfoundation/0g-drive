@@ -1289,8 +1289,22 @@ tbody tr:hover {
 .tile-actions .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   vertical-align: middle;
+}
+/* file actions are icon-only (named by title and aria-label): square */
+.row-actions .btn {
+  padding: 0;
+  width: 30px;
+  height: 28px;
+  min-height: 0;
+}
+.tile-actions .btn {
+  padding: 0;
+  width: 28px;
+  height: 26px;
+  min-height: 0;
 }
 .fname-sub {
   display: none;
@@ -1462,9 +1476,6 @@ tbody tr:hover {
     width: 38px;
     height: 38px;
   }
-  .row-actions .btn-label {
-    display: none;
-  }
   .row-actions .btn {
     padding: 0;
     width: 34px;
@@ -1558,9 +1569,6 @@ tbody tr:hover {
   .share-card {
     margin-top: 16px;
     padding: 24px 16px;
-  }
-  .tile-actions .btn-label {
-    display: none;
   }
 }
 @media (min-width: 761px) {
@@ -1754,9 +1762,6 @@ tbody tr:hover {
 @media (max-width: 760px) {
   .searchbox input {
     font-size: 16px; /* no iOS zoom */
-  }
-  .result .row-actions .btn-label {
-    display: none;
   }
   .result .row-actions .btn {
     padding: 0;
