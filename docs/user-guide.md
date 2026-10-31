@@ -30,6 +30,8 @@ Storing data on 0G costs a small fee in 0G (storage fee + gas), paid by a wallet
 | Open a link encrypted to you | 1 signature the first time on a device, no transaction |
 | Browse, preview, download, search | nothing |
 
+For uploads and drive changes, the Activity log notes when the app asked your wallet, e.g. "Asked your wallet to approve, 0.3 s after your click." Any wait after that, before the wallet's window appears, is the wallet working out gas and fees on its own network connection.
+
 Observed testnet costs: about 0.001 0G per MB uploaded, about 0.0001–0.0015 0G per metadata change.
 
 ## Uploading files

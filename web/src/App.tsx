@@ -60,6 +60,20 @@ import { describeModelStatus, entryForRename, getModelStatus, indexFile, modelEt
 
 const NETWORK = getNetworkConfig('testnet', 'turbo')
 
+/**
+ * When the user last acted (click, key, file drop or pick): the start of
+ * whatever asks the wallet next, so the Activity log can say how long the
+ * app took before handing over to the wallet. Closing a browser dialog
+ * (prompt/confirm) counts as acting too — see markAction.
+ */
+let lastActionAt = 0
+const markAction = () => {
+  lastActionAt = performance.now()
+}
+for (const ev of ['click', 'keydown', 'drop', 'change']) window.addEventListener(ev, markAction, true)
+const walletAskedMessage = () =>
+  `Asked your wallet to approve, ${((performance.now() - lastActionAt) / 1000).toFixed(1)} s after your click.`
+
 interface Activity {
   id: number
   ts: number
@@ -734,6 +748,7 @@ export default function App() {
       const store = new DriveStore(NETWORK, signer, masterKey, {
         onProgress: (msg) => {
           if (msg.includes('sealed') || msg.includes('Repair')) log(msg)
+          if (msg.startsWith('Waiting for wallet approval')) log(walletAskedMessage())
         },
         eventCache: eventCacheFor(address),
       })
@@ -1138,6 +1153,7 @@ export default function App() {
             },
             onProgress: (msg) => {
               if (msg.startsWith('Waiting for wallet approval')) {
+                log(walletAskedMessage())
                 setAll({
                   state: 'approving',
                   percent: undefined,
@@ -1655,6 +1671,7 @@ export default function App() {
     if (!store || selectedIds.length === 0) return
     const n = selectedIds.length
     if (!window.confirm(`Move ${n} file${n === 1 ? '' : 's'} to trash?`)) return
+    markAction()
     setBusy(`Moving ${n} file${n === 1 ? '' : 's'} to trash…`)
     try {
       await store.removeFileRecords(view === 'trash' ? TRASH_PATH : currentPath, selectedIds, view !== 'trash')
@@ -1690,6 +1707,7 @@ export default function App() {
     if (!store) return
     const name = window.prompt('New folder name:')
     if (!name?.trim()) return
+    markAction()
     const path = currentPath === '' ? name.trim() : currentPath + '/' + name.trim()
     setBusy(`Creating folder ${name}…`)
     try {
@@ -1717,6 +1735,7 @@ export default function App() {
           ? `Move "${path}" and ${count} file${count === 1 ? '' : 's'} to trash?`
           : `Delete the empty folder "${path}"?`
       if (!window.confirm(msg)) return
+      markAction()
       setBusy(`Moving ${path} to trash…`)
       try {
         await store.trashFolder(path)
