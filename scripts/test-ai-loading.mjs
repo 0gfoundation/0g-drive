@@ -120,6 +120,8 @@ const short = (u) => u.split('/').pop().split('?')[0]
 // (by file name: Hugging Face serves some files through a redirect, logged as a second URL)
 const clipNames = (urls) => [...new Set(bigClip(urls).map(short))]
 const clipFiles = (urls) => clipNames(urls).length
+/** Requests for the two model halves (the downloads that matter; the tokenizer also shows a redirect). */
+const clipOnnx = (urls) => urls.filter((u) => /clip-vit.*_model_quantized\.onnx(\?|$)/.test(u)).length
 /** Wait for the text model and the photo files' download to finish; the peak renderer memory meanwhile. */
 async function settle(s) {
   let peak = rendererMb()
@@ -191,15 +193,16 @@ try {
       return [...new Uint8Array(await b.arrayBuffer())]
     })
   )
-  const clipBefore = bigClip(desk.models).length
+  const clipBefore = clipOnnx(desk.models)
+  const seenBefore = desk.models.length
   const t1 = Date.now()
   await desk.page.setInputFiles('.dropzone input[type=file]', [{ name: 'sun.png', mimeType: 'image/png', buffer: png }])
   await desk.page.locator('table .fname-btn', { hasText: 'sun.png' }).waitFor({ timeout: 8 * 60_000 })
   await desk.page.waitForTimeout(2000)
   const unindexed = await desk.page.getByRole('button', { name: /^Index 1 older file/ }).count()
   check('desktop: the first photo upload is indexed, the photo model built from the cache (no new download)',
-    unindexed === 0 && bigClip(desk.models).length === clipBefore,
-    `upload + index ${((Date.now() - t1) / 1000).toFixed(1)} s; big CLIP requests ${clipBefore} → ${bigClip(desk.models).length}`)
+    unindexed === 0 && clipOnnx(desk.models) === clipBefore,
+    `upload + index ${((Date.now() - t1) / 1000).toFixed(1)} s; CLIP model requests ${clipBefore} → ${clipOnnx(desk.models)}; new model requests: ${desk.models.slice(seenBefore).map(short).join(', ') || 'none'}`)
   check('desktop: no page errors', desk.errors.length === 0, desk.errors.join(' | '))
   const state = await desk.context.storageState() // the drive key, the last-used wallet
   await desk.context.close()
@@ -217,14 +220,14 @@ try {
     await s2.page.locator('table .fname-btn', { hasText: 'sun.png' }).waitFor({ timeout: 5 * 60_000 })
     const peak2 = await settle(s2)
     const downloaded = clipFiles(s2.models)
-    const requests = bigClip(s2.models).length
+    const requests = clipOnnx(s2.models)
     const t2 = Date.now()
     await s2.page.getByLabel('Search your drive').fill('sun')
     await s2.page.locator('.results .result', { hasText: 'sun.png' }).first().waitFor({ timeout: 3 * 60_000 })
     const searchMs = Date.now() - t2
     check(`${label}, reopened: photo files download at open; the first photo search loads from the cache`,
-      downloaded === 3 && bigClip(s2.models).length === requests && s2.errors.length === 0,
-      `${JSON.stringify(clipNames(s2.models))} ${requests}→${bigClip(s2.models).length}; first search ${(searchMs / 1000).toFixed(1)} s (incl. 0.35 s typing debounce); peak renderer ${peak2} MB${s2.errors.length ? ' | ' + s2.errors.join(' | ') : ''}`)
+      downloaded === 3 && clipOnnx(s2.models) === requests && s2.errors.length === 0,
+      `${JSON.stringify(clipNames(s2.models))} model requests ${requests}→${clipOnnx(s2.models)}; first search ${(searchMs / 1000).toFixed(1)} s (incl. 0.35 s typing debounce); peak renderer ${peak2} MB${s2.errors.length ? ' | ' + s2.errors.join(' | ') : ''}`)
     await s2.context.close()
   }
 } catch (e) {
