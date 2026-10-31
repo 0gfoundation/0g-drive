@@ -5,7 +5,7 @@
 
 import { RawImage, env } from '@huggingface/transformers'
 import type { SearchEntry } from '@0gdrive/core'
-import { embedPassage, embedQuery, indexPhoto, indexText, onModelProgress, renameEntry, warmPhotoSearch, warmUp } from './engine'
+import { embedPassage, embedQuery, indexPhoto, indexText, onModelProgress, prefetchPhotoModels, renameEntry, warmUp } from './engine'
 import { modelFetch, onNetStats, planDownloads, type NetStats } from './netfetch'
 
 env.allowLocalModels = false // weights come from the HF CDN, then the browser cache
@@ -19,7 +19,7 @@ export type AiRequest =
   | { id: number; op: 'query'; text: string; photos: boolean }
   | { id: number; op: 'embed'; texts: string[] }
   | { id: number; op: 'warm' }
-  | { id: number; op: 'warmPhotoSearch' }
+  | { id: number; op: 'prefetchPhotos' }
 
 export type AiMessage =
   | { type: 'result'; id: number; result: unknown }
@@ -56,6 +56,17 @@ let chain: Promise<unknown> = Promise.resolve()
 
 self.onmessage = (e: MessageEvent<AiRequest>) => {
   const req = e.data
+  if (req.op === 'prefetchPhotos') {
+    // a download, no model work: runs beside the queue, not in it, so
+    // searches don't wait for it
+    planDownloads(env.cacheKey, ['clipImage', 'clipText'])
+      .then(() => prefetchPhotoModels())
+      .then(
+        () => post({ type: 'result', id: req.id, result: true }),
+        (err) => post({ type: 'error', id: req.id, error: (err as Error).message ?? String(err) })
+      )
+    return
+  }
   chain = chain.then(async () => {
     try {
       let result: unknown
@@ -77,10 +88,6 @@ self.onmessage = (e: MessageEvent<AiRequest>) => {
         case 'warm':
           await planDownloads(env.cacheKey, ['text'])
           result = await warmUp()
-          break
-        case 'warmPhotoSearch':
-          await planDownloads(env.cacheKey, ['clipText'])
-          result = await warmPhotoSearch()
           break
         case 'embed':
           result = await Promise.all(req.texts.map((t) => embedPassage(t)))

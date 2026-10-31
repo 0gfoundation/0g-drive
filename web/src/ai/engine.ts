@@ -8,6 +8,7 @@ import {
   AutoTokenizer,
   CLIPTextModelWithProjection,
   CLIPVisionModelWithProjection,
+  env,
   pipeline,
   type FeatureExtractionPipeline,
   type PreTrainedTokenizer,
@@ -69,25 +70,66 @@ export const embedPassage = async (p: string) => (await embedTexts([p]))[0]
 let clipVision: Promise<[Processor, CLIPVisionModelWithProjection]> | null = null
 let clipText: Promise<[PreTrainedTokenizer, CLIPTextModelWithProjection]> | null = null
 
+// CLIP's big files, fetched ahead of use by prefetchPhotoModels
+const CLIP_FILES = ['onnx/vision_model_quantized.onnx', 'onnx/text_model_quantized.onnx', 'tokenizer.json']
+let prefetching: Promise<unknown> | null = null
+
+/**
+ * Download CLIP's big files into the model cache without loading them: a
+ * download costs time, not memory; loading (building the model in
+ * memory) waits for first use — a photo upload or a photo search — and
+ * then reads from the cache in seconds. Each file goes in under the URL
+ * transformers.js looks it up by (Cache Storage `env.cacheKey`, key = the
+ * remote URL), so it finds it there instead of downloading it again.
+ * Browser only (Cache Storage).
+ */
+export function prefetchPhotoModels(): Promise<unknown> {
+  prefetching ??= (async () => {
+    const cache = await caches.open(env.cacheKey)
+    const base = `${env.remoteHost.replace(/\/+$/, '')}/${env.remotePathTemplate
+      .replaceAll('{model}', CLIP_MODEL)
+      .replaceAll('{revision}', 'main')
+      .replace(/^\/+|\/+$/g, '')}/`
+    for (const file of CLIP_FILES) {
+      const url = base + file
+      if (await cache.match(url)) continue
+      const res = await (env.fetch as typeof fetch)(url)
+      if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`)
+      await cache.put(url, res) // streams to disk
+    }
+  })().catch((err) => {
+    prefetching = null // first use downloads what's missing; a later drive load retries
+    throw err
+  })
+  return prefetching
+}
+
+/** A load waits for a prefetch in progress rather than fetch the same files twice. */
+const afterPrefetch = () => (prefetching ?? Promise.resolve()).catch(() => undefined)
+
 function visionModel() {
-  clipVision ??= Promise.all([
-    AutoProcessor.from_pretrained(CLIP_MODEL, { progress_callback: progress('photo') }),
-    CLIPVisionModelWithProjection.from_pretrained(CLIP_MODEL, {
-      dtype: 'q8',
-      progress_callback: progress('photo'),
-    }) as Promise<CLIPVisionModelWithProjection>,
-  ])
+  clipVision ??= afterPrefetch().then(() =>
+    Promise.all([
+      AutoProcessor.from_pretrained(CLIP_MODEL, { progress_callback: progress('photo') }),
+      CLIPVisionModelWithProjection.from_pretrained(CLIP_MODEL, {
+        dtype: 'q8',
+        progress_callback: progress('photo'),
+      }) as Promise<CLIPVisionModelWithProjection>,
+    ])
+  )
   return clipVision
 }
 
 function clipTextModel() {
-  clipText ??= Promise.all([
-    AutoTokenizer.from_pretrained(CLIP_MODEL, { progress_callback: progress('photo') }),
-    CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL, {
-      dtype: 'q8',
-      progress_callback: progress('photo'),
-    }) as Promise<CLIPTextModelWithProjection>,
-  ])
+  clipText ??= afterPrefetch().then(() =>
+    Promise.all([
+      AutoTokenizer.from_pretrained(CLIP_MODEL, { progress_callback: progress('photo') }),
+      CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL, {
+        dtype: 'q8',
+        progress_callback: progress('photo'),
+      }) as Promise<CLIPTextModelWithProjection>,
+    ])
+  )
   return clipText
 }
 
@@ -158,25 +200,10 @@ export async function renameEntry(name: string, entry: SearchEntry): Promise<Sea
 }
 
 /**
- * Load CLIP's text half now — what a search in a drive with indexed photos
- * needs (the photos' vectors are stored; only the query is embedded). See
- * warmUpPhotoSearch in client.ts for when.
- */
-export async function warmPhotoSearch(): Promise<true> {
-  try {
-    await clipTextModel()
-  } catch (err) {
-    clipText = null
-    throw err
-  }
-  return true
-}
-
-/**
  * Load the text model now (download + init), so the first upload isn't
- * kept waiting. The photo models (CLIP, ~150 MB) load on first use — a
- * photo upload or a search in a drive with photos — instead of with it:
- * the text model alone already takes the tab past 1 GB.
+ * kept waiting. The photo models (CLIP) are only downloaded with it (see
+ * prefetchPhotoModels) and load on first use: the text model alone already
+ * takes the tab past 1 GB.
  */
 export async function warmUp(): Promise<true> {
   try {

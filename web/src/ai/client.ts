@@ -26,7 +26,7 @@ export function isPhone(): boolean {
 }
 
 export const PHONE_MEMORY_WARNING =
-  'Smart search runs AI models on this phone. They need about 1 GB of memory, ' +
+  'Smart search runs AI models on this phone. They download about 300 MB once and need about 1 GB of memory, ' +
   'and some phones close the page when it runs short (it turns white). ' +
   'Search by file name works without it.\n\nTurn smart search on?'
 
@@ -312,25 +312,35 @@ export function warmUpModels(): Promise<unknown> {
   return warming
 }
 
-let photoWarming: Promise<unknown> | null = null
+let photoPrefetch: Promise<unknown> | null = null
+let prefetchInFlight = false
 /**
- * On desktop, once the text model is ready, also load CLIP's text half
- * (~64 MB, ~250 MB of memory) when the drive has indexed photos, so the
- * first search doesn't wait for it. Not on phones (memory, see isPhone):
- * there the first search loads it.
+ * After the text model, download the photo models (CLIP, ~150 MB) into the
+ * model cache — download only: they load into memory on first use (a
+ * photo upload or photo search), from the cache, in seconds. Once per page
+ * load, wherever smart search is on (phones included: a download costs
+ * data, not memory).
  */
-export function warmUpPhotoSearch(): void {
-  if (photoWarming || isPhone()) return
-  photoWarming = warmUpModels()
-    .then(() => (warmed ? call<true>({ op: 'warmPhotoSearch' }) : (photoWarming = null)))
+export function prefetchPhotoModels(): void {
+  if (photoPrefetch) return
+  photoPrefetch = warmUpModels()
+    .then(() => {
+      if (!warmed) return (photoPrefetch = null)
+      prefetchInFlight = true
+      return call<true>({ op: 'prefetchPhotos' })
+    })
     .catch((err) => {
-      photoWarming = null // a later drive load tries again
-      console.warn('photo search warm-up failed', err)
+      photoPrefetch = null // a later drive load tries again
+      console.warn('photo model download failed', err)
+    })
+    .finally(() => {
+      prefetchInFlight = false
+      recompute()
     })
 }
 
 /**
- * Ask the browser not to evict the model cache (up to ~320 MB) under storage
+ * Ask the browser not to evict the model cache (~320 MB) under storage
  * pressure. Chrome decides silently (it favours sites in use); Firefox may
  * prompt once. A refusal just means a re-download if the cache is evicted.
  */
@@ -350,8 +360,9 @@ function keepModelCache() {
  * True while the warm-up is still running — including its first moments,
  * before the worker has reported any download progress.
  */
-export function modelsLoading(): boolean {
-  return warmInFlight || status.loading
+export function modelsLoading(photos = false): boolean {
+  // the background photo download only matters to uploads with photos
+  return warmInFlight || (status.loading && (photos || !prefetchInFlight))
 }
 
 /** Resolves once a warm-up is complete (immediately if none is running). */

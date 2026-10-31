@@ -2,7 +2,7 @@
 // organize suggestions. Everything is computed on this device; the only
 // chain writes are the (batched) folder-manifest updates the user approves.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DriveState, DriveStore, FileMeta, SearchEntry } from '@0gdrive/core'
 import {
   embedSearchQuery,
@@ -14,8 +14,7 @@ import {
   setSmartSearchEnabled,
   smartSearchEnabled,
   subscribeModelStatus,
-  warmUpModels,
-  warmUpPhotoSearch,
+  prefetchPhotoModels,
   describeModelStatus,
   type ModelStatus,
 } from './ai/client'
@@ -65,15 +64,10 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
 
   // start the one-time model download as soon as a drive is open
   const driveOpen = drive !== null
+  // (the text model, then the photo models' files: downloaded, not loaded)
   useEffect(() => {
-    if (enabled && driveOpen) void warmUpModels()
+    if (enabled && driveOpen) prefetchPhotoModels()
   }, [enabled, driveOpen])
-
-  // and, on desktop, photo search too if the drive has indexed photos
-  const hasPhotoEntries = useMemo(() => (drive ? allFiles(drive).some((f) => f.meta.search?.c) : false), [drive])
-  useEffect(() => {
-    if (enabled && hasPhotoEntries) warmUpPhotoSearch()
-  }, [enabled, hasPhotoEntries])
 
   const toggle = useCallback((on: boolean) => {
     if (on && isPhone() && !window.confirm(PHONE_MEMORY_WARNING)) return
@@ -230,7 +224,7 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
     findSuggestions,
     applySuggestions,
     dismissSuggestions: () => setSuggestions(null),
-    retryModels: () => void warmUpModels(),
+    retryModels: () => prefetchPhotoModels(),
   }
 }
 
@@ -267,7 +261,7 @@ export function SearchBox({
       {model.loading ? (
         <span
           className="searchbox-status"
-          title={`One-time download of the on-device search models (~155 MB, and ~150 MB more for photos), cached by your browser afterwards.${
+          title={`One-time download of the on-device search models (~300 MB), cached by your browser afterwards.${
             model.viaServer ? ' Downloading through the app server — the model CDN was slow or unreachable.' : ''
           } Until it finishes, search matches file names.`}
         >

@@ -1,11 +1,12 @@
 // On-device AI loading: what downloads when, on a phone and on a desktop.
 //   phone (390 px, touch): smart search starts off — no model download;
 //     turning it on asks first (needs ~1 GB of memory), and a "no" keeps it off
-//   desktop: the warm-up loads only the text model (no CLIP files), and the
-//     photo models load on the first photo upload
-//   reopening that drive with an empty model cache: desktop also preloads
-//     CLIP's text half (photo search), not the image half; a phone with
-//     smart search turned on loads no CLIP at all
+//   desktop: drive open loads the text model and downloads the photo model
+//     files (not loaded); the first photo upload builds them from the
+//     cache, without downloading again, and the photo is indexed
+//   reopening that drive with an empty model cache (desktop, and a phone
+//     with smart search turned on): the files download at open, and the
+//     first photo search builds CLIP's text half from the cache (timed)
 // Each part makes a drive on a FRESH key funded from .env's test wallet,
 // refunded at the end. Needs the model CDNs (or the app's /_models route).
 // Usage: node scripts/test-ai-loading.mjs [http://localhost:5173]
@@ -112,6 +113,27 @@ async function openPage(contextOpts, wallet, extraInit = '') {
   return { wallet, context, page, errors, models }
 }
 
+/** Requests for CLIP's big files (the two model halves and its tokenizer). */
+const bigClip = (urls) => urls.filter((u) => /clip-vit.*(vision_model_quantized\.onnx|text_model_quantized\.onnx|\/tokenizer\.json)(\?|$)/.test(u))
+const short = (u) => u.split('/').pop().split('?')[0]
+/** Distinct big CLIP files requested (transformers.js may also probe a file it finds cached). */
+// (by file name: Hugging Face serves some files through a redirect, logged as a second URL)
+const clipNames = (urls) => [...new Set(bigClip(urls).map(short))]
+const clipFiles = (urls) => clipNames(urls).length
+/** Wait for the text model and the photo files' download to finish; the peak renderer memory meanwhile. */
+async function settle(s) {
+  let peak = rendererMb()
+  const until = Date.now() + 8 * 60_000
+  while (Date.now() < until) {
+    peak = Math.max(peak, rendererMb())
+    const loading = await s.page.locator('.searchbox-status .sb-long').count()
+    if (!loading && clipFiles(s.models) >= 3) break
+    await s.page.waitForTimeout(1000)
+  }
+  await s.page.waitForFunction(() => !document.querySelector('.searchbox-status .sb-long'), null, { timeout: 5 * 60_000 })
+  return peak
+}
+
 const aiToggle = (page) => page.locator('[data-guide="on-device-ai"] input[type=checkbox]')
 const aiNote = (page) => page.locator('[data-guide="on-device-ai"] .sec-item.muted').textContent()
 const wallets = []
@@ -148,21 +170,11 @@ try {
   // ── desktop: the text model now, the photo models on the first photo
   const desk = await openDrive({ viewport: { width: 1280, height: 900 } })
   wallets.push(desk.wallet)
-  step('desktop: drive open; waiting for the text model')
-  let peak = rendererMb()
-  let seen = false
-  const until = Date.now() + 6 * 60_000
-  while (Date.now() < until) {
-    const loading = await desk.page.locator('.searchbox-status .sb-long').count()
-    peak = Math.max(peak, rendererMb())
-    if (loading) seen = true
-    else if (seen) break
-    await desk.page.waitForTimeout(1000)
-  }
-  const warm = desk.models.map((u) => u.split('/').slice(-3).join('/'))
-  check('desktop: the warm-up downloads the text model, no photo (CLIP) files',
-    seen && desk.models.some((u) => /MiniLM-L12-v2.*model_quantized\.onnx/.test(u)) && !desk.models.some((u) => /clip-vit/.test(u)),
-    `${warm.length} files, peak renderer ${peak} MB`)
+  step('desktop: drive open; waiting for the text model, then the photo files')
+  const peakDesk = await settle(desk)
+  check('desktop: drive open loads the text model and downloads the photo model files',
+    desk.models.some((u) => /MiniLM-L12-v2.*model_quantized\.onnx/.test(u)) && clipFiles(desk.models) === 3,
+    `${JSON.stringify(clipNames(desk.models))} MiniLM=${desk.models.some((u) => /MiniLM-L12-v2.*model_quantized\.onnx/.test(u))}; peak renderer ${peakDesk} MB`)
 
   // a 64×64 PNG, drawn in the page
   const png = Buffer.from(
@@ -179,45 +191,42 @@ try {
       return [...new Uint8Array(await b.arrayBuffer())]
     })
   )
+  const clipBefore = bigClip(desk.models).length
+  const t1 = Date.now()
   await desk.page.setInputFiles('.dropzone input[type=file]', [{ name: 'sun.png', mimeType: 'image/png', buffer: png }])
   await desk.page.locator('table .fname-btn', { hasText: 'sun.png' }).waitFor({ timeout: 8 * 60_000 })
-  check('desktop: the first photo upload loads the photo models',
-    desk.models.some((u) => /clip-vit.*vision_model_quantized\.onnx/.test(u)) &&
-      desk.models.some((u) => /clip-vit.*text_model_quantized\.onnx/.test(u)),
-    `${desk.models.filter((u) => /clip-vit/.test(u)).length} CLIP files`)
+  await desk.page.waitForTimeout(2000)
+  const unindexed = await desk.page.getByRole('button', { name: /^Index 1 older file/ }).count()
+  check('desktop: the first photo upload is indexed, the photo model built from the cache (no new download)',
+    unindexed === 0 && bigClip(desk.models).length === clipBefore,
+    `upload + index ${((Date.now() - t1) / 1000).toFixed(1)} s; big CLIP requests ${clipBefore} → ${bigClip(desk.models).length}`)
   check('desktop: no page errors', desk.errors.length === 0, desk.errors.join(' | '))
   const state = await desk.context.storageState() // the drive key, the last-used wallet
   await desk.context.close()
 
-  // ── the same drive (it has an indexed photo) reopened, empty model cache
-  const again = await openPage({ viewport: { width: 1280, height: 900 }, storageState: state }, desk.wallet)
-  await again.page.goto(base) // reconnects by itself
-  await again.page.locator('table .fname-btn', { hasText: 'sun.png' }).waitFor({ timeout: 5 * 60_000 })
-  const clipText = /clip-vit.*text_model_quantized\.onnx/
-  const until2 = Date.now() + 5 * 60_000
-  while (Date.now() < until2 && !again.models.some((u) => clipText.test(u))) await again.page.waitForTimeout(1000)
-  await again.page.waitForTimeout(5000)
-  check('desktop, drive with photos: CLIP\'s text half preloads for search, not the image half',
-    again.models.some((u) => clipText.test(u)) && !again.models.some((u) => /clip-vit.*vision_model/.test(u)),
-    `${again.models.filter((u) => /clip-vit/.test(u)).map((u) => u.split('/').pop()).join(', ')}`)
-  await again.context.close()
-
-  const phoneOn = await openPage(
-    { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3, storageState: state },
-    desk.wallet,
-    "localStorage.setItem('0gdrive:smart-search', 'on')"
-  )
-  await phoneOn.page.goto(base)
-  await phoneOn.page.locator('table .fname-btn', { hasText: 'sun.png' }).waitFor({ timeout: 5 * 60_000 })
-  const until3 = Date.now() + 5 * 60_000
-  while (Date.now() < until3 && !phoneOn.models.some((u) => /MiniLM-L12-v2.*model_quantized\.onnx/.test(u))) await phoneOn.page.waitForTimeout(1000)
-  await phoneOn.page.waitForFunction(() => !document.querySelector('.searchbox-status .sb-long'), null, { timeout: 5 * 60_000 })
-  await phoneOn.page.waitForTimeout(15_000)
-  check('phone with smart search on, drive with photos: text model only, no CLIP',
-    phoneOn.models.some((u) => /MiniLM/.test(u)) && !phoneOn.models.some((u) => /clip-vit/.test(u)),
-    `${phoneOn.models.length} model files`)
-  check('reopened: no page errors', again.errors.length === 0 && phoneOn.errors.length === 0, [...again.errors, ...phoneOn.errors].join(' | '))
-  await phoneOn.context.close()
+  // ── the same drive (it has an indexed photo) reopened, empty model cache:
+  // the files download at open, and the first photo search builds CLIP's
+  // text half from the cache
+  for (const [label, opts, init] of [
+    ['desktop', { viewport: { width: 1280, height: 900 } }, ''],
+    ['phone with smart search on', { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 },
+      "localStorage.setItem('0gdrive:smart-search', 'on')"],
+  ]) {
+    const s2 = await openPage({ ...opts, storageState: state }, desk.wallet, init)
+    await s2.page.goto(base) // reconnects by itself
+    await s2.page.locator('table .fname-btn', { hasText: 'sun.png' }).waitFor({ timeout: 5 * 60_000 })
+    const peak2 = await settle(s2)
+    const downloaded = clipFiles(s2.models)
+    const requests = bigClip(s2.models).length
+    const t2 = Date.now()
+    await s2.page.getByLabel('Search your drive').fill('sun')
+    await s2.page.locator('.results .result', { hasText: 'sun.png' }).first().waitFor({ timeout: 3 * 60_000 })
+    const searchMs = Date.now() - t2
+    check(`${label}, reopened: photo files download at open; the first photo search loads from the cache`,
+      downloaded === 3 && bigClip(s2.models).length === requests && s2.errors.length === 0,
+      `${JSON.stringify(clipNames(s2.models))} ${requests}→${bigClip(s2.models).length}; first search ${(searchMs / 1000).toFixed(1)} s (incl. 0.35 s typing debounce); peak renderer ${peak2} MB${s2.errors.length ? ' | ' + s2.errors.join(' | ') : ''}`)
+    await s2.context.close()
+  }
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {
