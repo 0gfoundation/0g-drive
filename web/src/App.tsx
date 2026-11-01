@@ -34,6 +34,7 @@ import {
   fileNameProblem,
   startActionTiming,
   timed,
+  uniqueName,
   unstoredWrites,
   folderNameProblem,
   type DriveState,
@@ -121,9 +122,14 @@ interface Activity {
   percent?: number
 }
 
+/** What to do with uploads whose names are taken (see uploadFiles). */
+type DupChoice = 'replace' | 'keep' | 'skip' | 'cancel'
+
 interface QueueItem {
   id: string
   name: string
+  /** the folder it goes to */
+  path?: string
   size: number
   state: 'queued' | 'uploading' | 'approving' | 'sealing' | 'registering' | 'done' | 'error'
   message?: string
@@ -696,6 +702,8 @@ export default function App() {
   const [publishing, setPublishing] = useState(false)
   const [shareFor, setShareFor] = useState<FileMeta | null>(null)
   const [renameFor, setRenameFor] = useState<RenameTarget | null>(null)
+  /** an upload whose names are taken, waiting for Replace / Keep both / Skip / Cancel */
+  const [dupAsk, setDupAsk] = useState<{ names: string[]; replaceable: boolean; resolve: (c: DupChoice) => void } | null>(null)
   const [renameTo, setRenameTo] = useState('')
   const [renameError, setRenameError] = useState<string | null>(null)
   const [moveFor, setMoveFor] = useState<MoveTarget | null>(null)
@@ -1121,7 +1129,7 @@ export default function App() {
    * separate manifest write instead.
    */
   const uploadBatched = useCallback(
-    async (store: DriveStore, path: string, items: QueueItem[], files: File[]) => {
+    async (store: DriveStore, path: string, items: QueueItem[], files: File[], replace: string[]) => {
       if (!wallet || !masterKeyHex) return
       const n = files.length
       const setItem = (i: number, patch: Partial<QueueItem>) =>
@@ -1219,7 +1227,7 @@ export default function App() {
                 ...(prep[i].thumb ? { thumb: prep[i].thumb } : {}),
                 ...(searches[i] ? { search: searches[i] } : {}),
               }))
-              return store.prepareFileRecords(path, metas)
+              return store.prepareFileRecords(path, metas, replace)
             },
             onProgress: (msg) => {
               if (msg.startsWith('Waiting for wallet approval')) {
@@ -1267,7 +1275,7 @@ export default function App() {
             const r = res.items[i]
             return r.ok ? { ...metas[i], txHashes: r.result.txHashes, txSeqs: r.result.txSeqs } : metas[i]
           })
-          await store.putFileRecords(path, stored)
+          await store.putFileRecords(path, stored, replace)
           setAll({ state: 'done', message: 'in your drive ✓' }, (i) => okIdx.includes(i))
         }
         await reloadDrive()
@@ -1285,10 +1293,10 @@ export default function App() {
 
   /** Upload one dropped batch (already queued) into `path`. */
   const runUpload = useCallback(
-    async (store: DriveStore, path: string, items: QueueItem[], files: File[]) => {
+    async (store: DriveStore, path: string, items: QueueItem[], files: File[], replace: string[]) => {
       if (!wallet || !masterKeyHex) return
       if (NETWORK.batchSubmit) {
-        await uploadBatched(store, path, items, files)
+        await uploadBatched(store, path, items, files, replace)
         return
       }
 
@@ -1388,7 +1396,7 @@ export default function App() {
           )
         )
         try {
-          await store.putFileRecords(path, metas)
+          await store.putFileRecords(path, metas, replace)
           await reloadDrive()
           setQueue((q) =>
             q.map((x) =>
@@ -1416,24 +1424,80 @@ export default function App() {
   // captured now) and runs after the batches before it.
   const uploadChain = useRef<Promise<void>>(Promise.resolve())
   const uploadFiles = useCallback(
-    (fileList: FileList | File[]) => {
+    async (fileList: FileList | File[]) => {
       const store = storeRef.current
       if (!wallet || !store || !masterKeyHex) return
       const path = view === 'trash' ? '' : currentPath
-      const files = Array.from(fileList) // the input's FileList is reset right after
+      const picked = Array.from(fileList) // the input's FileList is reset right after
+
+      // names already in the folder, still on their way there, or repeated
+      // in this drop: ask what to do (names stay unique in a folder)
+      const lower = (n: string) => n.toLowerCase()
+      const existing = new Map((drive?.folders.get(path)?.files ?? []).map((f) => [lower(f.name), f]))
+      const pending = new Set(
+        queue.filter((q) => q.path === path && q.state !== 'done' && q.state !== 'error').map((q) => lower(q.name))
+      )
+      const seen = new Set<string>()
+      const clashes: string[] = []
+      for (const f of picked) {
+        const k = lower(f.name)
+        if (existing.has(k) || pending.has(k) || seen.has(k)) clashes.push(f.name)
+        seen.add(k)
+      }
+      let files = picked
+      const replace: string[] = []
+      if (clashes.length > 0) {
+        const choice = await new Promise<DupChoice>((resolve) =>
+          setDupAsk({
+            names: [...new Set(clashes)],
+            replaceable: picked.some((f) => existing.has(lower(f.name))),
+            resolve,
+          })
+        )
+        setDupAsk(null)
+        if (choice === 'cancel') return
+        const taken = new Set([...existing.keys(), ...pending])
+        const used = new Set<string>()
+        files = []
+        for (const f of picked) {
+          const k = lower(f.name)
+          if (!existing.has(k) && !pending.has(k) && !used.has(k)) {
+            files.push(f)
+            used.add(k)
+          } else if (choice === 'skip') {
+            continue
+          } else if (choice === 'replace' && existing.has(k) && !pending.has(k) && !used.has(k)) {
+            replace.push(existing.get(k)!.id)
+            files.push(f)
+            used.add(k)
+          } else {
+            // keep both — and with Replace, a name repeated in the drop or
+            // still uploading, which has nothing stored to replace yet
+            const name = uniqueName(f.name, new Set([...taken, ...used]))
+            files.push(new File([f], name, { type: f.type, lastModified: f.lastModified }))
+            used.add(lower(name))
+          }
+        }
+        if (files.length === 0) {
+          log('Nothing uploaded: every file was skipped.')
+          return
+        }
+      }
+
       const items: QueueItem[] = files.map((f) => ({
         id: 'q_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
         name: f.name,
+        path,
         size: f.size,
         state: 'queued',
         message: path ? `waiting · to ${path}` : 'waiting',
       }))
       setQueue((q) => [...q, ...items])
       uploadChain.current = uploadChain.current
-        .then(() => runUpload(store, path, items, files))
+        .then(() => runUpload(store, path, items, files, replace))
         .catch((err) => log(`Upload failed: ${(err as Error).message}`))
     },
-    [wallet, masterKeyHex, currentPath, view, log, runUpload]
+    [wallet, masterKeyHex, currentPath, view, drive, queue, log, runUpload]
   )
 
   // ─── Download (owner) ───────────────────────────────────────────────
@@ -1675,8 +1739,12 @@ export default function App() {
       if (!store) return
       setBusy(`Restoring ${meta.name}…`)
       try {
-        await store.restoreFromTrash(meta.id)
-        log(`${meta.name} restored to ${meta.originalPath ?? 'drive root'}.`)
+        const renamed = await store.restoreFromTrash(meta.id)
+        log(
+          renamed.length > 0
+            ? `${meta.name} restored to ${meta.originalPath || 'drive root'} as “${renamed[0].to}”: a file named “${meta.name}” is already there.`
+            : `${meta.name} restored to ${meta.originalPath || 'drive root'}.`
+        )
         await reloadDrive()
       } catch (err) {
         log(`Restore failed: ${(err as Error).message}`)
@@ -1760,8 +1828,9 @@ export default function App() {
     const n = selectedIds.length
     setBusy(`Restoring ${n} file${n === 1 ? '' : 's'}…`)
     try {
-      await store.restoreRecords(selectedIds)
+      const renamed = await store.restoreRecords(selectedIds)
       log(`${n} file${n === 1 ? '' : 's'} restored.`)
+      for (const r of renamed) log(`“${r.from}” restored as “${r.to}”: a file with its name is already in that folder.`)
       setSelectedIds([])
       await reloadDrive()
     } catch (err) {
@@ -2786,6 +2855,53 @@ export default function App() {
             </div>
             <p className="muted small-print">1 signature + 1 transaction</p>
           </form>
+        </div>
+      )}
+
+      {dupAsk && (
+        <div className="modal-backdrop" onClick={() => dupAsk.resolve('cancel')}>
+          <div
+            className="modal dup-modal"
+            role="dialog"
+            aria-label="Files with the same name"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && dupAsk.resolve('cancel')}
+          >
+            <h2>
+              {dupAsk.names.length === 1
+                ? `“${dupAsk.names[0]}” is already here`
+                : `${dupAsk.names.length} names are already here`}
+            </h2>
+            {dupAsk.names.length > 1 && (
+              <ul className="dup-list">
+                {dupAsk.names.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            )}
+            <p className="muted">
+              {dupAsk.replaceable
+                ? 'Replace moves the file already here to trash (you can restore it), in the same approval. '
+                : ''}
+              Keep both saves the new one as “name (1)”. Skip uploads only the other files.
+            </p>
+            <div className="modal-actions">
+              <button className="btn" type="button" onClick={() => dupAsk.resolve('cancel')}>
+                Cancel
+              </button>
+              <button className="btn" type="button" onClick={() => dupAsk.resolve('skip')}>
+                Skip
+              </button>
+              <button className="btn" type="button" onClick={() => dupAsk.resolve('keep')} autoFocus={!dupAsk.replaceable}>
+                Keep both
+              </button>
+              {dupAsk.replaceable && (
+                <button className="btn primary" type="button" onClick={() => dupAsk.resolve('replace')} autoFocus>
+                  Replace
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

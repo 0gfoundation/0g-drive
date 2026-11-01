@@ -37,6 +37,8 @@ Drive state lives in **small encrypted JSON manifests uploaded as regular 0G fil
 
 **Note on "permanence":** 0G storage lifetime is ~1 year per fee payment (per the KV node design docs — renewal is done by re-writing). This applies to file blobs and manifests alike; a renewal/compaction pass is planned in M5.
 
+**Unique names in a folder (2026-11-01).** Rename and Move refused a name already in the folder (ignoring case), but uploads and restores added a second file of the same name. Now names stay unique everywhere: before an upload, the app compares the dropped names with the folder, uploads still queued for it, and each other, and asks once: Replace (the old record moves to the trash in the same transaction, written before the folder listing so a failure leaves a record listed twice, never nowhere), Keep both ("name (1).ext", numbered from the stem of a name already ending in " (n)"), Skip, or Cancel. `DriveStore.prepareFileRecords` enforces it too: a name taken meanwhile (another device) gets "(1)" rather than a duplicate. A restore into a taken name gets "(1)", reported in Activity. Test: `scripts/test-duplicate-names.mjs`; `npm run test:drive` covers the other-device case and Replace.
+
 ### D4 — Network: Galileo testnet (Turbo indexer) first
 Chain 16602, `evmrpc-testnet.0g.ai`, `indexer-storage-testnet-turbo.0g.ai`, faucet at faucet.0g.ai. Config-switchable to mainnet/standard without code changes (starter-kit-style `config.ts`).
 
