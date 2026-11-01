@@ -31,6 +31,7 @@ import {
   DriveStore,
   TRASH_PATH,
   actionTiming,
+  actionDetails,
   fileNameProblem,
   startActionTiming,
   timed,
@@ -101,6 +102,7 @@ const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
 const walletAskedMessage = () => {
   const total = performance.now() - lastActionAt
   const t = actionTiming()
+  const detail = actionDetails()
   const steps: [string, number | undefined][] = [
     ['chain check', t.chain],
     ['listings', t.listings],
@@ -108,7 +110,9 @@ const walletAskedMessage = () => {
     ['preparing', t.preparing],
     ['price', t.price],
   ]
-  const parts = steps.filter(([, ms]) => ms !== undefined && ms >= 50).map(([label, ms]) => `${label} ${secs(ms!)}`)
+  const parts = steps
+    .filter(([, ms]) => ms !== undefined && ms >= 50)
+    .map(([label, ms]) => `${label} ${secs(ms!)}${label === 'preparing' && detail.preparing ? ` (${detail.preparing})` : ''}`)
   const other = total - steps.reduce((n, [, ms]) => n + (ms ?? 0), 0)
   if (other >= 200) parts.push(`other ${secs(other)}`)
   if (aiBusyAtAction || getModelStatus().loading) parts.push('AI download running')
@@ -123,7 +127,16 @@ interface Activity {
 }
 
 /** What to do with uploads whose names are taken (see uploadFiles). */
-type DupChoice = 'replace' | 'keep' | 'skip' | 'cancel'
+type DupChoice = { kind: 'replace' | 'keep'; names: string[] } | { kind: 'skip' | 'cancel' }
+
+/** A dropped file whose name is taken, as the dialog shows it. */
+interface DupItem {
+  name: string
+  /** "name (1).ext": the name field starts with it */
+  suggestion: string
+  /** a file of that name is in the folder (not just queued, or repeated in the drop) */
+  replaceable: boolean
+}
 
 interface QueueItem {
   id: string
@@ -703,7 +716,9 @@ export default function App() {
   const [shareFor, setShareFor] = useState<FileMeta | null>(null)
   const [renameFor, setRenameFor] = useState<RenameTarget | null>(null)
   /** an upload whose names are taken, waiting for Replace / Keep both / Skip / Cancel */
-  const [dupAsk, setDupAsk] = useState<{ names: string[]; replaceable: boolean; resolve: (c: DupChoice) => void } | null>(null)
+  const [dupAsk, setDupAsk] = useState<{ items: DupItem[]; taken: Set<string>; resolve: (c: DupChoice) => void } | null>(null)
+  /** the names typed in that dialog, one per item */
+  const [dupNames, setDupNames] = useState<string[]>([])
   const [renameTo, setRenameTo] = useState('')
   const [renameError, setRenameError] = useState<string | null>(null)
   const [moveFor, setMoveFor] = useState<MoveTarget | null>(null)
@@ -1437,46 +1452,45 @@ export default function App() {
       const pending = new Set(
         queue.filter((q) => q.path === path && q.state !== 'done' && q.state !== 'error').map((q) => lower(q.name))
       )
-      const seen = new Set<string>()
-      const clashes: string[] = []
-      for (const f of picked) {
+      // the first file of each free name goes as is; the others clash
+      const clashing: number[] = []
+      const free = new Set<string>()
+      picked.forEach((f, i) => {
         const k = lower(f.name)
-        if (existing.has(k) || pending.has(k) || seen.has(k)) clashes.push(f.name)
-        seen.add(k)
-      }
+        if (existing.has(k) || pending.has(k) || free.has(k)) clashing.push(i)
+        else free.add(k)
+      })
       let files = picked
       const replace: string[] = []
-      if (clashes.length > 0) {
-        const choice = await new Promise<DupChoice>((resolve) =>
-          setDupAsk({
-            names: [...new Set(clashes)],
-            replaceable: picked.some((f) => existing.has(lower(f.name))),
-            resolve,
-          })
-        )
+      if (clashing.length > 0) {
+        const taken = new Set([...existing.keys(), ...pending, ...free])
+        const suggested = new Set<string>()
+        const replacing = new Set<string>()
+        const items: DupItem[] = clashing.map((i) => {
+          const name = picked[i].name
+          const k = lower(name)
+          const suggestion = uniqueName(name, new Set([...taken, ...suggested]))
+          suggested.add(lower(suggestion))
+          // one file per name can take an existing file's place
+          const replaceable = existing.has(k) && !pending.has(k) && !replacing.has(k)
+          if (replaceable) replacing.add(k)
+          return { name, suggestion, replaceable }
+        })
+        setDupNames(items.map((it) => it.suggestion))
+        const choice = await new Promise<DupChoice>((resolve) => setDupAsk({ items, taken, resolve }))
         setDupAsk(null)
-        if (choice === 'cancel') return
-        const taken = new Set([...existing.keys(), ...pending])
-        const used = new Set<string>()
-        files = []
-        for (const f of picked) {
-          const k = lower(f.name)
-          if (!existing.has(k) && !pending.has(k) && !used.has(k)) {
-            files.push(f)
-            used.add(k)
-          } else if (choice === 'skip') {
-            continue
-          } else if (choice === 'replace' && existing.has(k) && !pending.has(k) && !used.has(k)) {
-            replace.push(existing.get(k)!.id)
-            files.push(f)
-            used.add(k)
-          } else {
-            // keep both — and with Replace, a name repeated in the drop or
-            // still uploading, which has nothing stored to replace yet
-            const name = uniqueName(f.name, new Set([...taken, ...used]))
-            files.push(new File([f], name, { type: f.type, lastModified: f.lastModified }))
-            used.add(lower(name))
-          }
+        if (choice.kind === 'cancel') return
+        files = picked.filter((_, i) => !clashing.includes(i))
+        if (choice.kind === 'keep' || choice.kind === 'replace') {
+          clashing.forEach((i, j) => {
+            const f = picked[i]
+            if (choice.kind === 'replace' && items[j].replaceable) {
+              replace.push(existing.get(lower(f.name))!.id)
+              files.push(f)
+            } else {
+              files.push(new File([f], choice.names[j], { type: f.type, lastModified: f.lastModified }))
+            }
+          })
         }
         if (files.length === 0) {
           log('Nothing uploaded: every file was skipped.')
@@ -2858,52 +2872,102 @@ export default function App() {
         </div>
       )}
 
-      {dupAsk && (
-        <div className="modal-backdrop" onClick={() => dupAsk.resolve('cancel')}>
-          <div
-            className="modal dup-modal"
-            role="dialog"
-            aria-label="Files with the same name"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.key === 'Escape' && dupAsk.resolve('cancel')}
-          >
-            <h2>
-              {dupAsk.names.length === 1
-                ? `“${dupAsk.names[0]}” is already here`
-                : `${dupAsk.names.length} names are already here`}
-            </h2>
-            {dupAsk.names.length > 1 && (
-              <ul className="dup-list">
-                {dupAsk.names.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-              </ul>
-            )}
-            <p className="muted">
-              {dupAsk.replaceable
-                ? 'Replace moves the file already here to trash (you can restore it), in the same approval. '
-                : ''}
-              Keep both saves the new one as “name (1)”. Skip uploads only the other files.
-            </p>
-            <div className="modal-actions">
-              <button className="btn" type="button" onClick={() => dupAsk.resolve('cancel')}>
-                Cancel
-              </button>
-              <button className="btn" type="button" onClick={() => dupAsk.resolve('skip')}>
-                Skip
-              </button>
-              <button className="btn" type="button" onClick={() => dupAsk.resolve('keep')} autoFocus={!dupAsk.replaceable}>
-                Keep both
-              </button>
-              {dupAsk.replaceable && (
-                <button className="btn primary" type="button" onClick={() => dupAsk.resolve('replace')} autoFocus>
-                  Replace
-                </button>
-              )}
+      {dupAsk &&
+        (() => {
+          const { items, taken, resolve } = dupAsk
+          const anyReplaceable = items.some((it) => it.replaceable)
+          // the typed names: checked like Rename, against the folder and each other
+          const problems = dupNames.map((raw, j) => {
+            const name = raw.trim()
+            const k = name.toLowerCase()
+            return (
+              fileNameProblem(name) ??
+              (taken.has(k) ? `“${name}” is already used here.` : null) ??
+              (dupNames.some((o, x) => x !== j && o.trim().toLowerCase() === k) ? 'Two files can’t get the same name.' : null)
+            )
+          })
+          const keepOk = problems.every((p) => p === null)
+          // Replace uses the typed names only for files with nothing to replace
+          const replaceOk = problems.every((p, j) => p === null || items[j].replaceable)
+          const names = () => dupNames.map((n) => n.trim())
+          return (
+            <div className="modal-backdrop" onClick={() => resolve({ kind: 'cancel' })}>
+              <form
+                className="modal dup-modal"
+                role="dialog"
+                aria-label="Files with the same name"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.key === 'Escape' && resolve({ kind: 'cancel' })}
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (keepOk) resolve({ kind: 'keep', names: names() })
+                }}
+              >
+                <h2>
+                  {items.length === 1 ? `“${items[0].name}” is already here` : `${items.length} names are already here`}
+                </h2>
+                <p className="muted">
+                  Upload them under new names (edit them below){anyReplaceable ? ', replace the files already here' : ''}, or
+                  skip them.
+                </p>
+                <ul className="dup-list">
+                  {items.map((it, j) => (
+                    <li key={j}>
+                      <label className="dup-from" htmlFor={`dup-name-${j}`}>
+                        {it.name}
+                        {it.replaceable ? '' : ' · already uploading or in this drop'}
+                      </label>
+                      <input
+                        id={`dup-name-${j}`}
+                        className="key-input wide"
+                        aria-label={`New name for ${it.name}`}
+                        value={dupNames[j] ?? ''}
+                        maxLength={300}
+                        onChange={(e) => setDupNames((ns) => ns.map((n, x) => (x === j ? e.target.value : n)))}
+                        onFocus={(e) => {
+                          // select the name without its extension, like Rename
+                          const dot = e.target.value.lastIndexOf('.')
+                          e.target.setSelectionRange(0, dot > 0 ? dot : e.target.value.length)
+                        }}
+                        autoFocus={j === 0}
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                      {problems[j] && <p className="error-text">⚠ {problems[j]}</p>}
+                    </li>
+                  ))}
+                </ul>
+                {anyReplaceable && (
+                  <p className="muted small-print">
+                    Replace moves the file{items.filter((it) => it.replaceable).length === 1 ? '' : 's'} already here to trash (you
+                    can restore {items.filter((it) => it.replaceable).length === 1 ? 'it' : 'them'}), in the same approval.
+                  </p>
+                )}
+                <div className="modal-actions">
+                  <button className="btn" type="button" onClick={() => resolve({ kind: 'cancel' })}>
+                    Cancel
+                  </button>
+                  <button className="btn" type="button" onClick={() => resolve({ kind: 'skip' })}>
+                    Skip
+                  </button>
+                  {anyReplaceable && (
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={!replaceOk}
+                      onClick={() => resolve({ kind: 'replace', names: names() })}
+                    >
+                      Replace
+                    </button>
+                  )}
+                  <button className="btn primary" type="submit" disabled={!keepOk}>
+                    Upload with these names
+                  </button>
+                </div>
+              </form>
             </div>
-          </div>
-        </div>
-      )}
+          )
+        })()}
 
       {renameFor && (() => {
         const isFile = renameFor.kind === 'file'

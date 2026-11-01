@@ -7,13 +7,24 @@
 export type TimingStep = 'chain' | 'listings' | 'indexing' | 'preparing' | 'price'
 
 let steps: Partial<Record<TimingStep, number>> = {}
+let details: Partial<Record<TimingStep, string>> = {}
 
 export function startActionTiming(): void {
   steps = {}
+  details = {}
 }
 
 export function addActionTiming(step: TimingStep, ms: number): void {
   steps[step] = (steps[step] ?? 0) + ms
+}
+
+/** A step's breakdown, e.g. "reading 7.6 s · hashing 0.3 s" for preparing. */
+export function setActionDetail(step: TimingStep, detail: string): void {
+  details[step] = detail
+}
+
+export function actionDetails(): Partial<Record<TimingStep, string>> {
+  return { ...details }
 }
 
 /** Milliseconds per step since startActionTiming. */

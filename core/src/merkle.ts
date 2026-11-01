@@ -154,12 +154,19 @@ function chunksRoot(h: IHasher, data: Uint8Array): Uint8Array {
 
 const zeroRoots = new Map<number, Uint8Array>()
 
+/** Where a hashing job's time went: reading (and encrypting) the file, and hashing it. */
+export interface HashStats {
+  readMs: number
+  hashMs: number
+}
+
 /**
  * Roots of padded segments [from, to), 32 bytes each, concatenated. A
  * segment past the data is zeros up to the padded size, as in the SDK's
- * iterator. Independent ranges can run in parallel (web workers).
+ * iterator. Independent ranges can run in parallel (web workers). `stats`,
+ * if given, gets the time spent reading and hashing added to it.
  */
-export async function hashSegments(src: StreamSource, from: number, to: number): Promise<Uint8Array> {
+export async function hashSegments(src: StreamSource, from: number, to: number, stats?: HashStats): Promise<Uint8Array> {
   const h = await keccak()
   const size = streamSize(src)
   const padded = paddedChunks(numSplits(size, CHUNK_SIZE))[0] * CHUNK_SIZE
@@ -173,8 +180,12 @@ export async function hashSegments(src: StreamSource, from: number, to: number):
       zeroRoots.set(len, root)
     } else {
       const seg = new Uint8Array(len)
+      let t = performance.now()
       seg.set(await readStream(src, start, start + len))
+      if (stats) stats.readMs += performance.now() - t
+      t = performance.now()
       root = chunksRoot(h, seg)
+      if (stats) stats.hashMs += performance.now() - t
     }
     out.set(root, (s - from) * 32)
   }

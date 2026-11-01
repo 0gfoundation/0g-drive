@@ -1006,11 +1006,27 @@ tbody tr:hover {
   margin-top: 18px;
 }
 .dup-list {
+  list-style: none;
   margin: 0 0 10px;
-  padding-left: 20px;
-  max-height: 180px;
+  padding: 0;
+  max-height: min(320px, 50dvh);
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dup-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dup-from {
+  font-size: 13px;
+  color: var(--muted);
   overflow-wrap: anywhere;
+}
+.dup-list .error-text {
+  margin: 0;
 }
 
 /* ─── Shared-file recipient view ────────────────────── */
@@ -1609,6 +1625,11 @@ tbody tr:hover {
   .modal-actions .btn {
     flex: 1;
     min-height: 44px;
+  }
+  /* four choices: the main one gets a row of its own */
+  .dup-modal .modal-actions .btn.primary {
+    flex-basis: 100%;
+    order: -1;
   }
   .share-modes {
     flex-wrap: wrap;

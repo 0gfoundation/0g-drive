@@ -11,8 +11,9 @@ interface Job {
 self.onmessage = async (e: MessageEvent<Job>) => {
   const { id, src, from, to } = e.data
   try {
-    const roots = await hashSegments(src, from, to)
-    ;(self as unknown as Worker).postMessage({ id, roots }, [roots.buffer])
+    const stats = { readMs: 0, hashMs: 0 }
+    const roots = await hashSegments(src, from, to, stats)
+    ;(self as unknown as Worker).postMessage({ id, roots, ...stats }, [roots.buffer])
   } catch (err) {
     ;(self as unknown as Worker).postMessage({ id, error: (err as Error).message ?? String(err) })
   }
