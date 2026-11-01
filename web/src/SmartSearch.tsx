@@ -16,6 +16,7 @@ import {
   subscribeModelStatus,
   prefetchPhotoModels,
   describeModelStatus,
+  modelErrorReason,
   type ModelStatus,
 } from './ai/client'
 import { rank, suggestMoves, type MoveSuggestion } from './ai/searchcore'
@@ -61,6 +62,11 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
   const searchSeq = useRef(0)
 
   useEffect(() => subscribeModelStatus(setModel), [])
+  // a load failure, in Activity too: readable on phones, which show no tooltips
+  useEffect(() => {
+    if (model.error && enabled) log(`Smart search models failed to load (${modelErrorReason(model.error)}).`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model.error])
 
   // start the one-time model download as soon as a drive is open
   const driveOpen = drive !== null
@@ -277,7 +283,7 @@ export function SearchBox({
         <button
           className="searchbox-retry"
           onClick={onRetry}
-          title={`Search models failed to load (${model.error}). Search matches file names until they do.`}
+          title={`Search models failed to load (${modelErrorReason(model.error)}). Search matches file names until they do.`}
         >
           AI offline · retry
         </button>

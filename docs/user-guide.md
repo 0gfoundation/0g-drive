@@ -139,6 +139,7 @@ The assistant answers questions about 0GDrive and 0G. It runs in a separate, iso
 - **Upload stuck at "sealing"** — the app waits up to 15 minutes and repairs automatically; if it fails, retry later.
 - **"Couldn't check"** in Security — a chain query failed; click Retry.
 - **Transaction failed / insufficient funds** — top up 0G (testnet faucet).
+- **"Models failed to load (…)"** next to Smart search — the reason is in brackets (also in Activity). *Not enough memory on this device* is common on phones and in wallet apps' browsers: smart search needs about 1 GB there; search keeps matching file names. *Couldn't download the models* — check the connection and retry from the search box.
 - **A change came back undone** (e.g. a restored file is back in the trash) — the page closed before the change's data was sent. In the same browser it is finished on the next open; elsewhere, do it again.
 - **A file disappeared after refresh** — click ⟳ Sync; listings on another device may be newer.
 - **Recipient can't open an encrypted link** — they must connect the exact wallet address the link was made for and have published a share key.
