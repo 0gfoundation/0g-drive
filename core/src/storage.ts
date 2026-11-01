@@ -131,8 +131,16 @@ const CHUNK_SIZE = 256
 const SEGMENT_MAX_CHUNKS = 1024
 const SEGMENT_SIZE = CHUNK_SIZE * SEGMENT_MAX_CHUNKS // 256 KB
 const ROOT_HASH_REGEX = /^0x[0-9a-fA-F]{64}$/
-/** segments prefetched per file (they still queue for a request slot) */
-const SEGMENT_CONCURRENCY = 6
+/**
+ * Segment requests in flight. Straight to the nodes (plain HTTP/1.1) the
+ * browser allows ~6 connections per host. Through the relay (HTTPS, HTTP/2:
+ * many requests on one connection) each 256 KB segment is a ~1.2 s round
+ * trip through a function, so throughput grows with requests in flight: a
+ * 67 MB file took 55 s at 6, 31 s at 12, 18 s at 24 (direct: 16 s).
+ */
+const DIRECT_IN_FLIGHT = 6
+const RELAY_IN_FLIGHT = 24
+const maxInFlight = () => (nodeRelay ? RELAY_IN_FLIGHT : DIRECT_IN_FLIGHT)
 /** full passes over a segment's nodes before a download fails */
 const SEGMENT_ROUNDS = 3
 
@@ -202,19 +210,19 @@ export function onUnstoredWritesChange(fn: (count: number) => void): () => void 
 }
 
 /**
- * App-wide limit on segment requests in flight. Browsers allow ~6
- * connections per host and the RPC timeout (30 s) counts time spent queued
- * behind them, so parallel downloads (preview + thumbnails + indexing) on a
- * slow link could time out on every node at once. Requests wait here
- * instead, and the limit halves on a failure and creeps back on successes.
+ * App-wide limit on segment requests in flight (maxInFlight). The RPC
+ * timeout (30 s) counts time spent queued behind the browser's connections,
+ * so parallel downloads (preview + thumbnails + indexing) on a slow link
+ * could time out on every node at once. Requests wait here instead, and the
+ * limit halves on a failure and creeps back on successes.
  */
 const segmentSlots = (() => {
-  const MAX = 6
-  let limit = MAX
+  let limit: number | null = null // set on first use: the relay is configured by then
   let active = 0
   let streak = 0
   const waiting: (() => void)[] = []
   const pump = () => {
+    limit ??= maxInFlight()
     while (active < limit && waiting.length) {
       active++
       waiting.shift()!()
@@ -231,8 +239,9 @@ const segmentSlots = (() => {
         if (released) return
         released = true
         active--
+        limit ??= maxInFlight()
         if (ok) {
-          if (++streak >= limit * 2 && limit < MAX) {
+          if (++streak >= limit * 2 && limit < maxInFlight()) {
             limit++
             streak = 0
           }
@@ -1255,7 +1264,7 @@ export async function downloadFile(
       }
     }
     for (let segIdx = 0; segIdx < numSegments; segIdx++) {
-      prefetch(segIdx + SEGMENT_CONCURRENCY)
+      prefetch(segIdx + maxInFlight())
       const seg = await inFlight.get(segIdx)!
       inFlight.delete(segIdx)
       if (stream) {
