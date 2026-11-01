@@ -19,7 +19,7 @@ import type { UploadOption, ShardedNode, ShardedNodes } from '@0gfoundation/0g-s
 import type { NetworkConfig } from './config.js'
 import { hexToBytes } from './keystore.js'
 import { foldNodesToRoot, rpcProvider } from './events.js'
-import { addActionTiming, timed } from './timing.js'
+import { addActionTiming, setActionDetail, timed } from './timing.js'
 import {
   SegmentTree,
   hashSegments,
@@ -29,6 +29,7 @@ import {
   segmentData,
   streamSize,
   submissionNodes,
+  type HashStats,
   type StreamSource,
 } from './merkle.js'
 import type {
@@ -480,8 +481,25 @@ const HASH_JOB_SEGMENTS = 32
 /** segment uploads in flight per item */
 const SEND_CONCURRENCY = 6
 
-/** Roots of padded segments [from, to) of `src`, 32 bytes each (see merkle.ts hashSegments). */
-export type SegmentHasher = (src: StreamSource, from: number, to: number) => Promise<Uint8Array>
+/**
+ * Roots of padded segments [from, to) of `src`, 32 bytes each (see
+ * merkle.ts hashSegments), and where the time went. `waitMs`: time before
+ * the job ran (a worker starting up, or busy with another job).
+ */
+export type SegmentHasher = (src: StreamSource, from: number, to: number) => Promise<HashedRange>
+
+export interface HashedRange extends HashStats {
+  roots: Uint8Array
+  waitMs?: number
+}
+
+/** The default SegmentHasher: on this thread. */
+const hashHere: SegmentHasher = async (src, from, to) => {
+  const stats = { readMs: 0, hashMs: 0 }
+  return { roots: await hashSegments(src, from, to, stats), ...stats }
+}
+
+const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
 
 /** The stored stream of an item: its bytes, with a fresh encryption header when encrypted. */
 function streamOf(item: BatchItem): StreamSource {
@@ -660,7 +678,11 @@ export async function uploadBatch(
     root: string
     tags: string
   }
-  const hasher = opts.segmentHasher ?? hashSegments
+  const hasher = opts.segmentHasher ?? hashHere
+  // where "preparing" goes: reading and hashing summed over jobs (they run
+  // in parallel); startMs, the shortest wait before a job ran — the
+  // workers starting (longer waits are jobs queued behind others)
+  const spent = { readMs: 0, hashMs: 0, startMs: Infinity }
   const prepare = async (item: BatchItem, index: number): Promise<Prepared> => {
     onItem(index, 'preparing')
     const src = streamOf(item)
@@ -675,7 +697,10 @@ export async function uploadBatch(
       const to = Math.min(n, from + HASH_JOB_SEGMENTS)
       jobs.push(
         hasher(src, from, to).then((r) => {
-          roots.set(r, from * 32)
+          roots.set(r.roots, from * 32)
+          spent.readMs += r.readMs
+          spent.hashMs += r.hashMs
+          spent.startMs = Math.min(spent.startMs, r.waitMs ?? 0)
           hashed += to - from
           if (index < items.length) opts.onItemProgress?.(index, 'hashing', hashed / n)
         })
@@ -700,12 +725,24 @@ export async function uploadBatch(
   // 1. Hash everything (the only pass before the prompt)
   let started = performance.now()
   const primary = await Promise.all(items.map((item, i) => prepare(item, i)))
-  addActionTiming('preparing', performance.now() - started)
+  const filesMs = performance.now() - started
+  addActionTiming('preparing', filesMs)
+  const files = { ...spent }
   const extraItems = opts.finalize ? await opts.finalize(primary.map((p) => p.root)) : []
   started = performance.now()
   const extras: Prepared[] = []
   for (let i = 0; i < extraItems.length; i++) extras.push(await prepare(extraItems[i], items.length + i))
-  addActionTiming('preparing', performance.now() - started)
+  const listingsMs = performance.now() - started
+  addActionTiming('preparing', listingsMs)
+  // a slow step says why, in Activity (a user once saw 8.3 s for 11 MB);
+  // reading and hashing are summed over jobs, which run in parallel
+  if (filesMs + listingsMs >= 1000) {
+    setActionDetail(
+      'preparing',
+      `files ${secs(filesMs)}: starting workers ${secs(Number.isFinite(files.startMs) ? files.startMs : 0)}, ` +
+        `reading ${secs(files.readMs)} + hashing ${secs(files.hashMs)} across workers; listings ${secs(listingsMs)}`
+    )
+  }
   const all = [...primary, ...extras]
 
   // 2. One transaction
