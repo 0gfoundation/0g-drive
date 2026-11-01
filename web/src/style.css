@@ -2125,6 +2125,37 @@ tbody tr:hover {
   box-shadow: var(--shadow);
   font-size: 14px;
 }
+/* ?debug=wc: WalletConnect's log, for a phone without a console */
+.wc-debug {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 300;
+  max-height: 40vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.wc-debug-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.wc-debug pre {
+  margin: 0;
+  padding: 6px 10px 10px;
+  overflow: auto;
+  font-size: 10.5px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .wc-approve .btn {
   flex: none;
   min-height: 40px;
@@ -2180,6 +2211,14 @@ tbody tr:hover {
   max-width: 520px;
   margin: 0 auto 12px;
   font-size: 14px;
+}
+.welcome-start-over {
+  margin: 0 auto 12px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.welcome-start-over .btn {
+  min-height: 40px;
 }
 @media (max-width: 640px) {
   .welcome {

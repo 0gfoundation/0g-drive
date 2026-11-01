@@ -19,6 +19,10 @@
 //   opens the drive; a reload brings the drive back by itself
 //   the app gives wallets no link back (it would open a new tab, leaving
 //   the user's tab and its uploads behind)
+//   phone, WalletConnect stuck (its relay connection open but silent, as
+//   when its saved data jammed on an iPhone): the start page says so instead
+//   of "Connecting…" forever, ?debug=wc shows where it stopped, and "Start a
+//   new connection" clears the saved data and pairs from scratch
 //
 //   node scripts/test-walletconnect.mjs [http://localhost:5173]
 // The page must be built with VITE_WALLETCONNECT_PROJECT_ID; the scripted
@@ -158,9 +162,10 @@ wc.on('session_request', async ({ topic, id, params }) => {
 const browser = await chromium.launch()
 const errors = []
 const requests = []
-async function open(opts) {
+async function open(opts, setup) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, ...opts })
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(base).origin })
+  await setup?.(context)
   const page = await context.newPage()
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   page.on('request', (r) => requests.push(r.url()))
@@ -356,6 +361,65 @@ try {
   check('phone, a reload: the drive comes back by itself, no prompt',
     back && (await page.locator('.welcome').count()) === 0 && (await page.locator('.wc-dialog').count()) === 0)
   await phone.context.close()
+
+  // ── phone, WalletConnect stuck ──
+  let silent = true
+  const stuckPhone = await open({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, (context) =>
+    context.routeWebSocket(/relay\.walletconnect\./, (ws) => {
+      if (!silent) ws.connectToServer()
+      // silent: the socket opens, nothing ever comes back
+    })
+  )
+  page = stuckPhone.page
+  await page.evaluate(() => localStorage.setItem('0gdrive:wc-app', 'metamask'))
+  await page.goto(`${base}/?debug=wc`)
+  const stuckStart = page.getByRole('button', { name: 'Connect your wallet app' })
+  await stuckStart.click({ timeout: 30_000 })
+  const t1 = Date.now()
+  const stuckError = await page.locator('.welcome-error').textContent({ timeout: 60_000 }).catch(() => null)
+  const waited = Math.round((Date.now() - t1) / 1000)
+  const startOver = page.getByRole('button', { name: 'Start a new connection' })
+  const log = await page.locator('.wc-debug pre').textContent().catch(() => '')
+  const overflow2 = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)
+  check('phone, WalletConnect stuck: within ~20 s the start page says so and offers "Start a new connection" (390 px)',
+    /Couldn’t connect: WalletConnect didn’t start/.test(stuckError ?? '') && waited <= 30 && (await startOver.isVisible()) && overflow2 <= 0,
+    JSON.stringify({ stuckError, waited, overflow2 }))
+  check('?debug=wc shows WalletConnect’s log on the page, down to where it stopped',
+    /stuck: WalletConnect didn’t start/.test(log ?? ''), JSON.stringify((log ?? '').split('\n').slice(-3)))
+
+  // WalletConnect's saved data (IndexedDB): a marker that the reset must clear
+  const idb = (op) => page.evaluate((op) => new Promise((resolve, reject) => {
+    const open = indexedDB.open('WALLET_CONNECT_V2_INDEXED_DB')
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const tx = open.result.transaction('keyvaluestorage', op === 'put' ? 'readwrite' : 'readonly')
+      const store = tx.objectStore('keyvaluestorage')
+      const req = op === 'put' ? store.put('{}', 'wc@2:test:marker') : store.count()
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error)
+    }
+  }), op)
+  await idb('put')
+  const before = await idb('count')
+  silent = false
+  await Promise.all([page.waitForEvent('load'), startOver.click()])
+  const afterReset = await page.evaluate(() => ({
+    wcKeys: Object.keys(localStorage).filter((k) => k.startsWith('wc@')).length,
+    app: localStorage.getItem('0gdrive:wc-app'),
+  }))
+  afterReset.marker = await page.evaluate(() => new Promise((resolve) => {
+    const open = indexedDB.open('WALLET_CONNECT_V2_INDEXED_DB')
+    open.onsuccess = () => {
+      const req = open.result.transaction('keyvaluestorage').objectStore('keyvaluestorage').get('wc@2:test:marker')
+      req.onsuccess = () => resolve(req.result ?? null)
+    }
+  }))
+  afterReset.before = before
+  await page.getByRole('button', { name: 'Connect your wallet app' }).click({ timeout: 30_000 })
+  const fresh = await page.locator('.wc-dialog .wallet-apps a').first().getAttribute('href', { timeout: 30_000 }).catch(() => null)
+  check('"Start a new connection": saved WalletConnect data cleared, and the next tap pairs from scratch',
+    afterReset.before > 1 && afterReset.marker === null && afterReset.wcKeys === 0 && afterReset.app === null && /\/wc\?uri=wc%3A/.test(fresh ?? ''), JSON.stringify({ ...afterReset, fresh: fresh?.slice(0, 50) }))
+  await stuckPhone.context.close()
 
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '))
 } catch (e) {
