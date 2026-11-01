@@ -62,7 +62,7 @@ import { Logo } from './Logo'
 import { keepConnectionsWarm, preconnect } from './keepWarm'
 import { driveDeviceFor } from './driveDevice'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
-import { hashInWorkers } from './hashPool'
+import { hashInWorkers, prestartHashWorkers } from './hashPool'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
 import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
@@ -829,6 +829,8 @@ export default function App() {
       try {
         setDrive(await store.loadDrive())
         log('Drive loaded from chain.')
+        // ready before the first upload: starting them then took seconds
+        prestartHashWorkers()
       } catch (err) {
         log(`Drive load failed: ${(err as Error).message}`)
       } finally {

@@ -121,6 +121,11 @@ export async function readStream(src: StreamSource, start: number, end: number):
 let hasher: Promise<IHasher> | null = null
 const keccak = () => (hasher ??= createKeccak(256))
 
+/** Compile the WebAssembly hasher ahead of the first upload (a worker starting up). */
+export async function warmUp(): Promise<void> {
+  await keccak()
+}
+
 function pair(h: IHasher, a: Uint8Array, b: Uint8Array): Uint8Array {
   h.init()
   h.update(a)

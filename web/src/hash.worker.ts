@@ -1,5 +1,5 @@
 // Hashes segment ranges of an upload off the main thread (see hashPool.ts).
-import { hashSegments, type StreamSource } from '@0gdrive/core/merkle'
+import { hashSegments, warmUp, type StreamSource } from '@0gdrive/core/merkle'
 
 interface Job {
   id: number
@@ -7,6 +7,9 @@ interface Job {
   from: number
   to: number
 }
+
+// started with the drive (see hashPool prestart): get the hasher ready now
+void warmUp()
 
 self.onmessage = async (e: MessageEvent<Job>) => {
   const { id, src, from, to } = e.data
