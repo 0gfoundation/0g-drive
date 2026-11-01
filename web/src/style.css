@@ -1005,6 +1005,13 @@ tbody tr:hover {
   gap: 8px;
   margin-top: 18px;
 }
+.dup-list {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  max-height: 180px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
 
 /* ─── Shared-file recipient view ────────────────────── */
 
