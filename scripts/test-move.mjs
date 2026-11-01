@@ -67,6 +67,7 @@ await page.exposeFunction('__eth', async (method, params) => {
       }
       case 'eth_sendTransaction': {
         txs++
+        walletLog.push(`${((Date.now() - t0) / 1000).toFixed(0)}s send`)
         const [tx] = params
         const sent = await wallet.sendTransaction({
           to: tx.to,
@@ -109,6 +110,13 @@ const moveHere = picker.getByRole('button', { name: 'Move here' })
 const pickerError = () => picker.locator('.error-text').allTextContents().then((t) => t.join(' | '))
 let promptAnswer = ''
 const sentTxs = [] // { hash, gasFromApp }
+// what the page was doing, printed if the run fails (setup has stalled now and then)
+const consoleTail = []
+const walletLog = []
+page.on('console', (m) => {
+  consoleTail.push(`${m.type()}: ${m.text().slice(0, 200)}`)
+  if (consoleTail.length > 40) consoleTail.shift()
+})
 page.on('dialog', (d) => d.accept(promptAnswer))
 const newFolder = async (name) => {
   promptAnswer = name
@@ -291,6 +299,14 @@ try {
   )
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
+  const q = await page.$$eval('.queue-item', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' '))).catch(() => [])
+  const a = await page.$$eval('.activity li', (els) => els.slice(0, 15).map((e) => e.textContent)).catch(() => [])
+  const busy = await page.$$eval('.busy, .status-busy', (els) => els.map((e) => e.textContent)).catch(() => [])
+  console.log('queue:\n  ' + q.join('\n  '))
+  console.log('activity:\n  ' + a.join('\n  '))
+  console.log('busy: ' + busy.join(' | '))
+  console.log(`wallet transactions: ${walletLog.join(', ') || 'none'}`)
+  console.log('console tail:\n  ' + consoleTail.join('\n  '))
 } finally {
   await browser.close()
 }

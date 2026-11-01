@@ -65,6 +65,23 @@ export interface ModelStatus {
   error?: string
 }
 
+/**
+ * Why the models didn't load, in words a user can act on — shown on the
+ * page and in Activity, not only in a tooltip (phones show no tooltips).
+ * The raw reason is kept after a known cause, for reports.
+ */
+export function modelErrorReason(raw: string): string {
+  const r = raw.trim()
+  const known: [RegExp, string][] = [
+    [/out of memory|\boom\b|memory access out of bounds|could not allocate|allocation failed|cannot allocate|array buffer allocation|wasm memory/i, 'not enough memory on this device'],
+    [/quota|storage.*full|no space/i, 'not enough storage space on this device for the models'],
+    [/failed to fetch|networkerror|network error|load failed|timed? ?out|status (4|5)\d\d|\b(404|429|502|503|504)\b|could not download|download/i, 'couldn’t download the models'],
+    [/webassembly|wasm|simd|instantiate/i, 'this browser can’t run the models (WebAssembly)'],
+  ]
+  for (const [re, says] of known) if (re.test(r)) return `${says} — ${r.slice(0, 120)}`
+  return r ? r.slice(0, 160) : 'unknown reason'
+}
+
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void }
 
 let worker: Worker | null = null
