@@ -59,6 +59,7 @@ import {
 import { Logo } from './Logo'
 import { keepConnectionsWarm, preconnect } from './keepWarm'
 import { driveDeviceFor } from './driveDevice'
+import { hashInWorkers } from './hashPool'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
 import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
@@ -1151,30 +1152,6 @@ export default function App() {
         })
       }
 
-      // byte-counting views: the SDK reads each file 3× (submission hash,
-      // merkle tree, segment upload) — progress = bytes read / (3 × size)
-      const phaseOf: ('hash' | 'upload')[] = files.map(() => 'hash')
-      const tracked = files.map((file, i) => {
-        let read = 0
-        return new Proxy(file, {
-          get(target, prop) {
-            if (prop === 'slice') {
-              return (st: number, en: number, ct?: string) => {
-                read += Math.max(0, en - st)
-                const pct = Math.min(99, Math.round((read / (file.size * 3 || 1)) * 100))
-                setItem(i, {
-                  percent: pct,
-                  ...(phaseOf[i] === 'hash' ? { message: 'hashing & encrypting…' } : {}),
-                })
-                return target.slice(st, en, ct)
-              }
-            }
-            const v = Reflect.get(target, prop, target)
-            return typeof v === 'function' ? v.bind(target) : v
-          },
-        }) as unknown as File
-      })
-
       let metas: FileMeta[] = []
       const ids = files.map(() => 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10))
       const timeout = (ms: number) => new Promise<undefined>((r) => setTimeout(() => r(undefined), ms))
@@ -1214,10 +1191,16 @@ export default function App() {
 
       try {
         const res = await uploadBatch(
-          files.map((_, i) => ({ data: tracked[i], encryption: { type: 'aes256' as const, key: prep[i].fileKey } })),
+          files.map((file, i) => ({ data: file, encryption: { type: 'aes256' as const, key: prep[i].fileKey } })),
           NETWORK,
           wallet.signer,
           {
+            segmentHasher: hashInWorkers,
+            onItemProgress: (i, phase, f) =>
+              setItem(i, {
+                percent: Math.min(99, Math.round(f * 100)),
+                message: phase === 'hashing' ? 'hashing & encrypting…' : 'storing segments…',
+              }),
             finalize: async (roots) => {
               // entries not ready within the time box are left out — the
               // folder's "Index older files" picks them up later
@@ -1249,7 +1232,6 @@ export default function App() {
                     : `approve 1 transaction for all ${n} files in your wallet`,
                 })
               } else if (msg.startsWith('Transaction submitted')) {
-                phaseOf.fill('upload')
                 setAll({ state: 'uploading', message: 'approved — storing segments…' })
               }
             },
