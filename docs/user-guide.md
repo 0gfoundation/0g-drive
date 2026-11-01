@@ -56,6 +56,7 @@ Every file gets its own random key; the file is encrypted with it before upload,
 - **Move to trash** (trash icon on a file, or select several and **Trash selected**). Folders can be moved to trash from the tree.
 - **Trash** (sidebar): the restore button (↺) puts a file back where it was; the × button removes its record from the trash.
 - Storage on 0G is **immutable**: "deleting" removes the file from your drive's listings, but the encrypted data stays on the network until its storage period ends. Nobody can read it without your keys.
+- **Closing the page during a change.** Once you approve a change, its data still has to reach 0G Storage (a few seconds). If you try to close the page in that window, the browser asks first. If it closes anyway, the next time you open the drive in the same browser the change is finished automatically, with no new approval or fee ("Interrupted change" in Activity). Opened elsewhere (another device, or after clearing browser data), the change can't be finished: it shows as undone, and Activity says so; just do it again.
 - **⟳ Sync** reloads the drive from the chain — useful after using the drive on another device.
 - **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails.
 
@@ -132,5 +133,6 @@ The assistant answers questions about 0GDrive and 0G. It runs in a separate, iso
 - **Upload stuck at "sealing"** — the app waits up to 15 minutes and repairs automatically; if it fails, retry later.
 - **"Couldn't check"** in Security — a chain query failed; click Retry.
 - **Transaction failed / insufficient funds** — top up 0G (testnet faucet).
+- **A change came back undone** (e.g. a restored file is back in the trash) — the page closed before the change's data was sent. In the same browser it is finished on the next open; elsewhere, do it again.
 - **A file disappeared after refresh** — click ⟳ Sync; listings on another device may be newer.
 - **Recipient can't open an encrypted link** — they must connect the exact wallet address the link was made for and have published a share key.
