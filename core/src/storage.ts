@@ -478,6 +478,12 @@ export interface BatchResult {
 const FRAGMENT_LIMIT = 4 * 1024 * 1024 * 1024 // SDK default fragment size
 /** segments per hashing job: a big file is spread over several workers */
 const HASH_JOB_SEGMENTS = 32
+/**
+ * Items up to this size are hashed on this thread, not by
+ * opts.segmentHasher: a few milliseconds here beat handing them to a worker
+ * (705 KB: ~10 ms; a worker's round trip can be more, and its start far more).
+ */
+const HASH_HERE_BYTES = 8 * 1024 * 1024
 /** segment uploads in flight per item */
 const SEND_CONCURRENCY = 6
 
@@ -693,10 +699,11 @@ export async function uploadBatch(
     const roots = new Uint8Array(n * 32)
     let hashed = 0
     const jobs: Promise<void>[] = []
+    const hash = size <= HASH_HERE_BYTES ? hashHere : hasher
     for (let from = 0; from < n; from += HASH_JOB_SEGMENTS) {
       const to = Math.min(n, from + HASH_JOB_SEGMENTS)
       jobs.push(
-        hasher(src, from, to).then((r) => {
+        hash(src, from, to).then((r) => {
           roots.set(r.roots, from * 32)
           spent.readMs += r.readMs
           spent.hashMs += r.hashMs
