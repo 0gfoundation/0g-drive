@@ -130,10 +130,12 @@ export function setWalletConnectNetwork(network: NetworkConfig): void {
   defaultChain = network.chainId
 }
 
+const INIT_TIMEOUT_MS = 20_000
+
 function load(): Promise<UniversalProvider> {
   loading ??= (async () => {
     const { default: Provider } = await import('@walletconnect/universal-provider')
-    const p = await Provider.init({
+    const init = Provider.init({
       projectId: PROJECT_ID,
       telemetryEnabled: false,
       logger: 'error',
@@ -142,10 +144,14 @@ function load(): Promise<UniversalProvider> {
         description: 'Your encrypted drive on 0G Storage',
         url: location.origin,
         icons: [`${location.origin}/0g-webclip.png`],
-        // wallets that support it send the user back here after approving
-        redirect: { universal: location.origin },
+        // no redirect: a wallet would open it as a new page, leaving the
+        // user's tab (and its uploads) behind; they switch back themselves
       },
     })
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('WalletConnect didn’t answer. Check your connection and try again.')), INIT_TIMEOUT_MS)
+    )
+    const p = await Promise.race([init, timeout])
     p.on('display_uri', (uri: string) => setState({ uri }))
     p.on('accountsChanged', (accounts: string[]) => emit('accountsChanged', accounts))
     p.on('chainChanged', (chain: string | number) => {

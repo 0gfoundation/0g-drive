@@ -40,7 +40,7 @@ Observed testnet costs: about 0.001 0G per MB uploaded, about 0.0001–0.0015 0G
 
 Phone browsers have no wallet built in. Two ways in:
 
-- **Connect your wallet app** (WalletConnect): you stay in Safari or Chrome. Pick your wallet app (**MetaMask**, **Trust Wallet**, **Binance Wallet**, **Bitget Wallet**, or copy the connection link into another one); it opens and asks you to connect; come back to the page. Each approval later works the same way: a bar says "Approve in …" with a button that opens the wallet app.
+- **Connect your wallet app** (WalletConnect): you stay in Safari or Chrome. Pick your wallet app (**MetaMask**, **Trust Wallet**, **Binance Wallet**, **Bitget Wallet**, or copy the connection link into another one); it opens and asks you to connect; come back to the page. Each approval later works the same way: a bar says "Approve in …" with a button that opens the wallet app. To come back after approving, tap **◀ Safari** / **◀ Chrome** at the top left of the screen (iPhone) or use the app switcher; your page is where you left it, uploads still running.
 - **Open 0GDrive in a wallet app's own browser**: **MetaMask**, **Trust Wallet**, **OKX Wallet** or **Coinbase Wallet** (or copy the link and open it in another wallet's browser).
 
 With the second way, the wallet app's browser is separate from your phone's browser: your drive opens there as on a new device (connect, then restore it with your wallet or recovery password). Some wallet apps lock or close their browser when you switch apps; you'll then reconnect when you come back.

@@ -194,7 +194,8 @@ export async function connectWallet(
   await provider.send('eth_requestAccounts', [])
   setDisconnected(false)
   await ensureNetwork(network, eth, provider)
-  const signer = await provider.getSigner()
+  // a fresh provider: ethers fails every call on the old one once the chain has moved
+  const signer = await new ethers.BrowserProvider(eth).getSigner()
   return await readWalletState(signer, network)
 }
 

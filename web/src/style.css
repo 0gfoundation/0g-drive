@@ -2176,6 +2176,11 @@ tbody tr:hover {
   font-size: 15px;
   margin-bottom: 12px;
 }
+.welcome-error {
+  max-width: 520px;
+  margin: 0 auto 12px;
+  font-size: 14px;
+}
 @media (max-width: 640px) {
   .welcome {
     padding: 40px 16px 36px;
