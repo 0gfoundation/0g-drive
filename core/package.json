@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./merkle": {
+      "types": "./dist/merkle.d.ts",
+      "default": "./dist/merkle.js"
     }
   },
   "scripts": {
@@ -19,6 +23,7 @@
     "@0gfoundation/0g-storage-ts-sdk": "^1.2.13",
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.8.0",
-    "ethers": "^6.13.1"
+    "ethers": "^6.13.1",
+    "hash-wasm": "^4.12.0"
   }
 }

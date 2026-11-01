@@ -41,6 +41,7 @@ Observed testnet costs: about 0.001 0G per MB uploaded, about 0.0001–0.0015 0G
 - Drop files on the upload zone ("Drop files here or click to upload"; on phones "Tap to upload files"), or click it to pick files. Files go into the folder you are viewing.
 - One drop = **one** wallet approval, however many files.
 - The **Uploads** list shows each file's state: *queued → approve in your wallet → uploading → sealing → stored*. "Sealing" means storage nodes are confirming they hold every piece — the app waits for this (up to 15 minutes, repairing missing pieces automatically) so "stored" really means stored.
+- Before the wallet asks you to approve, each file is encrypted and fingerprinted on your device (the transaction must carry its fingerprint): about a second for 50 MB on a laptop, longer on a phone. The bar shows "hashing & encrypting…".
 - You can keep dropping files while an upload runs; they queue and go up next.
 - If an upload fails the error says why; keep your local copy and try again.
 

@@ -11,12 +11,26 @@ import {
   parseEncryptionHeader,
   getFlowContract,
   getMarketContract,
+  EncryptedFile,
+  newSymmetricHeader,
+  newEciesHeader,
 } from '@0gfoundation/0g-storage-ts-sdk'
 import type { UploadOption, ShardedNode, ShardedNodes } from '@0gfoundation/0g-storage-ts-sdk'
 import type { NetworkConfig } from './config.js'
 import { hexToBytes } from './keystore.js'
 import { foldNodesToRoot, rpcProvider } from './events.js'
 import { addActionTiming, timed } from './timing.js'
+import {
+  SegmentTree,
+  hashSegments,
+  numPaddedSegments,
+  numSplits,
+  readStream,
+  segmentData,
+  streamSize,
+  submissionNodes,
+  type StreamSource,
+} from './merkle.js'
 import type {
   DecryptionInput,
   DownloadOpts,
@@ -399,10 +413,13 @@ async function ensureFinality(
 // ─── Batch upload: many blobs, ONE transaction ─────────────────────────
 //
 // The Flow contract's batchSubmit registers several submissions in one
-// transaction (one wallet prompt, one fee transfer). Segments are then
-// uploaded per blob with skipTx — through a signer that refuses to sign, so
-// a node that hasn't seen the log entry yet can never trigger a second,
-// paid transaction. Verified on Galileo: scripts/test-batch-submit.mjs.
+// transaction (one wallet prompt, one fee transfer). Each blob is read,
+// encrypted and hashed once, before the prompt (merkle.ts; in web workers
+// in the app), and its segments are then sent with the proofs kept from that
+// pass — no transaction can come from this step. Repairs go through the
+// SDK's skipTx upload with a signer that refuses to sign, so a node that
+// hasn't seen the log entry can never trigger a second, paid transaction.
+// Verified on Galileo: scripts/test-batch-submit.mjs.
 
 export interface BatchItem {
   data: Uint8Array | Blob
@@ -433,6 +450,13 @@ export interface BatchOpts {
   beforeSend?: (writes: { root: string; bytes: Uint8Array }[]) => Promise<void>
   /** Called once the transaction is sent. */
   onSent?: (txHash: string) => void
+  /**
+   * Hashes segment ranges (default: here, on this thread). The web app
+   * passes one that spreads them over web workers.
+   */
+  segmentHasher?: SegmentHasher
+  /** Per primary item: share of its bytes hashed (before the prompt), then sent (after). */
+  onItemProgress?: (index: number, phase: 'hashing' | 'sending', fraction: number) => void
   finalityRequired?: boolean
   finalityTimeoutMs?: number
   maxRepairs?: number
@@ -451,6 +475,85 @@ export interface BatchResult {
 }
 
 const FRAGMENT_LIMIT = 4 * 1024 * 1024 * 1024 // SDK default fragment size
+/** segments per hashing job: a big file is spread over several workers */
+const HASH_JOB_SEGMENTS = 32
+/** segment uploads in flight per item */
+const SEND_CONCURRENCY = 6
+
+/** Roots of padded segments [from, to) of `src`, 32 bytes each (see merkle.ts hashSegments). */
+export type SegmentHasher = (src: StreamSource, from: number, to: number) => Promise<Uint8Array>
+
+/** The stored stream of an item: its bytes, with a fresh encryption header when encrypted. */
+function streamOf(item: BatchItem): StreamSource {
+  const data = item.data as Blob | Uint8Array
+  if (!item.encryption) return { data }
+  if (item.encryption.type === 'aes256') {
+    return { data, enc: { key: item.encryption.key, header: newSymmetricHeader().toBytes() } }
+  }
+  const { header, key } = newEciesHeader(item.encryption.recipientPubKey)
+  return { data, enc: { key, header: header.toBytes() } }
+}
+
+/** The same stream as an SDK file, for repair passes (same header, so the same bytes). */
+function sdkPayload(src: StreamSource): Uploadable {
+  const base: Uploadable = src.data instanceof Uint8Array ? new MemData(src.data) : new ZgBlob(src.data as File)
+  return src.enc ? new EncryptedFile(base, src.enc.key, parseEncryptionHeader(src.enc.header)) : base
+}
+
+/**
+ * Send an item's segments to the nodes that hold them (by shard), each with
+ * its proof from the tree kept since hashing: no second pass over the file
+ * to rebuild the tree, as the SDK's upload would make.
+ */
+async function sendSegments(
+  indexer: Indexer,
+  src: StreamSource,
+  tree: SegmentTree,
+  root: string,
+  txSeq: number,
+  onProgress?: (fraction: number) => void
+): Promise<void> {
+  const [nodes, err] = await indexer.selectNodes(1)
+  if (err !== null || nodes.length === 0) throw new Error(`no storage nodes to upload to: ${err?.message ?? 'none'}`)
+  const configs = await Promise.all(nodes.map((n) => n.getShardConfig()))
+  const infos = await Promise.all(nodes.map((n) => n.getFileInfo(root, true).catch(() => null)))
+  const info = infos.find((i) => i) as FileInfoLike | undefined
+  if (!info) throw new Error(`storage nodes do not know ${root} yet`)
+  const size = streamSize(src)
+  const startSeg = Math.floor(info.tx.startEntryIndex / SEGMENT_MAX_CHUNKS)
+  const endSeg = Math.floor((info.tx.startEntryIndex + numSplits(size, CHUNK_SIZE) - 1) / SEGMENT_MAX_CHUNKS)
+  const tasks: { node: StorageNode; seg: number }[] = []
+  nodes.forEach((node, i) => {
+    if ((infos[i] as FileInfoLike | null)?.finalized) return
+    const { shardId, numShard } = configs[i]
+    // a node holds the segments whose global index ≡ shardId (mod numShard)
+    const first = numShard < 2 ? startSeg : Math.floor((startSeg + numShard - 1 - shardId) / numShard) * numShard + shardId
+    for (let g = first; g <= endSeg; g += Math.max(1, numShard)) tasks.push({ node, seg: g - startSeg })
+  })
+  let next = 0
+  let done = 0
+  const send = async ({ node, seg }: { node: StorageNode; seg: number }) => {
+    const data = await segmentData(src, seg)
+    if (data === null) return
+    const payload = { root, data: ethers.encodeBase64(data), index: seg, proof: tree.proof(seg), fileSize: size }
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await node.uploadSegmentsByTxSeq([payload] as unknown as Parameters<StorageNode['uploadSegmentsByTxSeq']>[0], txSeq)
+        return
+      } catch (e) {
+        if (attempt >= SEGMENT_ROUNDS) throw new Error(`segment ${seg}: ${(e as Error).message}`)
+        await sleep(1000 * attempt)
+      }
+    }
+  }
+  const worker = async () => {
+    while (next < tasks.length) {
+      await send(tasks[next++])
+      onProgress?.(++done / tasks.length)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(SEND_CONCURRENCY, tasks.length) }, worker))
+}
 const VISIBLE_TIMEOUT_MS = 4 * 60_000
 
 /** A view of `signer` that can read its address but never send a transaction. */
@@ -549,27 +652,54 @@ export async function uploadBatch(
   price.catch(() => undefined) // awaited below
 
   type Prepared = {
+    src: StreamSource
+    /** the tree over its segments: the root, and every segment's proof */
+    tree: SegmentTree
     payload: Uploadable
-    submission: Awaited<ReturnType<MemData['createSubmission']>>[0] & object
+    submission: { data: { length: number; tags: string; nodes: { root: string; height: number }[] }; submitter: string }
     root: string
     tags: string
   }
+  const hasher = opts.segmentHasher ?? hashSegments
   const prepare = async (item: BatchItem, index: number): Promise<Prepared> => {
     onItem(index, 'preparing')
-    const base: Uploadable =
-      item.data instanceof Uint8Array ? new MemData(item.data) : new ZgBlob(item.data as File)
-    const payload = item.encryption ? wrapEncryption(base, item.encryption) : base
-    if (payload.size() > FRAGMENT_LIMIT) throw new Error('file too large for batch upload (> 4 GB)')
+    const src = streamOf(item)
+    const size = streamSize(src)
+    if (size > FRAGMENT_LIMIT) throw new Error('file too large for batch upload (> 4 GB)')
+    // one read of the file, spread over jobs (and workers)
+    const n = numPaddedSegments(size)
+    const roots = new Uint8Array(n * 32)
+    let hashed = 0
+    const jobs: Promise<void>[] = []
+    for (let from = 0; from < n; from += HASH_JOB_SEGMENTS) {
+      const to = Math.min(n, from + HASH_JOB_SEGMENTS)
+      jobs.push(
+        hasher(src, from, to).then((r) => {
+          roots.set(r, from * 32)
+          hashed += to - from
+          if (index < items.length) opts.onItemProgress?.(index, 'hashing', hashed / n)
+        })
+      )
+    }
+    await Promise.all(jobs)
+    const tree = await SegmentTree.build(roots)
+    const nodes = await submissionNodes(src, tree)
+    const root = foldNodesToRoot(nodes)
+    if (root !== tree.root) throw new Error(`hashing mismatch for item ${index}: ${root} vs ${tree.root}`)
     const tags = item.tags ?? '0x'
-    const [submission, err] = await payload.createSubmission(tags, submitter)
-    if (err !== null || submission === null) throw new Error(`cannot build submission: ${err}`)
-    return { payload, submission, root: foldNodesToRoot(submission.data.nodes), tags }
+    return {
+      src,
+      tree,
+      payload: sdkPayload(src),
+      submission: { data: { length: size, tags, nodes }, submitter },
+      root,
+      tags,
+    }
   }
 
   // 1. Hash everything (the only pass before the prompt)
   let started = performance.now()
-  const primary: Prepared[] = []
-  for (let i = 0; i < items.length; i++) primary.push(await prepare(items[i], i))
+  const primary = await Promise.all(items.map((item, i) => prepare(item, i)))
   addActionTiming('preparing', performance.now() - started)
   const extraItems = opts.finalize ? await opts.finalize(primary.map((p) => p.root)) : []
   started = performance.now()
@@ -589,7 +719,7 @@ export async function uploadBatch(
   if (opts.beforeSend) {
     started = performance.now()
     const writes = await Promise.all(
-      all.map(async (p) => ({ root: p.root, bytes: (await p.payload.readFromFile(0, p.payload.size())).buffer }))
+      all.map(async (p) => ({ root: p.root, bytes: await readStream(p.src, 0, streamSize(p.src)) }))
     )
     await opts.beforeSend(writes)
     addActionTiming('preparing', performance.now() - started)
@@ -644,13 +774,9 @@ export async function uploadBatch(
       try {
         onItem(index, 'uploading')
         await waitVisible(indexer, p.root)
-        const [, err] = await indexer.upload(p.payload, network.rpcUrl, guard as unknown as SdkSigner, {
-          skipTx: true,
-          skipIfFinalized: false, // see ensureFinality: one node's view isn't enough
-          finalityRequired: false,
-          tags: p.tags,
+        await sendSegments(indexer, p.src, p.tree, p.root, txSeqByRoot.get(p.root)!, (f) => {
+          if (index < items.length) opts.onItemProgress?.(index, 'sending', f)
         })
-        if (err !== null) throw err
         return { ok: true, result: resultFor(p) }
       } catch (err) {
         onItem(index, 'error', (err as Error).message)
