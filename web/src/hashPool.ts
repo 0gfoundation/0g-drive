@@ -9,7 +9,16 @@
 import type { HashedRange, SegmentHasher } from '@0gdrive/core'
 import { hashSegments, type StreamSource } from '@0gdrive/core/merkle'
 
-const POOL_SIZE = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1))
+// one on phones and tablets: each worker costs memory there, where the
+// search models already struggle for it
+const touch = (() => {
+  try {
+    return matchMedia('(pointer: coarse)').matches
+  } catch {
+    return false
+  }
+})()
+const POOL_SIZE = touch ? 1 : Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1))
 
 interface Pending {
   resolve: (r: HashedRange) => void

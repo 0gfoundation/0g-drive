@@ -258,7 +258,7 @@ export function SearchBox({
       </svg>
       <input
         type="search"
-        placeholder="Search your drive — any language"
+        placeholder="Search your drive — English or 中文"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => e.key === 'Escape' && onClear()}
@@ -267,7 +267,7 @@ export function SearchBox({
       {model.loading ? (
         <span
           className="searchbox-status"
-          title={`One-time download of the on-device search models (~300 MB), cached by your browser afterwards.${
+          title={`One-time download of the on-device search models (~250 MB), cached by your browser afterwards.${
             model.viaServer ? ' Downloading through the app server — the model CDN was slow or unreachable.' : ''
           } Until it finishes, search matches file names.`}
         >

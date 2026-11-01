@@ -25,12 +25,15 @@ import {
   quantize,
   type SearchEntry,
 } from './searchcore'
+import { FULL_TEXT_MODEL, SMALL_TEXT_MODEL } from './modelOn0g'
 
 // Chosen over multilingual-e5-small/-base after scripts/test-search.mjs:
 // same size as e5-small, but trained to align languages, so English↔Chinese
 // queries reach documents in the other language (10/10 vs 6/10 probes).
 // Reads at most 128 tokens — the file name and the document's opening.
-export const TEXT_MODEL = 'Xenova/paraphrase-multilingual-MiniLM-L12-v2'
+// Trimmed to English + Chinese and served from 0G Storage (modelOn0g.ts);
+// the full model from Hugging Face if that fails.
+export const TEXT_MODEL = SMALL_TEXT_MODEL
 export const CLIP_MODEL = 'Xenova/clip-vit-base-patch32'
 
 export type ProgressCb = (info: { model: string; file?: string; progress?: number; status: string }) => void
@@ -46,10 +49,15 @@ const progress = (model: string) => (p: { status: string; file?: string; progres
 
 let textPipe: Promise<FeatureExtractionPipeline> | null = null
 function textModel(): Promise<FeatureExtractionPipeline> {
-  textPipe ??= pipeline('feature-extraction', TEXT_MODEL, {
-    dtype: 'q8',
-    progress_callback: progress('text'),
-  }) as Promise<FeatureExtractionPipeline>
+  const load = (id: string) =>
+    pipeline('feature-extraction', id, { dtype: 'q8', progress_callback: progress('text') }) as Promise<FeatureExtractionPipeline>
+  textPipe ??= load(TEXT_MODEL).catch((err) => {
+    // out of memory won't get better with the bigger model: say so
+    if (/out of memory/i.test(String((err as Error)?.message ?? err))) throw err
+    console.warn('[models] trimmed text model unavailable — using the full one:', err)
+    return load(FULL_TEXT_MODEL)
+  })
+  textPipe.catch(() => (textPipe = null)) // a later call may retry
   return textPipe
 }
 
@@ -202,8 +210,8 @@ export async function renameEntry(name: string, entry: SearchEntry): Promise<Sea
 /**
  * Load the text model now (download + init), so the first upload isn't
  * kept waiting. The photo models (CLIP) are only downloaded with it (see
- * prefetchPhotoModels) and load on first use: the text model alone already
- * takes the tab past 1 GB.
+ * prefetchPhotoModels) and load on first use: the text model alone needs
+ * about 600 MB.
  */
 export async function warmUp(): Promise<true> {
   try {

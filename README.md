@@ -86,6 +86,9 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `node scripts/test-open-in-wallet.mjs` | phones with no wallet: links that open the drive in MetaMask, Trust, OKX or Coinbase Wallet's browser, at 390 px; desktop unchanged (spends nothing) |
 | `node scripts/test-file-icons.mjs` | file-type icons: extension and type → family, the extension strip fits, a colour per family (offline, spends nothing) |
 | `node scripts/test-model-error.mjs` | smart search models that fail to load say why on the page and in Activity (memory / storage / download / WebAssembly), not only in a tooltip |
+| `uv run --with onnx==1.17.0 --with numpy python scripts/models/prune-text-model.py ORIG OUT` | trim the search text model to English + Chinese tokens (see docs/decisions.md) |
+| `node scripts/models/check-pruned-model.mjs DIR` | the trimmed model gives the same tokens and embeddings for English and Chinese text as the full one |
+| `[NETWORK=mainnet] node scripts/models/upload-model-to-0g.mjs DIR` | upload the trimmed model to 0G Storage; prints the pins for `web/src/ai/modelOn0g.ts` |
 | `node scripts/test-merkle.mjs` | our upload hashing against the SDK's: roots, submissions, segment proofs and encrypted bytes, 23 sizes plain and encrypted (offline, spends nothing) |
 | `[SMART=1] [KIND=jpg\|pdf] node scripts/time-upload-browser.mjs [url] [MB list] [stored MB]` | upload timing in a real browser: file pick → wallet request per size (with Activity's breakdown and main-thread blocking), and approval → stored |
 | `node scripts/time-wallet-prompt.mjs` | Time from a drive action to its wallet prompt, request by request (testnet, throwaway wallet) |

@@ -6,11 +6,18 @@
 import { RawImage, env } from '@huggingface/transformers'
 import type { SearchEntry } from '@0gdrive/core'
 import { embedPassage, embedQuery, indexPhoto, indexText, onModelProgress, prefetchPhotoModels, renameEntry, warmUp } from './engine'
-import { modelFetch, onNetStats, planDownloads, type NetStats } from './netfetch'
+import { modelFetch, onNetStats, planDownloads, setPageFetch0g, type NetStats } from './netfetch'
+import type { FileOn0g } from './modelOn0g'
 
 env.allowLocalModels = false // weights come from the HF CDN, then the browser cache
 env.useBrowserCache = true
 env.fetch = modelFetch // progress in bytes, stall recovery via the app's server
+// One thread. The page isn't cross-origin isolated, so ONNX Runtime can't
+// run threads anyway; asking for none keeps it off the threaded set-up,
+// whose memory reservation is a known failure on phones — a user in
+// MetaMask's in-app browser got "no available backend found. ERR: [wasm]
+// RangeError: Out of memory" before any model loaded.
+if (env.backends.onnx.wasm) env.backends.onnx.wasm.numThreads = 1
 
 export type AiRequest =
   | { id: number; op: 'indexPhoto'; name: string; image: Blob }
@@ -21,13 +28,39 @@ export type AiRequest =
   | { id: number; op: 'warm' }
   | { id: number; op: 'prefetchPhotos' }
 
+/** The page's answers to fetch0g (see setPageFetch0g below). */
+export type PageReply =
+  | { type: 'fetch0gProgress'; id: number; bytes: number }
+  | { type: 'fetch0gResult'; id: number; bytes?: ArrayBuffer; error?: string }
+
 export type AiMessage =
+  | { type: 'fetch0g'; id: number; file: FileOn0g }
   | { type: 'result'; id: number; result: unknown }
   | { type: 'error'; id: number; error: string }
   | { type: 'progress'; model: string; file?: string; progress?: number; status: string }
   | ({ type: 'net' } & NetStats)
 
 const post = (m: AiMessage) => (self as unknown as DedicatedWorkerGlobalScope).postMessage(m)
+
+// 0G downloads go through the page, which has the storage client
+const fetches = new Map<number, { resolve: (b: ArrayBuffer) => void; reject: (e: Error) => void; onBytes: (n: number) => void }>()
+let nextFetch = 0
+setPageFetch0g(
+  (file, onBytes) =>
+    new Promise((resolve, reject) => {
+      const id = nextFetch++
+      fetches.set(id, { resolve, reject, onBytes })
+      post({ type: 'fetch0g', id, file })
+    })
+)
+function pageReply(m: PageReply): void {
+  const f = fetches.get(m.id)
+  if (!f) return
+  if (m.type === 'fetch0gProgress') return f.onBytes(m.bytes)
+  fetches.delete(m.id)
+  if (m.bytes) f.resolve(m.bytes)
+  else f.reject(new Error(m.error ?? '0G download failed'))
+}
 
 onModelProgress((p) => post({ type: 'progress', ...p }))
 onNetStats((s) => post({ type: 'net', ...s }))
@@ -54,7 +87,8 @@ async function toRawImage(blob: Blob): Promise<RawImage> {
 // keeps memory flat when a batch of uploads arrives at once.
 let chain: Promise<unknown> = Promise.resolve()
 
-self.onmessage = (e: MessageEvent<AiRequest>) => {
+self.onmessage = (e: MessageEvent<AiRequest | PageReply>) => {
+  if ('type' in e.data) return pageReply(e.data)
   const req = e.data
   if (req.op === 'prefetchPhotos') {
     // a download, no model work: runs beside the queue, not in it, so

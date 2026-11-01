@@ -4,6 +4,8 @@
 //   the hashing workers start when the drive opens, before any upload
 //   a small file (1 MB) is hashed on the page: preparing ~0
 //   the first large file (30 MB) waits ~0 for workers
+//   on a phone (same drive, reconnected): one worker, not four — memory there
+//   goes to the search models
 // (A user saw "starting workers 1.8 s / 5.1 s" on a first upload when the
 // workers only started then.) Smart search off.
 //
@@ -48,7 +50,7 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 900 
 const page = await context.newPage()
 let approve = false
 let promptAt = null
-await page.exposeFunction('__eth', async (method, params) => {
+const ethHandler = async (method, params) => {
   try {
     switch (method) {
       case 'eth_requestAccounts':
@@ -78,7 +80,8 @@ await page.exposeFunction('__eth', async (method, params) => {
   } catch (e) {
     return { err: e.shortMessage ?? e.message }
   }
-})
+}
+await page.exposeFunction('__eth', ethHandler)
 await context.addInitScript(() => {
   if (!window.__smart) localStorage.setItem('0gdrive:smart-search', 'off')
   localStorage.setItem('0gdrive:layout', 'list')
@@ -132,6 +135,28 @@ try {
   check('a small file (1 MB) is hashed on the page: preparing ~0', preparing(small) <= 0.1, small.replace(/^\S+ \S+ /, ''))
   const large = await toPrompt(fileOf(30, 'large'))
   check('the first large file (30 MB) waits ~0 for workers', starting(large) <= 0.2 && preparing(large) < 1.5, large.replace(/^\S+ \S+ /, ''))
+
+  const desktopWorkers = hashWorkers()
+  const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() })
+  await phoneCtx.exposeFunction('__eth', (method, params) => ethHandler(method, params))
+  await phoneCtx.addInitScript(() => {
+    localStorage.setItem('0gdrive:smart-search', 'off')
+    window.ethereum = {
+      async request({ method, params }) {
+        const r = await window.__eth(method, params)
+        if (r.err) throw Object.assign(new Error(r.err), { code: 4001 })
+        return r.ok
+      },
+      on() {},
+      removeListener() {},
+    }
+  })
+  const phone = await phoneCtx.newPage()
+  await phone.goto(base)
+  await phone.getByRole('button', { name: /Folders and settings|\+ New folder/ }).first().waitFor({ timeout: 120_000 })
+  await phone.waitForTimeout(5000)
+  const phoneWorkers = phone.workers().filter((w) => w.url().includes('hash.worker')).length
+  check('a phone starts one hashing worker; a desktop several', phoneWorkers === 1 && desktopWorkers > 1, `phone ${phoneWorkers}, desktop ${desktopWorkers}`)
 } catch (err) {
   check('run completed', false, err.message.split('\n')[0])
 } finally {
