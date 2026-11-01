@@ -3,6 +3,7 @@
 // arrives from the page (already decrypted locally) and never leaves the
 // device — the only network traffic is the one-time model download.
 
+import './wasmMemory' // before ONNX Runtime creates its memory
 import { RawImage, env } from '@huggingface/transformers'
 import type { SearchEntry } from '@0gdrive/core'
 import { embedPassage, embedQuery, indexPhoto, indexText, onModelProgress, prefetchPhotoModels, renameEntry, warmUp } from './engine'
@@ -13,10 +14,8 @@ env.allowLocalModels = false // weights come from the HF CDN, then the browser c
 env.useBrowserCache = true
 env.fetch = modelFetch // progress in bytes, stall recovery via the app's server
 // One thread. The page isn't cross-origin isolated, so ONNX Runtime can't
-// run threads anyway; asking for none keeps it off the threaded set-up,
-// whose memory reservation is a known failure on phones — a user in
-// MetaMask's in-app browser got "no available backend found. ERR: [wasm]
-// RangeError: Out of memory" before any model loaded.
+// run threads anyway. (Its memory is set up as for threads all the same:
+// wasmMemory.ts caps what that reserves.)
 if (env.backends.onnx.wasm) env.backends.onnx.wasm.numThreads = 1
 
 export type AiRequest =
