@@ -14,6 +14,7 @@
 //
 //   node scripts/test-interrupted-change.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -129,7 +130,7 @@ try {
   ctxA = await openBrowser()
   a = await openPage(ctxA)
   await a.page.goto(base)
-  await a.page.getByRole('button', { name: 'Connect wallet' }).click()
+  await connectExtension(a.page)
   await a.page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await a.page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
   await a.page.setInputFiles('.dropzone input[type=file]', [

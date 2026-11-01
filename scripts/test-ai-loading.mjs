@@ -11,6 +11,7 @@
 // refunded at the end. Needs the model CDNs (or the app's /_models route).
 // Usage: node scripts/test-ai-loading.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
@@ -64,7 +65,7 @@ async function openDrive(contextOpts) {
   await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.3') })).wait()
   const s = await openPage(contextOpts, wallet)
   await s.page.goto(base)
-  await s.page.getByRole('button', { name: 'Connect wallet' }).click()
+  await connectExtension(s.page)
   await s.page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await s.page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
   return s

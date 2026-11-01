@@ -3,6 +3,7 @@
 // 0 segment downloads), and check the saved copy is ciphertext, not PNG.
 //   node scripts/test-file-cache.mjs
 import { chromium } from 'playwright'
+import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -98,10 +99,19 @@ await page.addInitScript(() => {
 })
 
 
+// the smart-search model also comes from 0G (web/src/ai/modelOn0g.ts): its
+// segments, fetched in the background, aren't the file's
+const MODEL_TXSEQS = [...readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../web/src/ai/modelOn0g.ts'), 'utf8').matchAll(/txSeq: (\d+)/g)].map((m) => Number(m[1]))
 page.on('requestfinished', async (req) => {
   const t = req.timing()
   let m = ''
-  try { m = JSON.parse(req.postData() ?? '{}').method ?? '' } catch {}
+  let seq
+  try {
+    const body = JSON.parse(req.postData() ?? '{}')
+    m = body.method ?? ''
+    seq = Number(body.params?.[0])
+  } catch {}
+  if (m === 'zgs_downloadSegmentByTxSeq' && MODEL_TXSEQS.includes(seq)) m += ' (model)'
   if (/zgs_|indexer_/.test(m)) net.push({ at: Date.now() - t0, m, ms: Math.round(t.responseEnd), host: new URL(req.url()).host })
 })
 page.on('requestfailed', (req) => {
@@ -131,7 +141,7 @@ async function reopen() {
 try {
   await page.goto(base)
   await page.evaluate(() => localStorage.setItem('0gdrive:layout', 'list'))
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
   const b64 = await page.evaluate(async () => {

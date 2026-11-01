@@ -13,8 +13,10 @@
     "@0gdrive/core": "*",
     "@0gfoundation/0g-storage-ts-sdk": "^1.2.12",
     "@huggingface/transformers": "4.3.1",
+    "@walletconnect/universal-provider": "2.26.0",
     "ethers": "^6.13.1",
     "pdfjs-dist": "6.4.299",
+    "qrcode-generator": "2.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

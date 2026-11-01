@@ -33,7 +33,10 @@ export function WalletPicker() {
             <li key={w.id}>
               <button className="wallet-option" onClick={() => resolvePicker(w)} autoFocus={w === wallets[0]}>
                 {w.icon ? <img src={w.icon} alt="" /> : <span className="wallet-icon-blank" aria-hidden="true" />}
-                <span className="wallet-name">{w.name}</span>
+                <span className="wallet-name">
+                  {w.name}
+                  {w.hint && <span className="wallet-hint">{w.hint}</span>}
+                </span>
                 {w.id === last && <span className="wallet-last">Last used</span>}
               </button>
             </li>

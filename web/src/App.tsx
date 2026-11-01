@@ -50,6 +50,7 @@ import {
   chooseWallet,
   connectWallet,
   disconnectWallet,
+  hasExtension,
   hasWallet,
   onAccountsChanged,
   onChainChanged,
@@ -324,13 +325,13 @@ function Welcome({ onConnect }: { onConnect: () => void }) {
       </p>
       {hasWallet() ? (
         <button className="btn primary welcome-cta" onClick={onConnect}>
-          Get started
+          {hasExtension() ? 'Get started' : isTouchDevice() ? 'Connect your wallet app' : 'Get started with a phone wallet'}
         </button>
-      ) : isTouchDevice() ? (
-        <OpenInWallet />
       ) : (
-        <p className="hero-hint">Install a wallet extension such as MetaMask or Rabby to start.</p>
+        !isTouchDevice() && <p className="hero-hint">Install a wallet extension such as MetaMask or Rabby to start.</p>
       )}
+      {/* a phone browser: WalletConnect (above) or the wallet app's own browser */}
+      {!hasExtension() && isTouchDevice() && <OpenInWallet alternative={hasWallet()} />}
       <p className="hero-hint">Connect to open your drive, or create one in a click.</p>
     </section>
   )
@@ -2087,10 +2088,10 @@ export default function App() {
         </div>
       </header>
 
-      {!hasWallet() && !isTouchDevice() && (
+      {!hasExtension() && !isTouchDevice() && (
         <div className="banner warn">
           No Ethereum wallet detected. Install a wallet extension such as <strong>MetaMask</strong> or{' '}
-          <strong>Rabby</strong> to use 0GDrive.
+          <strong>Rabby</strong> to use 0GDrive{hasWallet() ? ', or connect the wallet app on your phone with WalletConnect' : ''}.
         </div>
       )}
 

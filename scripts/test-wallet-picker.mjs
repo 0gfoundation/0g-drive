@@ -12,6 +12,7 @@
 //
 //   node scripts/test-wallet-picker.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { secp256k1 } from '@noble/curves/secp256k1'
 import { getNetworkConfig } from '../core/dist/index.js'
@@ -126,7 +127,9 @@ async function open(wallets, { announce = true, viewport = { width: 1280, height
   return { context, page }
 }
 
-const pickerNames = (page) => page.$$eval('.wallet-picker .wallet-name', (els) => els.map((e) => e.textContent))
+// the browser's wallets (WalletConnect, when the page offers it, is listed after them: test-walletconnect.mjs)
+const pickerNames = (page) =>
+  page.$$eval('.wallet-picker .wallet-name', (els) => els.map((e) => e.textContent).filter((n) => !n.startsWith('WalletConnect')))
 
 try {
   // ── two wallets: picker ──
@@ -175,7 +178,7 @@ try {
     const onAccount = (addr) =>
       page.waitForFunction((a) => document.querySelector('.address')?.getAttribute('title') === a, addr, { timeout: 120_000 })
     await page.goto(base)
-    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await connectExtension(page)
     await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
     const A = w.address()
 
@@ -212,7 +215,7 @@ try {
 
     // Switch wallet or account: the wallet shows its accounts (here: picks A)
     await page.getByRole('button', { name: 'Wallet menu' }).click()
-    await page.getByRole('menuitem', { name: 'Switch wallet or account' }).click()
+    await connectExtension(page, page.getByRole('menuitem', { name: 'Switch wallet or account' }))
     await onAccount(A)
     await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
     check('Switch wallet or account: asks the wallet, then the app reloads into the chosen account',
@@ -226,7 +229,7 @@ try {
     await page.getByRole('button', { name: 'Connect wallet' }).waitFor({ timeout: 60_000 })
     check('Disconnect: back to the start screen, and a reload stays disconnected',
       w.count('wallet_revokePermissions') === 1 && (await page.locator('.address').count()) === 0)
-    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await connectExtension(page)
     await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
     await page.reload()
     await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
@@ -249,7 +252,7 @@ try {
     await page.goto(base)
     const preconnected = await page.evaluate(() =>
       [...document.querySelectorAll('link[rel=preconnect]')].some((l) => l.href.startsWith('https://evmrpc-testnet.0g.ai')))
-    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await connectExtension(page)
     await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
     await page.waitForTimeout(5000) // let the connect traffic settle
     const pings = () => ({ wallet: w.count('eth_blockNumber'), app: rpc.filter((b) => b.includes('eth_blockNumber')).length })
@@ -300,15 +303,19 @@ try {
     await context.close()
   }
 
-  // ── one wallet, not announced: no picker ──
+  // ── one wallet, not announced: no picker (with WalletConnect offered: it and the wallet) ──
   {
     const solo = mockWallet('Solo', 'com.example.solo')
     const { context, page } = await open([solo], { announce: false })
     await page.goto(base)
     await page.getByRole('button', { name: 'Connect wallet' }).click()
+    const picker = await page.locator('.wallet-picker').waitFor({ timeout: 3000 }).then(() => true, () => false)
+    const all = picker ? await page.$$eval('.wallet-picker .wallet-name', (els) => els.map((e) => e.textContent)) : []
+    if (picker) await page.locator('.wallet-picker .wallet-option').first().click()
     await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
-    check('one wallet (window.ethereum only): connects with no picker',
-      (await page.locator('.wallet-picker').count()) === 0 && solo.count('eth_requestAccounts') === 1)
+    check(picker ? 'one wallet (window.ethereum only) + WalletConnect: the picker lists the wallet first' : 'one wallet (window.ethereum only): connects with no picker',
+      (!picker || (all.length === 2 && all[0] === 'Browser wallet' && all[1].startsWith('WalletConnect'))) && solo.count('eth_requestAccounts') === 1,
+      JSON.stringify(all))
     await context.close()
   }
 
@@ -320,7 +327,7 @@ try {
     const w = mockWallet('Odd Wallet', 'com.example.odd', sign)
     const { context, page } = await open([w])
     await page.goto(base)
-    await page.getByRole('button', { name: 'Connect wallet' }).click()
+    await connectExtension(page)
     await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
     await page.getByRole('button', { name: 'Set up recovery' }).click({ timeout: 120_000 })
     const err = page.getByText(pattern).first()
