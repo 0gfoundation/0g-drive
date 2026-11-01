@@ -255,10 +255,11 @@ function load(): Promise<UniversalProvider> {
         // user's tab (and its uploads) behind; they switch back themselves
       },
     })
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(stuck('WalletConnect didn’t start.')), INIT_TIMEOUT_MS)
-    )
-    const p = await Promise.race([init, timeout])
+    let initTimer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      initTimer = setTimeout(() => reject(stuck('WalletConnect didn’t start.')), INIT_TIMEOUT_MS)
+    })
+    const p = await Promise.race([init, timeout]).finally(() => clearTimeout(initTimer))
     const s = p.session
     trace(s ? `started; saved session with ${s.peer.metadata.name}, chains ${chainsOf(s.namespaces).join(' ')}, expires ${new Date(s.expiry * 1000).toISOString()}` : 'started; no saved session')
     const relayer = p.client?.core.relayer
@@ -407,13 +408,36 @@ async function answer({ method, params }: { method: string; params?: unknown[] }
       return null
   }
   if (!p.session) throw Object.assign(new Error('Wallet not connected'), { code: 4100 })
-  if (!WALLET_METHODS.includes(method)) return p.request({ method, params }, chainOf(p))
+  if (!WALLET_METHODS.includes(method)) {
+    // A read: our own RPC. The library sends every method the wallet listed
+    // to the wallet, and MetaMask lists reads (eth_getBalance, eth_call…);
+    // in the background it never answers, so after a reload on an iPhone
+    // the balance read hung the reconnect, then every connect.
+    const rpc = NETWORKS.find((n) => `eip155:${n.chainId}` === chainOf(p))?.rpcUrl
+    if (rpc) return readRpc(rpc, method, params)
+    return p.request({ method, params }, chainOf(p))
+  }
   setState({ pending: state.pending + 1 })
   try {
     return await p.request({ method, params }, chainOf(p))
   } finally {
     setState({ pending: state.pending - 1 })
   }
+}
+
+let rpcId = 0
+
+async function readRpc(url: string, method: string, params: unknown[] = []): Promise<unknown> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
+  })
+  if (!res.ok) throw new Error(`RPC ${res.status} for ${method}`)
+  const body = (await res.json()) as { result?: unknown; error?: { code: number; message: string; data?: unknown } }
+  // reverts keep their code and data, as ethers expects from a provider
+  if (body.error) throw Object.assign(new Error(body.error.message), body.error)
+  return body.result
 }
 
 const provider: Eip1193 = {

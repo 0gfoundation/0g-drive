@@ -17,6 +17,9 @@
 //   phone, like MetaMask: a declined pairing says why on the start page;
 //   a wallet that approves another chain first, then switches when asked,
 //   opens the drive; a reload brings the drive back by itself
+//   the wallet lists reads (eth_getBalance, eth_call…) as MetaMask does and
+//   answers nothing while "in the background": no read reaches it, and a
+//   reload (laptop and phone) reconnects anyway
 //   the app gives wallets no link back (it would open a new tab, leaving
 //   the user's tab and its uploads behind)
 //   phone, WalletConnect stuck (its relay connection open but silent, as
@@ -87,6 +90,10 @@ const wc = await SignClient.init({
 const prompts = { tx: 0, sign: 0, other: [] }
 let holdNext = 0 // ms to wait before answering the next request (the user reading it)
 let deleted = 0
+const METAMASK_READS = ['eth_getBalance', 'eth_call', 'eth_estimateGas', 'eth_blockNumber', 'eth_gasPrice', 'eth_getTransactionCount', 'eth_getTransactionReceipt', 'eth_getCode', 'eth_getBlockByNumber', 'eth_feeHistory']
+const reads = [] // reads that reached the wallet (none should)
+let asleep = false
+const slept = [] // requests sent while asleep
 const proposers = []
 let declineNext = false
 let otherChainFirst = false // like MetaMask: approve the chain it's on, switch when asked
@@ -106,7 +113,8 @@ wc.on('session_proposal', async ({ id, params }) => {
       eip155: {
         chains: [chain],
         accounts: [`${chain}:${wallet.address}`],
-        methods: ns.methods,
+        // MetaMask also lists reads it can answer: the app must not send them
+        methods: [...new Set([...ns.methods, ...METAMASK_READS])],
         events: ns.events,
       },
     },
@@ -114,6 +122,9 @@ wc.on('session_proposal', async ({ id, params }) => {
 })
 wc.on('session_request', async ({ topic, id, params }) => {
   const { method, params: p } = params.request
+  if (METAMASK_READS.includes(method)) reads.push(method)
+  // in the background, a phone wallet answers nothing
+  if (asleep) return void slept.push(method)
   const respond = (response) => wc.respond({ topic, response: { id, jsonrpc: '2.0', ...response } })
   try {
     if (holdNext) {
@@ -230,10 +241,14 @@ try {
   check('WalletConnect traffic is the relay only: no analytics (pulse), no reads through its RPC',
     wcHosts.every((h) => !/^(pulse|rpc)\./.test(h)) && wcHosts.some((h) => h.startsWith('relay.')), JSON.stringify(wcHosts))
 
+  asleep = true // the phone's wallet app in the background, as on a reload there
   await page.reload()
-  await page.locator('table .fname-btn', { hasText: NAME }).waitFor({ timeout: 5 * 60_000 })
-  check('after a reload the session reconnects by itself, no QR code',
-    (await page.locator('.wc-dialog').count()) === 0 && prompts.sign === 2, JSON.stringify(prompts))
+  const reconnected = await page.locator('table .fname-btn', { hasText: NAME }).waitFor({ timeout: 60_000 }).then(() => true, () => false)
+  asleep = false
+  check('after a reload the session reconnects by itself, with the wallet app in the background (it answers nothing)',
+    reconnected && (await page.locator('.wc-dialog').count()) === 0 && prompts.sign === 2 && slept.length === 0, JSON.stringify({ prompts, slept }))
+  check('reads (balances, gas, receipts…) go to our RPC even though the wallet lists them, as MetaMask does',
+    reads.length === 0, JSON.stringify([...new Set(reads)]))
 
   // ── the same account in a browser wallet: the same drive ──
   {
@@ -356,10 +371,13 @@ try {
   check('phone, a wallet on another chain (like MetaMask): asked to switch once, and the drive opens',
     prompts.other.filter((m) => m === 'wallet_switchEthereumChain').length === switches + 1)
 
+  asleep = true
   await page.reload()
   const back = await page.locator('table .fname-btn', { hasText: NAME }).waitFor({ timeout: 60_000 }).then(() => true, () => false)
-  check('phone, a reload: the drive comes back by itself, no prompt',
-    back && (await page.locator('.welcome').count()) === 0 && (await page.locator('.wc-dialog').count()) === 0)
+  asleep = false
+  check('phone, a reload with the wallet app in the background: the drive comes back by itself, no prompt',
+    back && (await page.locator('.welcome').count()) === 0 && (await page.locator('.wc-dialog').count()) === 0 && slept.length === 0,
+    JSON.stringify({ slept, reads: [...new Set(reads)] }))
   await phone.context.close()
 
   // ── phone, WalletConnect stuck ──
