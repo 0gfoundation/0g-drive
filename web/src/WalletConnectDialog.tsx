@@ -7,6 +7,8 @@ import {
   connectingVia,
   subscribeWc,
   walletAppLink,
+  wcDebugEnabled,
+  wcDebugLog,
   wcState,
 } from './walletConnect'
 import { isTouchDevice } from './OpenInWallet'
@@ -132,4 +134,27 @@ export function WalletConnectDialog() {
     )
   }
   return null
+}
+
+/** With ?debug=wc: WalletConnect's log on the page, for a phone without a console. */
+export function WalletConnectDebug() {
+  const [, setTick] = useState(0)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => subscribeWc(() => setTick((t) => t + 1)), [])
+  if (!wcDebugEnabled()) return null
+  const lines = wcDebugLog()
+  const copy = () => {
+    void navigator.clipboard?.writeText(lines.join('\n')).then(() => setCopied(true))
+  }
+  return (
+    <section className="wc-debug" aria-label="WalletConnect log">
+      <div className="wc-debug-head">
+        <strong>WalletConnect log</strong>
+        <button className="btn small" onClick={copy}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre>{lines.slice(-80).join('\n') || 'Nothing yet.'}</pre>
+    </section>
+  )
 }

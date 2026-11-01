@@ -52,6 +52,7 @@ import {
   disconnectWallet,
   hasExtension,
   hasWallet,
+  lastUsedWallet,
   onAccountsChanged,
   onChainChanged,
   reconnectWallet,
@@ -59,6 +60,7 @@ import {
   switchWallet,
   type WalletState,
 } from './wallet'
+import { WALLETCONNECT_ID, resetWalletConnect } from './walletConnect'
 import { Logo } from './Logo'
 import { keepConnectionsWarm, preconnect } from './keepWarm'
 import { driveDeviceFor } from './driveDevice'
@@ -315,6 +317,22 @@ function HeroIcon() {
 
 /** First screen before a wallet is connected: what 0GDrive is for, and the way in. */
 function Welcome({ onConnect, busy, error }: { onConnect: () => void; busy: 'reconnecting' | 'connecting' | null; error: string | null }) {
+  // WalletConnect's saved data can get stuck (a private tab worked where the
+  // normal one hung): after an error, or a wait this long, offer to start over
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    setSlow(false)
+    if (!busy) return
+    const t = setTimeout(() => setSlow(true), 8000)
+    return () => clearTimeout(t)
+  }, [busy])
+  const [resetting, setResetting] = useState(false)
+  const startOver = async () => {
+    setResetting(true)
+    await resetWalletConnect()
+    location.reload()
+  }
+  const offerStartOver = lastUsedWallet() === WALLETCONNECT_ID && (!!error || slow)
   return (
     <section className="hero welcome" aria-labelledby="welcome-title">
       <HeroIcon />
@@ -334,8 +352,16 @@ function Welcome({ onConnect, busy, error }: { onConnect: () => void; busy: 'rec
       ) : (
         !isTouchDevice() && <p className="hero-hint">Install a wallet extension such as MetaMask or Rabby to start.</p>
       )}
-      {/* a phone browser: WalletConnect (above) or the wallet app's own browser */}
       {error && <p className="error-text welcome-error" role="alert">⚠ {error}</p>}
+      {offerStartOver && (
+        <p className="welcome-start-over">
+          {slow && !error ? 'Taking too long? ' : ''}
+          <button className="btn small" onClick={startOver} disabled={resetting}>
+            {resetting ? 'Starting over…' : 'Start a new connection'}
+          </button>
+        </p>
+      )}
+      {/* a phone browser: WalletConnect (above) or the wallet app's own browser */}
       {!hasExtension() && isTouchDevice() && <OpenInWallet alternative={hasWallet()} />}
       <p className="hero-hint">Connect to open your drive, or create one in a click.</p>
     </section>

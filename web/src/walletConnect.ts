@@ -115,12 +115,107 @@ export function walletAppLink(): string | null {
   }
 }
 
+// ─── Diagnostics (?debug=wc) ──────────────────────────────────────────
+// A phone has no console to read: with ?debug=wc in the address the page
+// shows WalletConnect's own log and ours (WalletConnectDebug), so a
+// screenshot says where a connection stops.
+
+const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).get('debug') === 'wc'
+const debugLines: string[] = []
+const debugStart = Date.now()
+
+export function wcDebugEnabled(): boolean {
+  return DEBUG
+}
+
+export function wcDebugLog(): readonly string[] {
+  return debugLines
+}
+
+function trace(msg: string): void {
+  if (!DEBUG) return
+  debugLines.push(`${((Date.now() - debugStart) / 1000).toFixed(1)}s ${msg}`)
+  if (debugLines.length > 300) debugLines.shift()
+  listeners.forEach((l) => l())
+}
+
+if (DEBUG) {
+  // the library logs through the console
+  for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
+    const original = console[level].bind(console)
+    console[level] = (...args: unknown[]) => {
+      original(...args)
+      trace(`[${level}] ${args.map((a) => (typeof a === 'string' ? a : safeJson(a))).join(' ').slice(0, 400)}`)
+    }
+  }
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return value instanceof Error ? `${value.name}: ${value.message}` : JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+// ─── Starting over ────────────────────────────────────────────────────
+// What WalletConnect saves in this browser can get stuck: on an iPhone
+// (Chrome) connecting hung before any pairing link, while a private tab
+// (nothing saved) worked. "Start a new connection" clears it, only it.
+
+const WC_DB = 'WALLET_CONNECT_V2_INDEXED_DB'
+const WC_STORE = 'keyvaluestorage'
+
+/** Forget everything WalletConnect saved in this browser (the next connect pairs from scratch). */
+export async function resetWalletConnect(): Promise<void> {
+  trace('reset: clearing saved WalletConnect data')
+  try {
+    // older versions kept it in localStorage
+    for (const key of Object.keys(localStorage)) if (key.startsWith('wc@')) localStorage.removeItem(key)
+  } catch {
+    // not available: nothing saved there
+  }
+  rememberApp(null)
+  await new Promise<void>((resolve) => {
+    // a stuck database mustn't hold the reset either
+    const done = setTimeout(resolve, 3000)
+    const finish = () => {
+      clearTimeout(done)
+      resolve()
+    }
+    try {
+      const open = indexedDB.open(WC_DB)
+      // no database yet: nothing to clear (and don't create one)
+      open.onupgradeneeded = () => open.transaction?.abort()
+      open.onerror = finish
+      open.onblocked = finish
+      open.onsuccess = () => {
+        const db = open.result
+        if (!db.objectStoreNames.contains(WC_STORE)) {
+          db.close()
+          return finish()
+        }
+        const tx = db.transaction(WC_STORE, 'readwrite')
+        tx.objectStore(WC_STORE).clear()
+        tx.oncomplete = tx.onerror = tx.onabort = () => {
+          trace(`reset: saved data cleared (${tx.error ? `error ${tx.error.message}` : 'ok'})`)
+          db.close()
+          finish()
+        }
+      }
+    } catch {
+      finish()
+    }
+  })
+}
+
 // ─── The client ───────────────────────────────────────────────────────
 
 let client: UniversalProvider | null = null
 let loading: Promise<UniversalProvider> | null = null
 let defaultChain = NETWORKS[0].chainId
 let cancelConnect: (() => void) | null = null
+let linkTimer: ReturnType<typeof setTimeout> | undefined
 
 const handlers = new Map<string, Set<(arg: never) => void>>()
 const emit = (event: string, arg: unknown) => handlers.get(event)?.forEach((h) => h(arg as never))
@@ -131,14 +226,26 @@ export function setWalletConnectNetwork(network: NetworkConfig): void {
 }
 
 const INIT_TIMEOUT_MS = 20_000
+// a pairing link normally comes within a second or two
+const LINK_TIMEOUT_MS = 20_000
+
+/** WalletConnect itself didn't get going: "Start a new connection" is the way out. */
+export const WC_STUCK = 'WC_STUCK'
+
+function stuck(message: string): Error {
+  trace(`stuck: ${message}`)
+  return Object.assign(new Error(message), { code: WC_STUCK })
+}
 
 function load(): Promise<UniversalProvider> {
   loading ??= (async () => {
+    trace('loading the WalletConnect library')
     const { default: Provider } = await import('@walletconnect/universal-provider')
+    trace('starting WalletConnect')
     const init = Provider.init({
       projectId: PROJECT_ID,
       telemetryEnabled: false,
-      logger: 'error',
+      logger: DEBUG ? 'debug' : 'error',
       metadata: {
         name: '0GDrive',
         description: 'Your encrypted drive on 0G Storage',
@@ -149,10 +256,20 @@ function load(): Promise<UniversalProvider> {
       },
     })
     const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('WalletConnect didn’t answer. Check your connection and try again.')), INIT_TIMEOUT_MS)
+      setTimeout(() => reject(stuck('WalletConnect didn’t start.')), INIT_TIMEOUT_MS)
     )
     const p = await Promise.race([init, timeout])
-    p.on('display_uri', (uri: string) => setState({ uri }))
+    const s = p.session
+    trace(s ? `started; saved session with ${s.peer.metadata.name}, chains ${chainsOf(s.namespaces).join(' ')}, expires ${new Date(s.expiry * 1000).toISOString()}` : 'started; no saved session')
+    const relayer = p.client?.core.relayer
+    relayer?.on('relayer_connect', () => trace('relay connected'))
+    relayer?.on('relayer_disconnect', () => trace('relay disconnected'))
+    relayer?.on('relayer_error', (e: unknown) => trace(`relay error ${safeJson(e)}`))
+    p.on('display_uri', (uri: string) => {
+      trace('pairing link ready')
+      clearTimeout(linkTimer)
+      setState({ uri })
+    })
     p.on('accountsChanged', (accounts: string[]) => emit('accountsChanged', accounts))
     p.on('chainChanged', (chain: string | number) => {
       // the provider also reports its own default-chain bookkeeping
@@ -160,6 +277,7 @@ function load(): Promise<UniversalProvider> {
     })
     // ended in the wallet: like an extension revoking this site
     p.on('session_delete', () => {
+      trace('session ended by the wallet')
       setState({ peer: null })
       emit('accountsChanged', [])
     })
@@ -168,7 +286,10 @@ function load(): Promise<UniversalProvider> {
     setState({ peer: p.session?.peer.metadata.name ?? null })
     return p
   })()
-  loading.catch(() => (loading = null))
+  loading.catch((e) => {
+    trace(`start failed: ${safeJson(e)}`)
+    loading = null
+  })
   return loading
 }
 
@@ -179,8 +300,13 @@ async function connect(p: UniversalProvider): Promise<void> {
   const cancelled = new Promise<never>((_, reject) => {
     cancelConnect = () => reject(Object.assign(new Error('Connection cancelled'), { code: 4001 }))
   })
+  const noLink = new Promise<never>((_, reject) => {
+    linkTimer = setTimeout(() => reject(stuck('WalletConnect didn’t start the connection.')), LINK_TIMEOUT_MS)
+  })
+  trace('pairing: asking for a link')
   try {
     await Promise.race([
+      noLink,
       p.connect({
         optionalNamespaces: {
           eip155: {
@@ -194,9 +320,11 @@ async function connect(p: UniversalProvider): Promise<void> {
       cancelled,
     ])
   } finally {
+    clearTimeout(linkTimer)
     cancelConnect = null
     setState({ uri: null, waitingFor: null })
   }
+  trace(`paired with ${p.session?.peer.metadata.name}, chains ${chainsOf(p.session?.namespaces).join(' ')}`)
   useAppChain(p)
   const peer = p.session?.peer.metadata.name ?? 'Wallet'
   setState({ peer })
@@ -225,9 +353,15 @@ async function disconnect(p: UniversalProvider): Promise<void> {
   setState({ peer: null })
 }
 
+type Namespaces = NonNullable<UniversalProvider['session']>['namespaces']
+
+function chainsOf(namespaces: Namespaces | undefined): string[] {
+  return Object.values(namespaces ?? {}).flatMap((ns) => ns.chains ?? ns.accounts.map((a) => a.split(':').slice(0, 2).join(':')))
+}
+
 function chainOf(p: UniversalProvider): string {
   // the session may list chains in the wallet's order: ask for the app's
-  const approved = Object.values(p.session?.namespaces ?? {}).flatMap((ns) => ns.chains ?? ns.accounts.map((a) => a.split(':').slice(0, 2).join(':')))
+  const approved = chainsOf(p.session?.namespaces)
   const want = `eip155:${defaultChain}`
   return approved.includes(want) ? want : (approved[0] ?? want)
 }
@@ -239,7 +373,20 @@ function useAppChain(p: UniversalProvider): void {
   if (chainOf(p) === `eip155:${defaultChain}`) p.setDefaultChain(chainOf(p))
 }
 
-async function request({ method, params }: { method: string; params?: unknown[] }): Promise<unknown> {
+async function request(args: { method: string; params?: unknown[] }): Promise<unknown> {
+  if (!DEBUG) return answer(args)
+  trace(`→ ${args.method}`)
+  try {
+    const result = await answer(args)
+    trace(`← ${args.method} ${safeJson(result).slice(0, 80)}`)
+    return result
+  } catch (e) {
+    trace(`← ${args.method} failed: ${safeJson(e)}`)
+    throw e
+  }
+}
+
+async function answer({ method, params }: { method: string; params?: unknown[] }): Promise<unknown> {
   const p = await load()
   switch (method) {
     case 'eth_accounts':
