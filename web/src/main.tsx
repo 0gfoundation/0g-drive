@@ -4,6 +4,7 @@ import { setNodeRelay } from '@0gdrive/core'
 import App from './App'
 import { ErrorBoundary } from './ErrorBoundary'
 import { WalletPicker } from './WalletPicker'
+import { WalletConnectDialog } from './WalletConnectDialog'
 import './style.css'
 
 // Storage nodes speak plain HTTP, which an https page may not call: route
@@ -16,6 +17,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <App />
       <WalletPicker />
+      <WalletConnectDialog />
     </ErrorBoundary>
   </React.StrictMode>
 )

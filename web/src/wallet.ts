@@ -1,5 +1,7 @@
 import { ethers } from 'ethers'
 import type { NetworkConfig } from '@0gdrive/core'
+import { isTouchDevice } from './OpenInWallet'
+import { WALLETCONNECT_ID, setWalletConnectNetwork, walletConnectAvailable, walletConnectOption } from './walletConnect'
 
 /** An EIP-1193 wallet provider (an extension's `window.ethereum`). */
 export interface Eip1193 {
@@ -26,10 +28,12 @@ export interface WalletState {
 // Each installed extension announces itself, so with several installed the
 // user picks one instead of getting whichever claimed window.ethereum.
 // Wallets that don't announce still work through window.ethereum.
+// WalletConnect (a wallet app on a phone) is listed after them.
 
 export interface WalletOption {
-  id: string // EIP-6963 rdns (e.g. io.metamask), or 'injected'
+  id: string // EIP-6963 rdns (e.g. io.metamask), 'injected', or 'walletconnect'
   name: string
+  hint?: string // a line under the name
   icon?: string // data:image/… URI from the wallet itself
   provider: Eip1193
 }
@@ -58,7 +62,13 @@ function rebuild(notify = true): void {
     list.push({ id: 'injected', name: window.ethereum.isMetaMask ? 'MetaMask' : 'Browser wallet', provider: window.ethereum })
   }
   const last = lastUsedWallet()
-  snapshot = list.sort((a, b) => Number(b.id === last) - Number(a.id === last) || a.name.localeCompare(b.name))
+  list.sort((a, b) => Number(b.id === last) - Number(a.id === last) || a.name.localeCompare(b.name))
+  if (walletConnectAvailable()) {
+    const wc = { ...walletConnectOption, hint: isTouchDevice() ? 'MetaMask, Trust, Binance… app' : 'Scan with your phone’s wallet' }
+    if (last === WALLETCONNECT_ID) list.unshift(wc)
+    else list.push(wc)
+  }
+  snapshot = list
   if (notify) changeListeners.forEach((l) => l())
 }
 
@@ -79,11 +89,16 @@ if (typeof window !== 'undefined') {
   rebuild()
 }
 
-/** Installed wallets, the last-used one first. */
+/** Installed wallets, the last-used one first, then WalletConnect. */
 export function walletOptions(): WalletOption[] {
   // a wallet that injects window.ethereum after this module loaded
-  if (snapshot.length === 0 && typeof window !== 'undefined' && window.ethereum) rebuild(false)
+  if (!hasExtension() && typeof window !== 'undefined' && window.ethereum) rebuild(false)
   return snapshot
+}
+
+/** A wallet in this browser (extension, or a wallet app's own browser). */
+export function hasExtension(): boolean {
+  return snapshot.some((o) => o.id !== WALLETCONNECT_ID)
 }
 
 /** walletOptions() without the late-injection check, for useSyncExternalStore. */
@@ -171,6 +186,7 @@ export async function connectWallet(
   if (!hasWallet()) {
     throw new Error('No Ethereum wallet detected. Install a wallet extension such as MetaMask or Rabby to use 0GDrive.')
   }
+  setWalletConnectNetwork(network)
   const option = await chooseWallet()
   if (!option) return null
   const eth = selectWallet(option)
@@ -213,6 +229,7 @@ export async function reconnectWallet(network: NetworkConfig): Promise<WalletSta
   }
   const last = lastUsedWallet()
   if (!last) return null
+  setWalletConnectNetwork(network)
   let option = walletOptions().find((o) => o.id === last)
   if (!option) {
     // extensions announce themselves just after the page loads
@@ -234,6 +251,7 @@ export async function reconnectWallet(network: NetworkConfig): Promise<WalletSta
  * same wallet and account (nothing to do).
  */
 export async function switchWallet(network: NetworkConfig, current: string): Promise<boolean> {
+  setWalletConnectNetwork(network)
   const option = await chooseWallet()
   if (!option) return false
   let accounts: string[]

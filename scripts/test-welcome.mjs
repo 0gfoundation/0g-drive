@@ -7,6 +7,7 @@
 //
 //   node scripts/test-welcome.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { getNetworkConfig } from '../core/dist/index.js'
 
@@ -81,7 +82,7 @@ try {
     const s = await state(page)
     check('welcome: tagline is the page’s only h1, with Get started', s.h1.length === 1 && s.h1[0] === TAGLINE && s.cta, JSON.stringify(s))
     check('welcome: no disabled upload box or empty "My drive" before connecting', !s.dropzone && !s.files, JSON.stringify(s))
-    await page.getByRole('button', { name: 'Get started' }).click()
+    await connectExtension(page, page.getByRole('button', { name: 'Get started' }))
     await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
     const after = await state(page)
     check('Get started connects; the panel gives way to the drive', !after.welcome && after.dropzone && after.files, JSON.stringify(after))
@@ -92,7 +93,10 @@ try {
     await page.locator('.welcome').waitFor()
     const s = await state(page)
     const hint = await page.locator('.welcome').textContent()
-    check('no wallet: install hint instead of the button', !s.cta && /Install a wallet extension/.test(hint), JSON.stringify(s))
+    // built with a WalletConnect project ID: a phone wallet is the way in
+    const wc = /phone wallet/.test(hint)
+    check(wc ? 'no wallet: "Get started with a phone wallet" (WalletConnect)' : 'no wallet: install hint instead of the button',
+      wc ? s.cta : !s.cta && /Install a wallet extension/.test(hint), JSON.stringify(s))
     await context.close()
   }
   {

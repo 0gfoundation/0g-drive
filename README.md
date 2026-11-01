@@ -59,7 +59,7 @@ npm run net-check        # verify 0G indexer endpoints are reachable (no wallet 
 npm run dev              # build core + start the drive (:5173) and the assistant (:3000)
 ```
 
-Then open <http://localhost:5173> in a browser with a wallet extension installed (MetaMask, Rabby or any other Ethereum wallet). You'll need testnet 0G to upload: get some at <https://faucet.0g.ai> (0.1 0G per day per wallet).
+Then open <http://localhost:5173> in a browser with a wallet extension installed (MetaMask, Rabby or any other Ethereum wallet), or connect a phone wallet with WalletConnect (set `VITE_WALLETCONNECT_PROJECT_ID` in `web/.env.local`, from dashboard.reown.com). You'll need testnet 0G to upload: get some at <https://faucet.0g.ai> (0.1 0G per day per wallet).
 
 ### Scripts
 
@@ -84,6 +84,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `node scripts/test-duplicate-names.mjs` | uploading a name already in the folder: asked first with an editable name per file ("name (1)" suggested; taken, empty, "/" and repeated names refused), Replace (old to trash, one transaction) / Skip / Cancel; restore into a taken name; phone layout |
 | `node scripts/test-hash-workers.mjs` | upload hashing ready before the first upload: workers start with the drive, small files hashed on the page, no start-up wait (spends nothing on storage) |
 | `node scripts/test-open-in-wallet.mjs` | phones with no wallet: links that open the drive in MetaMask, Trust, OKX or Coinbase Wallet's browser, at 390 px; desktop unchanged (spends nothing) |
+| `node scripts/test-walletconnect.mjs` | WalletConnect with a scripted wallet over the real relay: QR code on a laptop, wallet-app links on a phone (390 px), recovery setup and an upload approved in the wallet, reconnect after reload, same drive from a browser wallet, disconnect ends the session, no analytics (needs `VITE_WALLETCONNECT_PROJECT_ID`; spends a little) |
 | `node scripts/test-file-icons.mjs` | file-type icons: extension and type → family, the extension strip fits, a colour per family (offline, spends nothing) |
 | `node scripts/test-model-error.mjs` | smart search models that fail to load say why on the page and in Activity (memory / storage / download / WebAssembly), not only in a tooltip |
 | `uv run --with onnx==1.17.0 --with numpy python scripts/models/prune-text-model.py ORIG OUT` | trim the search text model to English + Chinese tokens (see docs/decisions.md) |

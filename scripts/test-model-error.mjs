@@ -9,6 +9,7 @@
 //
 //   node scripts/test-model-error.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -109,7 +110,7 @@ try {
   }
 
   await page.goto(base)
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
   const line = page.locator('.sec-item', { hasText: 'Models failed to load' })

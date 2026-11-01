@@ -40,13 +40,16 @@ export function isTouchDevice(): boolean {
   }
 }
 
-export function OpenInWallet() {
+/** `alternative`: shown under WalletConnect's "Connect your wallet app", as the other way in. */
+export function OpenInWallet({ alternative = false }: { alternative?: boolean }) {
   const [copied, setCopied] = useState(false)
   const url = window.location.href
   return (
     <div className="open-in-wallet">
       <p className="hero-hint">
-        Phone browsers have no wallet built in. Open 0GDrive in your wallet app's browser instead:
+        {alternative
+          ? 'Or open 0GDrive in your wallet app’s browser:'
+          : 'Phone browsers have no wallet built in. Open 0GDrive in your wallet app’s browser instead:'}
       </p>
       <div className="wallet-apps">
         {walletAppLinks(url).map((w) => (

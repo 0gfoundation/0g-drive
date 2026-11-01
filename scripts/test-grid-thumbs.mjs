@@ -3,6 +3,7 @@
 // sharp preview; then reloads again and checks they come back from this
 // device with no downloads.   N=8 node scripts/test-grid-thumbs.mjs
 import { chromium } from 'playwright'
+import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -137,7 +138,7 @@ const tiles = () => page.$$eval('.grid .tile', (els) => els.map((e) => {
 try {
   await page.goto(base)
   await page.evaluate(() => localStorage.setItem('0gdrive:layout', 'grid'))
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
   step('drive created')

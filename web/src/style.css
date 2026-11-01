@@ -2069,10 +2069,77 @@ tbody tr:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.wallet-hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .wallet-last {
   font-size: 11px;
   color: var(--accent);
   flex: none;
+}
+
+/* ─── WalletConnect ─────────────────────────────────── */
+
+.wc-dialog {
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.wc-dialog h2,
+.wc-dialog p {
+  margin: 0;
+}
+.wc-dialog .modal-actions {
+  margin-top: 0;
+}
+.wc-qr {
+  display: block;
+  width: min(280px, 100%);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border-radius: 10px;
+}
+.wc-waiting {
+  color: var(--accent);
+}
+.wc-approve {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+.wc-approve .btn {
+  flex: none;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+@media (max-width: 640px) {
+  .wc-approve {
+    width: calc(100vw - 32px);
+  }
+  .wc-approve span {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 /* ─── Welcome (before a wallet is connected) ────────── */

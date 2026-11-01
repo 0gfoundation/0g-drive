@@ -6,8 +6,8 @@ This guide explains how to use each feature and what happens underneath. For the
 
 ## Getting started
 
-1. **Install a wallet.** 0GDrive needs an Ethereum-style browser wallet extension such as MetaMask, Rabby, OKX Wallet or Coinbase Wallet; a Ledger or Trezor works through one of these. Without one the app shows "No Ethereum wallet detected".
-2. **Connect wallet** (top right, or **Get started** on the welcome screen). With more than one wallet installed, choose which one in the "Choose a wallet" list (the last one you used is at the top). Your drive belongs to the account, not to the wallet app: the same account opens it in any of them. The app then switches the wallet to the 0G network it runs on (currently the **0G Galileo testnet**, chain ID 16602); approve the switch if asked.
+1. **Have a wallet.** 0GDrive works with an Ethereum-style browser wallet extension such as MetaMask, Rabby, OKX Wallet or Coinbase Wallet (a Ledger or Trezor works through one of these), or with a wallet app on your phone through **WalletConnect**: choose WalletConnect and scan the QR code with the app (MetaMask, Trust, Binance, Bitget…). Each approval then pops up on your phone.
+2. **Connect wallet** (top right, or **Get started** on the welcome screen). With more than one choice (several extensions, or an extension and WalletConnect), choose in the "Choose a wallet" list (the last one you used is at the top). Your drive belongs to the account, not to the wallet app: the same account opens it in any of them. The app then switches the wallet to the 0G network it runs on (currently the **0G Galileo testnet**, chain ID 16602); approve the switch if asked.
 
    Once connected, the app reconnects by itself next time, without a prompt, as long as the wallet still allows this site. The **⌄** next to your address opens **Switch wallet or account** (pick another wallet app, or another account in yours) and **Disconnect** (this device stops reconnecting until you click Connect again). Switching accounts inside your wallet works too: the app starts over in the new account.
 3. **Get some 0G** for fees. On testnet use the faucet linked in the footer ("Get testnet 0G", https://faucet.0g.ai, 0.1 0G per day). Your balance shows in the header.
@@ -38,7 +38,12 @@ Observed testnet costs: about 0.001 0G per MB uploaded, about 0.0001–0.0015 0G
 
 ## On a phone
 
-Phone browsers have no wallet built in, so on a phone 0GDrive offers to open itself in a wallet app's own browser: **MetaMask**, **Trust Wallet**, **OKX Wallet** or **Coinbase Wallet** (or copy the link and open it in another wallet's browser). The wallet app's browser is separate from your phone's browser: your drive opens there as on a new device (connect, then restore it with your wallet or recovery password). Some wallet apps lock or close their browser when you switch apps; you'll then reconnect when you come back.
+Phone browsers have no wallet built in. Two ways in:
+
+- **Connect your wallet app** (WalletConnect): you stay in Safari or Chrome. Pick your wallet app (**MetaMask**, **Trust Wallet**, **Binance Wallet**, **Bitget Wallet**, or copy the connection link into another one); it opens and asks you to connect; come back to the page. Each approval later works the same way: a bar says "Approve in …" with a button that opens the wallet app.
+- **Open 0GDrive in a wallet app's own browser**: **MetaMask**, **Trust Wallet**, **OKX Wallet** or **Coinbase Wallet** (or copy the link and open it in another wallet's browser).
+
+With the second way, the wallet app's browser is separate from your phone's browser: your drive opens there as on a new device (connect, then restore it with your wallet or recovery password). Some wallet apps lock or close their browser when you switch apps; you'll then reconnect when you come back.
 
 ## Uploading files
 

@@ -76,9 +76,12 @@ try {
   await page.context().close()
 
   page = await open({ viewport: { width: 1280, height: 900 } })
+  // built with a WalletConnect project ID: a phone wallet is the way in
+  const wc = (await page.getByRole('button', { name: 'Get started with a phone wallet' }).count()) === 1
   check(
-    'desktop, no wallet: the install hint, no wallet-app links',
-    (await page.getByText('Install a wallet extension').count()) > 0 && (await page.locator('.wallet-apps').count()) === 0
+    wc ? 'desktop, no wallet: "Get started with a phone wallet", WalletConnect in the banner, no wallet-app links' : 'desktop, no wallet: the install hint, no wallet-app links',
+    (wc ? (await page.locator('.banner.warn', { hasText: 'WalletConnect' }).count()) === 1 : (await page.getByText('Install a wallet extension').count()) > 0) &&
+      (await page.locator('.wallet-apps').count()) === 0
   )
   check('no page errors', errors.length === 0, errors.join('; '))
 } catch (err) {

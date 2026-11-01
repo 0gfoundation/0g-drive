@@ -2,6 +2,7 @@
 // every request in between (page network + injected-wallet calls).
 // Usage: node scripts/time-wallet-prompt-browser.mjs [url]
 import { chromium } from 'playwright'
+import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -146,7 +147,7 @@ async function timed(label, act) {
 
 try {
   await page.goto(base)
-  await page.getByRole('button', { name: 'Connect wallet' }).click()
+  await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
   await newFolder('Docs')
