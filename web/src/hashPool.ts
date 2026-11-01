@@ -1,8 +1,10 @@
 // Upload hashing on several CPU cores: segment ranges (core uploadBatch's
 // SegmentHasher jobs) go to a few web workers, so a big file or several
-// files hash in parallel and the page stays responsive. Workers start on
-// first use and stay for the session; without worker support the hashing
-// runs on this thread, as in core.
+// files hash in parallel and the page stays responsive. Workers start when
+// the drive opens (prestartHashWorkers) — starting them on the first upload
+// cost a user 1.8–5.1 s before the wallet prompt — and stay for the
+// session; without worker support the hashing runs on this thread, as in
+// core. (Small files never come here: core hashes them itself.)
 
 import type { HashedRange, SegmentHasher } from '@0gdrive/core'
 import { hashSegments, type StreamSource } from '@0gdrive/core/merkle'
@@ -86,6 +88,11 @@ function pump(): void {
     busy.set(w, job)
     w.postMessage(job)
   }
+}
+
+/** Start the workers now, while the user looks at their drive. */
+export function prestartHashWorkers(): void {
+  start()
 }
 
 export const hashInWorkers: SegmentHasher = (src, from, to) => {
