@@ -64,7 +64,7 @@ Every file gets its own random key; the file is encrypted with it before upload,
 - Storage on 0G is **immutable**: "deleting" removes the file from your drive's listings, but the encrypted data stays on the network until its storage period ends. Nobody can read it without your keys.
 - **Closing the page during a change.** Once you approve a change, its data still has to reach 0G Storage (a few seconds). If you try to close the page in that window, the browser asks first. If it closes anyway, the next time you open the drive in the same browser the change is finished automatically, with no new approval or fee ("Interrupted change" in Activity). Opened elsewhere (another device, or after clearing browser data), the change can't be finished: it shows as undone, and Activity says so; just do it again.
 - **⟳ Sync** reloads the drive from the chain — useful after using the drive on another device.
-- **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails.
+- **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails. Other files show an icon for their type (PDF, document, spreadsheet, presentation, text, code, archive, audio, video, ebook, design, font, app); in the grid it also shows the extension, e.g. “PPTX”.
 
 ## Preview and download
 

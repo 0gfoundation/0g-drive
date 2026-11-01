@@ -62,6 +62,7 @@ import { Logo } from './Logo'
 import { keepConnectionsWarm, preconnect } from './keepWarm'
 import { driveDeviceFor } from './driveDevice'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
+import { FileIcon } from './fileIcons'
 import { hashInWorkers, prestartHashWorkers } from './hashPool'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
 import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
@@ -334,54 +335,7 @@ function Welcome({ onConnect }: { onConnect: () => void }) {
   )
 }
 
-// ─── File type icons (inline SVG, no deps) ────────────────────────────
-
-const ICON_COLORS: Record<string, string> = {
-  image: '#4da3ff',
-  video: '#b07cff',
-  audio: '#4ade80',
-  pdf: '#ff6b6b',
-  doc: '#5eead4',
-  sheet: '#facc15',
-  code: '#94a3b8',
-  archive: '#fb923c',
-  generic: '#8b98a5',
-}
-
-function fileKind(meta: { mime: string; name: string }): keyof typeof ICON_COLORS {
-  const m = meta.mime
-  const ext = meta.name.split('.').pop()?.toLowerCase() ?? ''
-  if (m.startsWith('image/')) return 'image'
-  if (m.startsWith('video/')) return 'video'
-  if (m.startsWith('audio/')) return 'audio'
-  if (m === 'application/pdf' || ext === 'pdf') return 'pdf'
-  if (['csv', 'xls', 'xlsx', 'numbers'].includes(ext) || m.includes('spreadsheet')) return 'sheet'
-  if (['zip', 'tar', 'gz', 'rar', '7z'].includes(ext) || m.includes('zip') || m.includes('compressed')) return 'archive'
-  if (['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'go', 'c', 'h', 'cpp', 'sh', 'json', 'yml', 'yaml', 'toml'].includes(ext) || m.includes('json')) return 'code'
-  if (['doc', 'docx', 'txt', 'md', 'rtf', 'pages'].includes(ext) || m.startsWith('text/')) return 'doc'
-  return 'generic'
-}
-
-function FileIcon({ meta }: { meta: { mime: string; name: string } }) {
-  const kind = fileKind(meta)
-  const c = ICON_COLORS[kind]
-  const glyph =
-    kind === 'image' ? 'M4 5h16v14H4zM4 15l4-4 3 3 4-4 5 5' :
-    kind === 'video' ? 'M4 5h12v14H4zM16 10l4-2v8l-4-2' :
-    kind === 'audio' ? 'M9 17V7l8-2v10M9 17a2 2 0 11-4 0 2 2 0 014 0zM17 15a2 2 0 11-4 0 2 2 0 014 0z' :
-    kind === 'pdf' ? 'M7 3h7l4 4v14H7zM14 3v4h4' :
-    kind === 'sheet' ? 'M7 3h7l4 4v14H7zM14 3v4h4M7 10h10M7 14h10M11 8v10' :
-    kind === 'code' ? 'M9 6L4 12l5 6M15 6l5 6-5 6' :
-    kind === 'archive' ? 'M6 3h12v4H6zM7 7v14h10V7M10 11h4M10 15h4' :
-    kind === 'doc' ? 'M7 3h7l4 4v14H7zM14 3v4h4M9 12h6M9 16h6' :
-    'M7 3h7l4 4v14H7zM14 3v4h4'
-  return (
-    <svg className="ficon" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.6"
-      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={glyph} />
-    </svg>
-  )
-}
+// ─── Action icons (inline SVG, no deps; file-type icons: fileIcons.tsx) ──
 
 const ACTION_ICONS = {
   download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
@@ -2706,7 +2660,7 @@ export default function App() {
                         load={loadBytes}
                         className="tile-thumb"
                         hiRes
-                        fallback={<span className="tile-icon"><FileIcon meta={f} /></span>}
+                        fallback={<span className="tile-icon"><FileIcon meta={f} large /></span>}
                       />
                       {f.mime.startsWith('video/') && <span className="tile-badge" aria-hidden="true">▶</span>}
                     </button>
