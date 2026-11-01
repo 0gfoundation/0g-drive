@@ -1,13 +1,18 @@
 // ONNX Runtime's WebAssembly memory is capped (web/src/ai/wasmMemory.ts), in
-// headless Chromium against the dev server (npm run dev) or a deployment:
+// headless Chromium:
 //   - ORT asks for 4 GB of room and gets 1 GB; the text model, the photo
-//     models, indexing and searches work inside it, with the peak reported
+//     models, indexing and searches work inside it, with the peak reported.
+//     Against the dev server (npm run dev) through the app's AI client; against
+//     a deployment (preview, staging) by starting its built AI worker directly.
+//     That worker asks the page for the text model from 0G, which this test
+//     declines, so there it loads the full text model from Hugging Face (the
+//     app's fallback).
 //   - dev server only: a tab with room for 1 GB but not 4 GB, as an iPhone
 //     tab gets after some refreshes (simulated: reservations over 1 GB are
 //     refused with WebKit's "RangeError: Out of memory"). Without the cap
 //     the models fail with the error users saw; with it they load.
 //
-//   node scripts/test-ai-memory.mjs [http://localhost:5173]
+//   node scripts/test-ai-memory.mjs [http://localhost:5173 | https://drive-staging.0g.ai]
 import { chromium } from 'playwright'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -53,6 +58,25 @@ async function ortMemory(page) {
   return null
 }
 
+/** The built AI worker's path: an assets/ai.worker-*.js named in the page's scripts (followed two chunks deep). */
+async function builtWorkerUrl(base) {
+  const seen = new Set()
+  let files = [...(await (await fetch(base)).text()).matchAll(/src="\/?(assets\/[\w.-]+\.js)"/g)].map((m) => m[1])
+  for (let depth = 0; depth < 3 && files.length; depth++) {
+    const next = []
+    for (const f of files) {
+      if (seen.has(f)) continue
+      seen.add(f)
+      const text = await (await fetch(new URL('/' + f, base))).text()
+      const w = text.match(/ai\.worker-[\w-]+\.js/)
+      if (w) return '/assets/' + w[0]
+      for (const m of text.matchAll(/(?:assets\/)?([\w-]+-[\w-]{8}\.js)/g)) next.push('assets/' + m[1])
+    }
+    files = next
+  }
+  return null
+}
+
 const warm = (page) =>
   page.evaluate(async () => {
     const client = await import(location.origin + '/src/ai/client.ts').catch(() => null)
@@ -64,7 +88,7 @@ const warm = (page) =>
   })
 
 // ---- 1. the real thing: asked 4 GB, given 1 GB, everything fits
-{
+if (dev) {
   const { context, page } = await open()
   const w = await warm(page)
   check('the text model loads', w.ok === true, w.error)
@@ -90,6 +114,50 @@ const warm = (page) =>
   check('photo models index photos and searches find them inside the cap', r.clip === 3 && r.cat === 'cats.jpg' && r.budget === 'budget.txt', JSON.stringify(r))
   const m2 = await ortMemory(page)
   check('peak use leaves at least half the cap free', m2 && m2.mb <= (CAP * 64) / 1024 / 2, `${m2?.mb.toFixed(0)} MB of ${(CAP * 64) / 1024} MB`)
+  await context.close()
+} else {
+  const { context, page } = await open()
+  const worker = await builtWorkerUrl(base)
+  check('the built AI worker is found', !!worker, worker ?? 'no ai.worker-*.js among the assets')
+  const r = worker
+    ? await page.evaluate(
+        async ({ url, IMG }) => {
+          const w = new Worker(url, { type: 'module' })
+          let next = 1
+          const waiting = new Map()
+          w.onmessage = (e) => {
+            const m = e.data
+            // the text model from 0G needs the page's storage client: decline, so the full one is used
+            if (m.type === 'fetch0g') w.postMessage({ type: 'fetch0gResult', id: m.id, error: 'declined by the test' })
+            if (m.type === 'result' || m.type === 'error') waiting.get(m.id)?.(m)
+          }
+          const call = (req) => new Promise((resolve) => { const id = next++; waiting.set(id, resolve); w.postMessage({ ...req, id }) })
+          const warm = await call({ op: 'warm' })
+          const fb = async (n, type) => new Blob([await (await fetch(IMG + n)).arrayBuffer()], { type })
+          const cat = await call({ op: 'indexPhoto', name: 'cats.jpg', image: await fb('cats.jpg', 'image/jpeg') })
+          const beach = await call({ op: 'indexPhoto', name: 'beach.png', image: await fb('beach.png', 'image/png') })
+          const q = await call({ op: 'query', text: 'a cat', photos: true })
+          return {
+            warm: warm.error ?? warm.result,
+            catTags: cat.result?.g ?? cat.error,
+            beachTags: beach.result?.g ?? beach.error,
+            dims: [q.result?.vec?.length, q.result?.clip?.length],
+          }
+        },
+        { url: worker, IMG }
+      )
+    : null
+  if (r) {
+    check('the text model loads', r.warm === true, String(r.warm))
+    const m = await ortMemory(page)
+    check('ORT asks for 4 GB of room and gets 1 GB', m?.asked === 65536 && m?.given === CAP, JSON.stringify(m))
+    check(
+      'photo models tag photos and embed a photo search inside the cap',
+      /cat/.test(String(r.catTags)) && /beach|sea|ocean/.test(String(r.beachTags)) && r.dims[0] === 384 && r.dims[1] === 512,
+      JSON.stringify(r)
+    )
+    check('peak use leaves at least half the cap free', m && m.mb <= (CAP * 64) / 1024 / 2, `${m?.mb.toFixed(0)} MB of ${(CAP * 64) / 1024} MB`)
+  }
   await context.close()
 }
 
