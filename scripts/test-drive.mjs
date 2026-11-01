@@ -305,6 +305,24 @@ check("A saw B's rename and B's file: Inbox2 holds both, no Inbox",
   ['h1', 'h2'].every((id) => state.folders.get('Inbox2')?.files.some((f) => f.id === id)),
   `${state.paths.join(', ')} | Inbox2: ${state.folders.get('Inbox2')?.files.map((f) => f.name).join(', ')}`)
 
+console.log('\n— same names: another device took the name; replacing moves the old one to trash —')
+// B adds notes.txt; A, which hasn't seen it, adds "Notes.TXT": stored as "Notes (1).TXT"
+await deviceB.putFileRecords('Inbox2', [fileMeta('n1', 'notes.txt')])
+const late = fileMeta('n2', 'Notes.TXT')
+await deviceA.putFileRecords('Inbox2', [late])
+// replacing h1 (from-b.txt) with a new file of that name: one transaction, h1 in trash
+await txsSince()
+await deviceA.putFileRecords('Inbox2', [fileMeta('n3', 'from-b.txt')], ['h1'])
+check('replace: one transaction', (await txsSince()) === 1)
+store = newStore()
+state = await store.loadDrive()
+const inbox2 = state.folders.get('Inbox2')?.files ?? []
+check('a name taken meanwhile gets "(1)"; replacing moves the old record to trash',
+  late.name === 'Notes (1).TXT' && inbox2.some((f) => f.id === 'n2' && f.name === 'Notes (1).TXT') &&
+  !inbox2.some((f) => f.id === 'h1') && inbox2.some((f) => f.id === 'n3') &&
+  state.trash?.files.some((f) => f.id === 'h1' && f.originalPath === 'Inbox2'),
+  inbox2.map((f) => `${f.id}:${f.name}`).join(', '))
+
 // ── 10. Cost report ───────────────────────────────────────────────────
 const balanceAfter = await provider.getBalance(wallet.address)
 console.log(`\ndrive key:  ${masterKeyHex}`)
