@@ -6,6 +6,7 @@
 //     same-named folder (any case) in the destination is refused; a new
 //     destination folder is made in the picker; ONE transaction; the open
 //     folder follows
+//   every transaction carries the app's gas limit, using ≤ 90 % of it
 //   files: two selected files can't go where A.TXT is (any case); moved to
 //     Docs in ONE transaction; a row's Move opens the picker for that file
 //   phone width: the picker, file rows (5 actions) and tree rows fit
@@ -73,6 +74,7 @@ await page.exposeFunction('__eth', async (method, params) => {
           value: tx.value ? BigInt(tx.value) : 0n,
           gasLimit: tx.gas ? BigInt(tx.gas) : undefined,
         })
+        sentTxs.push({ hash: sent.hash, gasFromApp: !!tx.gas })
         return { ok: sent.hash }
       }
       default:
@@ -106,6 +108,7 @@ const opt = (label) => picker.getByRole('option', { name: new RegExp(`^${label}\
 const moveHere = picker.getByRole('button', { name: 'Move here' })
 const pickerError = () => picker.locator('.error-text').allTextContents().then((t) => t.join(' | '))
 let promptAnswer = ''
+const sentTxs = [] // { hash, gasFromApp }
 page.on('dialog', (d) => d.accept(promptAnswer))
 const newFolder = async (name) => {
   promptAnswer = name
@@ -273,6 +276,19 @@ try {
   check('after reload: Docs/2026/Reports kept, Work empty of it, files in Docs and they open',
     tree.includes('Docs/2026') && !tree.includes('Work/Reports') && docsFiles.join() === 'a.txt,b.txt' && text.startsWith('Alpha'),
     JSON.stringify({ tree, docsFiles }))
+  // every transaction carries the app's gas limit, with room to spare (a
+  // bare estimate once left ~3 % and a batch ran out of gas on chain). 0G
+  // reports at least 80 % of the limit as used, so ≤ 90 % means headroom.
+  const gas = []
+  for (const t of sentTxs) {
+    const [r, tx] = await Promise.all([provider.getTransactionReceipt(t.hash), provider.getTransaction(t.hash)])
+    gas.push({ app: t.gasFromApp, ok: r.status === 1, used: Number(r.gasUsed) / Number(tx.gasLimit) })
+  }
+  check(
+    'every transaction had the app’s gas limit and used at most 90 % of it',
+    gas.length > 0 && gas.every((g) => g.app && g.ok && g.used <= 0.9),
+    gas.map((g) => `${g.app ? '' : 'no app gas · '}${g.ok ? '' : 'FAILED · '}${(g.used * 100).toFixed(0)}%`).join(', ')
+  )
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {

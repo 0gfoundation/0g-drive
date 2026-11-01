@@ -650,6 +650,36 @@ export function storagePrice(network: NetworkConfig, maxAgeMs = PRICE_MAX_AGE_MS
 }
 
 /**
+ * Gas headroom over the estimate. A batchSubmit's cost depends on the
+ * chain's state when it's mined: sent with a bare estimate as the limit,
+ * transactions used 92–99 % of it, and one ran out of gas in an inner call
+ * (98.6 %, the 63/64 mark) and failed on chain, gas spent. But 0G charges
+ * at least 80 % of the limit (a 21,000-gas transfer sent with a 100,000
+ * limit paid for 80,000), so headroom isn't free: at 1.2 the charge floor
+ * is 0.96 × the estimate — about what transactions use anyway — while
+ * leaving 20 % against running out.
+ */
+const GAS_MARGIN = 1.2
+
+/**
+ * The transaction's gas limit: our estimate (over the app's warm RPC
+ * connection) plus GAS_MARGIN. Undefined if the estimate fails — the
+ * wallet then estimates, and shows any error itself.
+ */
+async function gasLimit(
+  provider: ethers.JsonRpcProvider,
+  from: string,
+  tx: { to: string; data: string; value: bigint }
+): Promise<bigint | undefined> {
+  try {
+    const est = await provider.estimateGas({ from, ...tx })
+    return (est * BigInt(Math.round(GAS_MARGIN * 100))) / 100n
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Nudge a browser wallet awake as an action starts. MetaMask-style
  * extensions run in a background worker the browser suspends after ~30 s
  * idle; the first request then waits for it to start. This read-only call
@@ -768,26 +798,32 @@ export async function uploadBatch(
     await opts.beforeSend(writes)
     addActionTiming('preparing', performance.now() - started)
   }
-  all.forEach((_, i) => onItem(i, 'approve'))
-  opts.onProgress?.('Waiting for wallet approval…')
   const tx = {
     to: network.flowAddress,
     data: flow.interface.encodeFunctionData('batchSubmit', [all.map((p) => p.submission)]),
     value: fee,
   }
-  // A browser wallet gets the transaction as is: ethers' JsonRpcSigner
-  // would first ask it for the block number and a gas estimate (two
-  // round trips through the extension, ~0.9 s) that the wallet then
-  // works out again itself before its prompt.
+  const gas = await timed('gas', gasLimit(provider, submitter, tx))
+  all.forEach((_, i) => onItem(i, 'approve'))
+  opts.onProgress?.('Waiting for wallet approval…')
+  // A browser wallet gets the transaction as is, with our gas limit:
+  // ethers' JsonRpcSigner would first ask it for the block number and a
+  // gas estimate (two round trips through the extension, ~0.9 s).
   const unsent = trackUnstored()
   try {
     const sent = {
       hash:
         signer instanceof ethers.JsonRpcSigner
           ? ((await signer.provider.send('eth_sendTransaction', [
-              { from: submitter, to: tx.to, data: tx.data, value: ethers.toQuantity(tx.value) },
+              {
+                from: submitter,
+                to: tx.to,
+                data: tx.data,
+                value: ethers.toQuantity(tx.value),
+                ...(gas ? { gas: ethers.toQuantity(gas) } : {}),
+              },
             ])) as string)
-          : (await signer.sendTransaction(tx)).hash,
+          : (await signer.sendTransaction(gas ? { ...tx, gasLimit: gas } : tx)).hash,
     }
     opts.onProgress?.(`Transaction submitted: ${sent.hash}`)
     opts.onSent?.(sent.hash)

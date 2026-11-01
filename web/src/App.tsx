@@ -111,6 +111,7 @@ const walletAskedMessage = () => {
     ['search indexing', t.indexing],
     ['preparing', t.preparing],
     ['price', t.price],
+    ['gas estimate', t.gas],
   ]
   const parts = steps
     .filter(([, ms]) => ms !== undefined && ms >= 50)
