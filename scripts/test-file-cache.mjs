@@ -98,10 +98,19 @@ await page.addInitScript(() => {
 })
 
 
+// the smart-search model also comes from 0G (web/src/ai/modelOn0g.ts): its
+// segments, fetched in the background, aren't the file's
+const MODEL_TXSEQS = [...readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../web/src/ai/modelOn0g.ts'), 'utf8').matchAll(/txSeq: (\d+)/g)].map((m) => Number(m[1]))
 page.on('requestfinished', async (req) => {
   const t = req.timing()
   let m = ''
-  try { m = JSON.parse(req.postData() ?? '{}').method ?? '' } catch {}
+  let seq
+  try {
+    const body = JSON.parse(req.postData() ?? '{}')
+    m = body.method ?? ''
+    seq = Number(body.params?.[0])
+  } catch {}
+  if (m === 'zgs_downloadSegmentByTxSeq' && MODEL_TXSEQS.includes(seq)) m += ' (model)'
   if (/zgs_|indexer_/.test(m)) net.push({ at: Date.now() - t0, m, ms: Math.round(t.responseEnd), host: new URL(req.url()).host })
 })
 page.on('requestfailed', (req) => {
