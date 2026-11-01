@@ -34,6 +34,13 @@ export interface DriveState {
   trash: FolderManifest | null
 }
 
+/** A file given a new name on the way (see uniqueName). */
+export interface Renamed {
+  id: string
+  from: string
+  to: string
+}
+
 /** The index as loaded: its tree, and the version the next write bumps. */
 interface LoadedIndex {
   tree: FolderTree
@@ -123,6 +130,22 @@ export function fileNameProblem(name: string): string | null {
 export function folderNameProblem(name: string): string | null {
   if (name === TRASH_PATH) return 'That name is reserved.'
   return fileNameProblem(name)
+}
+
+/**
+ * `name`, or the first free "name (1).ext", "name (2).ext", … given the
+ * names already `taken` (lower case). A name that already ends in " (n)"
+ * is numbered from its stem, so "a (1).txt" next to itself becomes "a (2).txt".
+ */
+export function uniqueName(name: string, taken: Set<string>): string {
+  if (!taken.has(name.toLowerCase())) return name
+  const dot = name.lastIndexOf('.')
+  const [base, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, '']
+  const stem = /^(.*) \(\d+\)$/.exec(base)?.[1] ?? base
+  for (let n = 1; ; n++) {
+    const candidate = `${stem} (${n})${ext}`
+    if (!taken.has(candidate.toLowerCase())) return candidate
+  }
 }
 
 const emptyFolder = (key: string): FolderManifest => ({ path: key, files: [], updatedAt: 0, version: 0 })
@@ -410,10 +433,11 @@ export class DriveStore {
    * ONE transaction for the whole batch (fewer wallet prompts, one
    * sealing wait). Files themselves are already uploaded by the caller.
    */
-  async putFileRecords(folderPath: string, metas: FileMeta[]): Promise<void> {
-    const items = await this.prepareFileRecords(folderPath, metas)
-    // a new folder's index entry first: a failure after it leaves an
-    // empty folder, not a listing no folder points to
+  async putFileRecords(folderPath: string, metas: FileMeta[], replace: string[] = []): Promise<void> {
+    const items = await this.prepareFileRecords(folderPath, metas, replace)
+    // a new folder's index entry (and the trash, when replacing) first: a
+    // failure after it leaves an empty folder or a record listed twice,
+    // never a listing no folder points to or a record listed nowhere
     await this.writeManifests(
       items.slice(0, -1),
       items.slice(-1),
@@ -425,23 +449,39 @@ export class DriveStore {
    * The manifest write(s) for adding `metas` to a folder, as batch items
    * instead of uploads — so they can ride in the same transaction as the
    * files themselves (storage.uploadBatch → finalize). Same contents as
-   * putFileRecords would write: the index first if the folder is new, then
-   * the folder.
+   * putFileRecords would write: the index first if the folder is new, the
+   * trash if `replace` moves files there, then the folder.
+   *
+   * `replace`: ids of files in the folder the new ones take the place of;
+   * they move to trash in the same write. Names stay unique in a folder
+   * (ignoring case): a new file whose name is still taken — e.g. a file of
+   * that name was added from another device meanwhile — gets "name (1).ext",
+   * and `metas` are updated to the names stored.
    */
-  async prepareFileRecords(folderPath: string, metas: FileMeta[]): Promise<BatchItem[]> {
+  async prepareFileRecords(folderPath: string, metas: FileMeta[], replace: string[] = []): Promise<BatchItem[]> {
     const path = normalizePath(folderPath)
     await this.refreshEvents()
     const index = await this.loadIndex()
     const { id, created } = index.tree.ensure(path)
     const folder = (created ? null : await this.loadFolder(id)) ?? emptyFolder(id)
+    const replaced = folder.files.filter((f) => replace.includes(f.id))
+    folder.files = folder.files.filter((f) => !replace.includes(f.id))
     for (const meta of metas) {
       const idx = folder.files.findIndex((f) => f.id === meta.id)
-      if (idx >= 0) folder.files[idx] = meta
-      else folder.files.push(meta)
+      if (idx >= 0) {
+        folder.files[idx] = meta
+        continue
+      }
+      meta.name = uniqueName(meta.name, new Set(folder.files.map((f) => f.name.toLowerCase())))
+      folder.files.push(meta)
     }
     folder.updatedAt = Date.now()
     folder.version += 1
     const out: BatchItem[] = created ? [this.indexItem(index)] : []
+    if (replaced.length > 0) {
+      const trash = await this.trashWith(replaced.map((rec) => ({ ...rec, originalPath: path, originalFolder: id })))
+      out.push(this.manifestItem(trash, folderTag(TRASH_PATH)))
+    }
     out.push(this.manifestItem(folder, folderTag(id)))
     return out
   }
@@ -661,8 +701,8 @@ export class DriveStore {
   }
 
   /** Restore a trashed file record to its original folder (or a given one). */
-  async restoreFromTrash(id: string, targetPath?: string): Promise<void> {
-    await this.restoreRecords([id], targetPath)
+  async restoreFromTrash(id: string, targetPath?: string): Promise<Renamed[]> {
+    return this.restoreRecords([id], targetPath)
   }
 
   /**
@@ -672,14 +712,14 @@ export class DriveStore {
    * Targets are stored first, so a failure part-way leaves a file in both
    * places, never in neither.
    */
-  async restoreRecords(ids: string[], targetPath?: string): Promise<void> {
-    if (ids.length === 0) return
+  async restoreRecords(ids: string[], targetPath?: string): Promise<Renamed[]> {
+    if (ids.length === 0) return []
     await this.refreshEvents()
 
     const trash = await this.loadFolder(TRASH_PATH)
-    if (trash === null) return
+    if (trash === null) return []
     const restored = trash.files.filter((f) => ids.includes(f.id))
-    if (restored.length === 0) return
+    if (restored.length === 0) return []
 
     // each record goes back to its folder by id (wherever it is now), else
     // to its old path, re-creating the folder if it's gone
@@ -702,10 +742,20 @@ export class DriveStore {
     // a re-created folder's index entry first: a failure after it leaves
     // the files in trash and an empty folder, never listed nowhere
     const first: BatchItem[] = treeChanged ? [this.indexItem(index)] : []
+    const renamed: Renamed[] = []
     for (const [dest, records] of byFolder) {
       const folder = (await this.loadFolder(dest)) ?? emptyFolder(dest)
       const back = new Set(records.map((f) => f.id))
-      folder.files = [...folder.files.filter((f) => !back.has(f.id)), ...records]
+      folder.files = folder.files.filter((f) => !back.has(f.id))
+      // a name taken there meanwhile: the restored file gets "name (1).ext"
+      for (const rec of records) {
+        const name = uniqueName(rec.name, new Set(folder.files.map((f) => f.name.toLowerCase())))
+        if (name !== rec.name) {
+          renamed.push({ id: rec.id, from: rec.name, to: name })
+          rec.name = name
+        }
+        folder.files.push(rec)
+      }
       folder.updatedAt = Date.now()
       folder.version += 1
       first.push(this.manifestItem(folder, folderTag(dest)))
@@ -719,6 +769,7 @@ export class DriveStore {
       [this.manifestItem(trash, folderTag(TRASH_PATH))],
       'the files were restored but are still listed in trash too. Restore them again to finish.'
     )
+    return renamed
   }
 
   /**
