@@ -2164,6 +2164,11 @@ tbody tr:hover {
   gap: 8px;
   width: 100%;
 }
+.open-in-wallet .small-print {
+  /* centred like the rest of the start screen (.small-print is right-aligned for dialogs) */
+  text-align: center;
+  margin: 0;
+}
 .wallet-apps .btn {
   min-height: 44px;
   display: flex;

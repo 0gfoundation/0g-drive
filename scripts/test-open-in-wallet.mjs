@@ -59,6 +59,8 @@ try {
     overflow <= 0 && links.every((l) => l.left >= 0 && l.right <= 390 && l.h >= 44),
     JSON.stringify({ overflow, heights: links.map((l) => l.h) })
   )
+  const aligned = await page.$$eval('.open-in-wallet p', (els) => els.map((e) => getComputedStyle(e).textAlign))
+  check('phone: the text around the links is centred like the rest of the start screen', aligned.length === 2 && aligned.every((a) => a === 'center'), aligned.join(', '))
   check(
     'phone: "copy link" for other wallets, no desktop "install an extension" banner',
     (await page.getByRole('button', { name: /copy this page/i }).count()) === 1 &&
