@@ -61,6 +61,7 @@ import {
 import { Logo } from './Logo'
 import { keepConnectionsWarm, preconnect } from './keepWarm'
 import { driveDeviceFor } from './driveDevice'
+import { OpenInWallet, isTouchDevice } from './OpenInWallet'
 import { hashInWorkers } from './hashPool'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
 import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
@@ -323,6 +324,8 @@ function Welcome({ onConnect }: { onConnect: () => void }) {
         <button className="btn primary welcome-cta" onClick={onConnect}>
           Get started
         </button>
+      ) : isTouchDevice() ? (
+        <OpenInWallet />
       ) : (
         <p className="hero-hint">Install a wallet extension such as MetaMask or Rabby to start.</p>
       )}
@@ -2127,7 +2130,7 @@ export default function App() {
         </div>
       </header>
 
-      {!hasWallet() && (
+      {!hasWallet() && !isTouchDevice() && (
         <div className="banner warn">
           No Ethereum wallet detected. Install a wallet extension such as <strong>MetaMask</strong> or{' '}
           <strong>Rabby</strong> to use 0GDrive.
