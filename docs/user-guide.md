@@ -36,6 +36,10 @@ For uploads and drive changes, the Activity log notes when the app asked your wa
 
 Observed testnet costs: about 0.001 0G per MB uploaded, about 0.0001–0.0015 0G per metadata change.
 
+## On a phone
+
+Phone browsers have no wallet built in, so on a phone 0GDrive offers to open itself in a wallet app's own browser: **MetaMask**, **Trust Wallet**, **OKX Wallet** or **Coinbase Wallet** (or copy the link and open it in another wallet's browser). The wallet app's browser is separate from your phone's browser: your drive opens there as on a new device (connect, then restore it with your wallet or recovery password). Some wallet apps lock or close their browser when you switch apps; you'll then reconnect when you come back.
+
 ## Uploading files
 
 - Drop files on the upload zone ("Drop files here or click to upload"; on phones "Tap to upload files"), or click it to pick files. Files go into the folder you are viewing.
