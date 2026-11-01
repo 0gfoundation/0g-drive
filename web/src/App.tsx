@@ -314,7 +314,7 @@ function HeroIcon() {
 }
 
 /** First screen before a wallet is connected: what 0GDrive is for, and the way in. */
-function Welcome({ onConnect }: { onConnect: () => void }) {
+function Welcome({ onConnect, busy, error }: { onConnect: () => void; busy: 'reconnecting' | 'connecting' | null; error: string | null }) {
   return (
     <section className="hero welcome" aria-labelledby="welcome-title">
       <HeroIcon />
@@ -324,13 +324,18 @@ function Welcome({ onConnect }: { onConnect: () => void }) {
         them. Not 0G, not the storage nodes.
       </p>
       {hasWallet() ? (
-        <button className="btn primary welcome-cta" onClick={onConnect}>
-          {hasExtension() ? 'Get started' : isTouchDevice() ? 'Connect your wallet app' : 'Get started with a phone wallet'}
+        <button className="btn primary welcome-cta" onClick={onConnect} disabled={busy !== null}>
+          {busy === 'reconnecting'
+            ? 'Reconnecting…'
+            : busy === 'connecting'
+              ? 'Connecting…'
+              : hasExtension() ? 'Get started' : isTouchDevice() ? 'Connect your wallet app' : 'Get started with a phone wallet'}
         </button>
       ) : (
         !isTouchDevice() && <p className="hero-hint">Install a wallet extension such as MetaMask or Rabby to start.</p>
       )}
       {/* a phone browser: WalletConnect (above) or the wallet app's own browser */}
+      {error && <p className="error-text welcome-error" role="alert">⚠ {error}</p>}
       {!hasExtension() && isTouchDevice() && <OpenInWallet alternative={hasWallet()} />}
       <p className="hero-hint">Connect to open your drive, or create one in a click.</p>
     </section>
@@ -635,6 +640,8 @@ export default function App() {
   const [wallet, setWallet] = useState<WalletState | null>(null)
   const walletAddressRef = useRef<string | null>(null)
   const [reconnecting, setReconnecting] = useState(true)
+  const [connecting, setConnecting] = useState(false)
+  const [connectError, setConnectError] = useState<string | null>(null)
   const [walletMenu, setWalletMenu] = useState(false)
   const [masterKeyHex, setMasterKeyHex] = useState<string | null>(null)
   const [hasBackup, setHasBackup] = useState<boolean | null>(null)
@@ -831,12 +838,22 @@ export default function App() {
   )
 
   const connect = useCallback(async () => {
+    setConnectError(null)
+    setConnecting(true)
     try {
       const state = await connectWallet(NETWORK)
       if (!state) return // picker dismissed
       adoptWallet(state)
     } catch (err) {
-      log(`Wallet error: ${(err as Error).message}`)
+      const e = err as { code?: number | string; shortMessage?: string; message: string; error?: { message?: string } }
+      log(`Wallet error: ${e.message}`)
+      // closed the wallet's window or the WalletConnect dialog: nothing to report
+      if (e.code !== 4001 && e.code !== 'ACTION_REJECTED') {
+        // ethers wraps what it can't classify; the wallet's own words are inside
+        setConnectError(`Couldn’t connect: ${e.error?.message ?? e.shortMessage ?? e.message}`)
+      }
+    } finally {
+      setConnecting(false)
     }
   }, [log, adoptWallet])
 
@@ -846,12 +863,17 @@ export default function App() {
 
   // back into the last-used wallet without a click, if it still allows it
   useEffect(() => {
+    // a wallet that never answers mustn't hold the start button
+    const giveUp = setTimeout(() => setReconnecting(false), 10_000)
     reconnectWallet(NETWORK)
       .then((state) => {
         if (state && !readOnlyRef.current && !walletAddressRef.current) adoptWallet(state)
       })
       .catch((err) => console.warn('[wallet] reconnect failed', err))
-      .finally(() => setReconnecting(false))
+      .finally(() => {
+        clearTimeout(giveUp)
+        setReconnecting(false)
+      })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -2569,7 +2591,7 @@ export default function App() {
         )}
 
         {!wallet && !readOnly ? (
-          <Welcome onConnect={connect} />
+          <Welcome onConnect={connect} busy={reconnecting ? 'reconnecting' : connecting ? 'connecting' : null} error={connectError} />
         ) : smart.results !== null ? (
           <SearchResults
             query={smart.resultsQuery}

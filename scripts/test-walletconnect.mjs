@@ -14,6 +14,11 @@
 //   links; the dialog's wallet links carry the pairing link and fit; pairing
 //   opens the drive; a pending request shows "Open <wallet>" linking back
 //   to the wallet app
+//   phone, like MetaMask: a declined pairing says why on the start page;
+//   a wallet that approves another chain first, then switches when asked,
+//   opens the drive; a reload brings the drive back by itself
+//   the app gives wallets no link back (it would open a new tab, leaving
+//   the user's tab and its uploads behind)
 //
 //   node scripts/test-walletconnect.mjs [http://localhost:5173]
 // The page must be built with VITE_WALLETCONNECT_PROJECT_ID; the scripted
@@ -78,9 +83,18 @@ const wc = await SignClient.init({
 const prompts = { tx: 0, sign: 0, other: [] }
 let holdNext = 0 // ms to wait before answering the next request (the user reading it)
 let deleted = 0
+const proposers = []
+let declineNext = false
+let otherChainFirst = false // like MetaMask: approve the chain it's on, switch when asked
 wc.on('session_delete', () => deleted++)
 wc.on('session_proposal', async ({ id, params }) => {
-  const chain = `eip155:${network.chainId}`
+  proposers.push(params.proposer.metadata)
+  if (declineNext) {
+    declineNext = false
+    await wc.reject({ id, reason: { code: 5000, message: 'User rejected.' } })
+    return
+  }
+  const chain = otherChainFirst ? 'eip155:1' : `eip155:${network.chainId}`
   const ns = params.optionalNamespaces?.eip155 ?? params.requiredNamespaces?.eip155
   await wc.approve({
     id,
@@ -118,6 +132,17 @@ wc.on('session_request', async ({ topic, id, params }) => {
           gasLimit: tx.gas ? BigInt(tx.gas) : undefined,
         })
         result = sent.hash
+        break
+      }
+      case 'wallet_switchEthereumChain': {
+        // as MetaMask does: add the chain to the session, then say so
+        prompts.other.push(method)
+        const chain = `eip155:${Number(p[0].chainId)}`
+        const ns = wc.session.get(topic).namespaces.eip155
+        const chains = [...new Set([...ns.chains, chain])]
+        await wc.update({ topic, namespaces: { eip155: { ...ns, chains, accounts: chains.map((c) => `${c}:${wallet.address}`) } } })
+        await wc.emit({ topic, chainId: chain, event: { name: 'chainChanged', data: Number(p[0].chainId) } })
+        result = null
         break
       }
       default:
@@ -174,6 +199,9 @@ try {
     uri.startsWith('wc:') && qr.w >= 200 && qr.w === qr.h && qr.path > 1000, JSON.stringify({ uri: uri.slice(0, 20), qr }))
 
   await wc.pair({ uri })
+  await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
+  check('the app gives the wallet no link back (it would open a new tab, away from the user’s)',
+    proposers.length === 1 && !proposers[0].redirect, JSON.stringify(proposers[0].redirect ?? null))
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
   check('the wallet approves; the dialog closes and the drive is created',
@@ -293,9 +321,26 @@ try {
   await page.locator('.wc-dialog .wallet-apps a', { hasText: 'MetaMask' }).click()
   const waiting = await page.locator('.wc-waiting').textContent()
   check('after tapping a wallet: "Approve the connection in MetaMask, then come back"', /Approve the connection in MetaMask/.test(waiting ?? ''), waiting)
+  declineNext = true
   await wc.pair({ uri: puri })
-  holdNext = 3000
-  await page.getByRole('button', { name: 'Restore my drive' }).click({ timeout: 5 * 60_000 })
+  const declined = await page.locator('.welcome-error').textContent({ timeout: 30_000 }).catch(() => null)
+  const errBox = await page.locator('.welcome-error').boundingBox().catch(() => null)
+  const errOverflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)
+  check('phone, the wallet declines: the start page says so (within 390 px), and the button works again',
+    /Couldn’t connect: User rejected/.test(declined ?? '') && (await page.locator('.wc-dialog').count()) === 0 && (await start.isEnabled()) &&
+      errOverflow <= 0 && errBox && errBox.x >= 0 && errBox.x + errBox.width <= 390,
+    JSON.stringify({ declined, errOverflow }))
+
+  await start.click()
+  await page.locator('.wc-dialog .wallet-apps').waitFor({ timeout: 30_000 })
+  const puri2 = await pairingLink(page)
+  otherChainFirst = true
+  const switches = prompts.other.filter((m) => m === 'wallet_switchEthereumChain').length
+  await wc.pair({ uri: puri2 })
+  const restore = page.getByRole('button', { name: 'Restore my drive' })
+  await restore.waitFor({ timeout: 5 * 60_000 })
+  holdNext = 3000 // the restore's signature, not the chain switch before it
+  await restore.click()
   const openApp = page.locator('.wc-approve a')
   await openApp.waitFor({ timeout: 10_000 })
   const bar2 = { text: await page.locator('.wc-approve').textContent(), href: await openApp.getAttribute('href'), box: await page.locator('.wc-approve').boundingBox() }
@@ -303,7 +348,13 @@ try {
     bar2.href === WALLET_LINK && /Approve in Test Wallet/.test(bar2.text) && bar2.box.x >= 0 && bar2.box.x + bar2.box.width <= 390,
     JSON.stringify(bar2))
   await page.locator('table .fname-btn', { hasText: NAME }).waitFor({ timeout: 5 * 60_000 })
-  check('phone: the drive opens over WalletConnect', true)
+  check('phone, a wallet on another chain (like MetaMask): asked to switch once, and the drive opens',
+    prompts.other.filter((m) => m === 'wallet_switchEthereumChain').length === switches + 1)
+
+  await page.reload()
+  const back = await page.locator('table .fname-btn', { hasText: NAME }).waitFor({ timeout: 60_000 }).then(() => true, () => false)
+  check('phone, a reload: the drive comes back by itself, no prompt',
+    back && (await page.locator('.welcome').count()) === 0 && (await page.locator('.wc-dialog').count()) === 0)
   await phone.context.close()
 
   check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '))
