@@ -2,8 +2,9 @@
 // model-download status. Text extraction (plain text, PDF) happens here on
 // the page; embedding happens in the worker.
 
-import type { SearchEntry } from '@0gdrive/core'
-import type { AiMessage, AiRequest } from './ai.worker'
+import { downloadFile, getNetworkConfig, type SearchEntry } from '@0gdrive/core'
+import type { AiMessage, AiRequest, PageReply } from './ai.worker'
+import { TEXT_MODEL_ON_0G, type FileOn0g } from './modelOn0g'
 import type { QueryVectors } from './engine'
 
 export type { QueryVectors }
@@ -13,9 +14,10 @@ export type { QueryVectors }
 const SETTING_KEY = '0gdrive:smart-search'
 
 /**
- * A phone: touch screen, small. The text model alone takes the tab to about
- * 1.1 GB of memory, past where many phones (iPhones especially) close it,
- * so smart search starts off there; it can still be turned on.
+ * A phone: touch screen, small. The text model needs about 600 MB of memory
+ * (1.1 GB before it was trimmed to English and Chinese, modelOn0g.ts) —
+ * still past what some phones and wallet apps' browsers give a page — so
+ * smart search starts off there; it can still be turned on.
  */
 export function isPhone(): boolean {
   try {
@@ -26,7 +28,7 @@ export function isPhone(): boolean {
 }
 
 export const PHONE_MEMORY_WARNING =
-  'Smart search runs AI models on this phone. They download about 300 MB once and need about 1 GB of memory, ' +
+  'Smart search runs AI models on this phone. They download about 250 MB once and need about 600 MB of memory, ' +
   'and some phones close the page when it runs short (it turns white). ' +
   'Search by file name works without it.\n\nTurn smart search on?'
 
@@ -124,6 +126,10 @@ function getWorker(): Worker {
   worker = new Worker(new URL('./ai.worker.ts', import.meta.url), { type: 'module' })
   worker.onmessage = (e: MessageEvent<AiMessage>) => {
     const m = e.data
+    if (m.type === 'fetch0g') {
+      fetchFrom0g(m.id, m.file)
+      return
+    }
     if (m.type === 'net') {
       net = m
       recompute()
@@ -150,13 +156,39 @@ function getWorker(): Worker {
     const err = new Error(e.message || 'AI worker failed')
     pending.forEach((p) => p.reject(err))
     pending.clear()
-    worker?.terminate()
-    worker = null // the next call starts a fresh worker
-    fileProgress.clear()
+    restartWorker()
     lastError = err.message
     recompute()
   }
   return worker
+}
+
+/**
+ * A model file from 0G Storage, for the worker (which can't run the storage
+ * client): progress as it arrives, then the bytes, handed over (no copy).
+ * The worker checks them against the pinned SHA-256.
+ */
+function fetchFrom0g(id: number, file: FileOn0g): void {
+  const reply = (m: PageReply, transfer: Transferable[] = []) => worker?.postMessage(m, transfer)
+  downloadFile([file.root], getNetworkConfig(TEXT_MODEL_ON_0G.network, 'turbo'), {
+    txSeqs: [file.txSeq],
+    onProgress: (_msg, percent) => {
+      if (percent !== undefined) reply({ type: 'fetch0gProgress', id, bytes: Math.round((file.size * percent) / 100) })
+    },
+  }).then(
+    ({ data }) => {
+      const bytes = data.byteOffset === 0 && data.byteLength === data.buffer.byteLength ? data.buffer : data.slice().buffer
+      reply({ type: 'fetch0gResult', id, bytes: bytes as ArrayBuffer }, [bytes as ArrayBuffer])
+    },
+    (err) => reply({ type: 'fetch0gResult', id, error: (err as Error).message ?? String(err) })
+  )
+}
+
+/** Drop the worker (and all it allocated); the next call starts a fresh one. */
+function restartWorker(): void {
+  worker?.terminate()
+  worker = null
+  fileProgress.clear()
 }
 
 type Req = AiRequest extends infer R ? (R extends { id: number } ? Omit<R, 'id'> : never) : never
@@ -311,6 +343,12 @@ export function warmUpModels(): Promise<unknown> {
     lastError = undefined
     recompute()
     warming = call<true>({ op: 'warm' })
+      .catch((err) => {
+        // out of memory: a fresh worker starts with nothing allocated — once
+        if (!/out of memory/i.test((err as Error).message ?? '')) throw err
+        restartWorker()
+        return new Promise((r) => setTimeout(r, 1000)).then(() => call<true>({ op: 'warm' }))
+      })
       .then(() => {
         warmed = true
         keepModelCache()

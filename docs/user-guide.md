@@ -112,11 +112,11 @@ On the start screen (no wallet connected): **Lost access to your wallet? → Ope
 
 ## Search and organize (on-device AI)
 
-Sidebar → **On-device AI → Smart search & organize**. When on, AI models run **inside your browser** — no file content or query leaves your device. They download once (~300 MB) when your drive opens; the photo part is only loaded into memory the first time you upload or search photos.
+Sidebar → **On-device AI → Smart search & organize**. When on, AI models run **inside your browser** — no file content or query leaves your device. They download once (~250 MB; the text model comes from 0G Storage) when your drive opens; the photo part is only loaded into memory the first time you upload or search photos.
 
-**On phones it starts off.** The models need about 1 GB of memory, and many phones close the page when it runs short (it turns white). You can still turn it on; the app asks first. Search by file name works either way.
+**On phones it starts off.** The models need about 600 MB of memory, and some phones and wallet apps' browsers close the page or fail to load them when it runs short. You can still turn it on; the app asks first. Search by file name works either way.
 
-- **Search your drive — any language**: finds files by meaning, e.g. "猫" finds a cat photo named IMG_0001.jpg, "lease contract" finds a PDF named in Chinese. Matches names, text excerpts and photo content.
+- **Search your drive — English and Chinese**: finds files by meaning, e.g. "猫" finds a cat photo named IMG_0001.jpg, "lease contract" finds a PDF named in Chinese. Names with accents (café, José) work too; text in other languages (Japanese, Korean, Russian…) is matched by file name and exact words only. Matches names, text excerpts and photo content.
 - New uploads are indexed automatically. **Index N older files for search** indexes files uploaded before (downloads them, reads them on your device, saves the index: 1 approval).
 - **✨ Suggest organization** proposes moving files to better-matching folders; you approve the moves in one transaction, however many folders they go to.
 - When off, search matches file names only.

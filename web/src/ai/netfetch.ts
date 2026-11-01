@@ -1,7 +1,8 @@
 // Model downloads (runs in the AI worker as transformers.js's `env.fetch`).
 //
-// A first visit pulls ~300 MB from the Hugging Face and jsDelivr CDNs: the
-// text model, then the photo models' files (downloaded, loaded later). On
+// A first visit pulls ~250 MB: the text model from 0G Storage (modelOn0g.ts,
+// through the page), the runtime and photo models' files from the Hugging
+// Face and jsDelivr CDNs (downloaded, loaded later). On
 // networks where those are slow or unreachable the stock fetch just hangs,
 // so this wrapper:
 //   • reports byte-accurate progress across all model files (one number that
@@ -10,6 +11,8 @@
 //     the app's own server at /_models/<host>/… — see vite.config.ts,
 //   • keeps the original URLs as cache keys, so changing route never
 //     re-downloads a cached file.
+
+import { fileOn0g, type FileOn0g } from './modelOn0g'
 
 const ROUTED_HOSTS = new Set(['huggingface.co', 'cdn.jsdelivr.net'])
 const PROXY_PREFIX = '/_models/'
@@ -29,6 +32,10 @@ const MAX_ATTEMPTS = 8
 // index a photo, 'clipText' for its labels and for photo search.
 export type ModelGroup = 'text' | 'clipImage' | 'clipText'
 const PLANNED: { re: RegExp; size: number; group: ModelGroup }[] = [
+  // the trimmed text model, from 0G Storage (modelOn0g.ts)
+  { re: /0gdrive\/minilm-en-zh\/resolve\/[^/]+\/onnx\/model_quantized\.onnx$/, size: 66_856_734, group: 'text' },
+  { re: /0gdrive\/minilm-en-zh\/resolve\/[^/]+\/tokenizer\.json$/, size: 4_087_479, group: 'text' },
+  // the full one: the fallback when 0G can't deliver
   { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/onnx\/model_quantized\.onnx$/, size: 118_308_126, group: 'text' },
   { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/tokenizer\.json$/, size: 17_082_913, group: 'text' },
   { re: /clip-vit-base-patch32\/resolve\/[^/]+\/onnx\/vision_model_quantized\.onnx$/, size: 89_117_001, group: 'clipImage' },
@@ -339,6 +346,43 @@ async function fetchResumable(url: URL, init?: RequestInit): Promise<Response> {
   return new Response(body, { status: 200, headers })
 }
 
+/**
+ * Fetches a file from 0G Storage for the worker: the storage client runs in
+ * the page (it needs Node polyfills workers don't get), so the worker asks
+ * it (see ai.worker.ts / client.ts). `onBytes` gets the running total.
+ */
+export type PageFetch0g = (file: FileOn0g, onBytes: (total: number) => void) => Promise<ArrayBuffer>
+let fetch0g: PageFetch0g | undefined
+export function setPageFetch0g(fn: PageFetch0g) {
+  fetch0g = fn
+}
+
+async function fromOn0g(url: URL, file: FileOn0g): Promise<Response> {
+  if (!fetch0g) throw new Error('no 0G download path')
+  const planned = PLANNED.findIndex((p) => p.re.test(url.pathname))
+  if (planned >= 0) {
+    sizes.set(planned, file.size)
+    got.set(planned, 0)
+  }
+  active++
+  post(true)
+  let counted = 0
+  try {
+    const bytes = await fetch0g(file, (total) => {
+      countBytes(planned, total - counted)
+      counted = total
+    })
+    countBytes(planned, file.size - counted)
+    // pinned content: anything else is refused (the engine then uses the full model)
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (b) => b.toString(16).padStart(2, '0')).join('')
+    if (bytes.byteLength !== file.size || digest !== file.sha256) throw new Error(`model file from 0G doesn't match (${url.pathname.split('/').pop()})`)
+    return new Response(bytes, { status: 200, headers: { 'content-length': String(file.size), 'content-type': 'application/octet-stream' } })
+  } finally {
+    active--
+    post(true)
+  }
+}
+
 /** Drop-in `fetch` for transformers.js (`env.fetch`). */
 export function modelFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
@@ -351,6 +395,15 @@ export function modelFetch(input: string | URL | Request, init?: RequestInit): P
   const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
   if (!ROUTED_HOSTS.has(url.hostname) || method !== 'GET' || input instanceof Request) {
     return fetch(input, init)
+  }
+  const on0g = fileOn0g(url)
+  if (on0g === null) return Promise.resolve(new Response(null, { status: 404 }))
+  if (on0g) {
+    // the library's size probes (Range) get the size without downloading
+    if (new Headers(init?.headers).has('range')) {
+      return Promise.resolve(new Response(null, { status: 206, headers: { 'content-range': `bytes 0-0/${on0g.size}` } }))
+    }
+    return fromOn0g(url, on0g)
   }
   return fetchResumable(url, init)
 }

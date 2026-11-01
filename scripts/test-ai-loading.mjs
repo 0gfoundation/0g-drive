@@ -1,6 +1,6 @@
 // On-device AI loading: what downloads when, on a phone and on a desktop.
 //   phone (390 px, touch): smart search starts off — no model download;
-//     turning it on asks first (needs ~1 GB of memory), and a "no" keeps it off
+//     turning it on asks first (needs ~600 MB of memory), and a "no" keeps it off
 //   desktop: drive open loads the text model and downloads the photo model
 //     files (not loaded); the first photo upload builds them from the
 //     cache, without downloading again, and the photo is indexed
@@ -33,6 +33,21 @@ const check = (name, ok, detail = '') => {
   console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s] ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 const MODEL_URL = /huggingface\.co|cdn\.jsdelivr\.net|\/_models\//
+// the trimmed text model's files on 0G Storage (web/src/ai/modelOn0g.ts), by txSeq
+const MODEL_TXSEQS = [...readFileSync(resolve(root, 'web/src/ai/modelOn0g.ts'), 'utf8').matchAll(/txSeq: (\d+)/g)].map((m) => Number(m[1]))
+/** a model file's segment download from 0G, as "0g:<txSeq>", or null */
+const model0g = (r) => {
+  const body = r.postData() ?? ''
+  if (!body.includes('zgs_downloadSegmentByTxSeq')) return null
+  try {
+    const seq = Number(JSON.parse(body).params[0])
+    return MODEL_TXSEQS.includes(seq) ? `0g:${seq}` : null
+  } catch {
+    return null
+  }
+}
+const textFrom0g = (urls) => urls.some((u) => u === `0g:${MODEL_TXSEQS[MODEL_TXSEQS.length - 1]}`)
+const fullTextModel = (urls) => urls.some((u) => /MiniLM-L12-v2/.test(u))
 const rendererMb = () => {
   try {
     return Math.round(Number(execSync("ps -eo rss,args | grep -- '--type=renderer' | grep -v grep | awk '{s+=$1} END {print s+0}'").toString()) / 1024)
@@ -62,7 +77,11 @@ async function openPage(contextOpts, wallet, extraInit = '') {
   const errors = []
   page.on('pageerror', (e) => errors.push(e.message))
   const models = []
-  page.on('request', (r) => MODEL_URL.test(r.url()) && models.push(r.url()))
+  page.on('request', (r) => {
+    if (MODEL_URL.test(r.url())) models.push(r.url())
+    const z = model0g(r)
+    if (z && !models.includes(z)) models.push(z)
+  })
   await page.exposeFunction('__eth', async (method, params) => {
     try {
       switch (method) {
@@ -154,7 +173,7 @@ try {
   await phone.page.locator('.nav-toggle').click()
   const before = { checked: await aiToggle(phone.page).isChecked(), note: await aiNote(phone.page), downloads: phone.models.length }
   check('phone: smart search starts off, says why, and nothing downloads',
-    !before.checked && /Off on phones at first: the models need about 1 GB/.test(before.note) && before.downloads === 0,
+    !before.checked && /Off on phones at first: the models need about 600 MB/.test(before.note) && before.downloads === 0,
     JSON.stringify(before))
   let asked = ''
   phone.page.once('dialog', (d) => {
@@ -163,7 +182,7 @@ try {
   })
   await aiToggle(phone.page).click()
   await phone.page.waitForTimeout(3000)
-  const declined = { asked: /about 1 GB of memory/.test(asked), checked: await aiToggle(phone.page).isChecked(), downloads: phone.models.length }
+  const declined = { asked: /about 600 MB of memory/.test(asked), checked: await aiToggle(phone.page).isChecked(), downloads: phone.models.length }
   check('phone: turning it on warns about memory; "no" keeps it off',
     declined.asked && !declined.checked && declined.downloads === 0, JSON.stringify(declined))
   check('phone: no page errors', phone.errors.length === 0, phone.errors.join(' | '))
@@ -174,9 +193,9 @@ try {
   wallets.push(desk.wallet)
   step('desktop: drive open; waiting for the text model, then the photo files')
   const peakDesk = await settle(desk)
-  check('desktop: drive open loads the text model and downloads the photo model files',
-    desk.models.some((u) => /MiniLM-L12-v2.*model_quantized\.onnx/.test(u)) && clipFiles(desk.models) === 3,
-    `${JSON.stringify(clipNames(desk.models))} MiniLM=${desk.models.some((u) => /MiniLM-L12-v2.*model_quantized\.onnx/.test(u))}; peak renderer ${peakDesk} MB`)
+  check('desktop: drive open loads the text model (the trimmed one, from 0G) and downloads the photo model files',
+    textFrom0g(desk.models) && !fullTextModel(desk.models) && clipFiles(desk.models) === 3,
+    `${JSON.stringify(clipNames(desk.models))} text from 0G=${textFrom0g(desk.models)} full model=${fullTextModel(desk.models)}; peak renderer ${peakDesk} MB`)
 
   // a 64×64 PNG, drawn in the page
   const png = Buffer.from(
