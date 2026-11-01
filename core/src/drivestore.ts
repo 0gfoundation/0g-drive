@@ -1,9 +1,19 @@
 import { ethers } from 'ethers'
 import type { NetworkConfig } from './config.js'
-import { uploadData, uploadBatch, downloadFile, storagePrice, wakeWallet, type BatchItem } from './storage.js'
+import {
+  uploadData,
+  uploadBatch,
+  downloadFile,
+  decryptDownloaded,
+  resumeWrites,
+  storagePrice,
+  wakeWallet,
+  NotUploadedError,
+  type BatchItem,
+} from './storage.js'
 import { timed } from './timing.js'
 import type { FileMeta, SearchEntry } from './types.js'
-import { scanUploadsCached, type EventCache, type UploadEvent } from './events.js'
+import { rpcProvider, scanUploadsCached, type EventCache, type UploadEvent } from './events.js'
 import {
   ROOT_ID,
   TRASH_PATH,
@@ -41,7 +51,47 @@ export interface DriveStoreOpts {
    * scanned and events are merged with the cached list.
    */
   eventCache?: EventCache
+  /** Keeps changes on this device until their data is stored (see DriveDevice). */
+  device?: DriveDevice
+  /** How old a listing with no data must be to be abandoned (default 30 minutes; tests shorten it). */
+  abandonedAfterMs?: number
 }
+
+/** One listing of a change, kept on the device until its data is stored. */
+export interface PendingWrite {
+  root: string
+  /** exactly what is stored: the encrypted listing */
+  bytes: Uint8Array
+  /** the writes of one change (one transaction) share an id */
+  change: string
+  /** stage 1 is stored only once all of stage 0 is (writeManifests' first/then) */
+  stage: 0 | 1
+  order: number
+  savedAt: number
+}
+
+/**
+ * This device's memory of the drive's writes. A change's listings are saved
+ * before the wallet is asked and dropped once stored, so if the page closes
+ * between the transaction and the upload, the next visit finishes the
+ * upload (no new transaction or fee). Listings that never got their data
+ * and can't be finished here (another device, cleared site data) are
+ * marked abandoned, so loads skip them instead of retrying every node.
+ */
+export interface DriveDevice {
+  savePending(writes: PendingWrite[]): Promise<void>
+  pending(): Promise<PendingWrite[]>
+  removePending(change: string): Promise<void>
+  isAbandoned(rootHash: string): boolean
+  markAbandoned(rootHash: string): void
+}
+
+/** a listing with no data this long after its transaction was abandoned */
+const ABANDONED_AFTER_MS = 30 * 60_000
+/** a newer one is retried after this, in case its upload was still running */
+const MISSING_RETRY_MS = 2 * 60_000
+/** a saved change whose transaction never appeared was never sent */
+const NEVER_SENT_AFTER_MS = 30 * 60_000
 
 /** Parallel folder-manifest downloads when a drive loads. */
 const LOAD_CONCURRENCY = 6
@@ -98,6 +148,10 @@ export class DriveStore {
    * index and folders before every action's wallet prompt.
    */
   private manifests = new Map<string, string>()
+  /** listings found with no data on the nodes, by root: when */
+  private missing = new Map<string, number>()
+  /** changes being stored by this page, or finished from this device's copy */
+  private finishing = new Set<string>()
 
   constructor(
     private network: NetworkConfig,
@@ -156,8 +210,14 @@ export class DriveStore {
     const sorted = [...candidates].sort((a, b) => b.blockNumber - a.blockNumber)
     const skipped: string[] = []
     for (const event of sorted) {
-      const cached = this.manifests.get(event.rootHash.toLowerCase())
+      const root = event.rootHash.toLowerCase()
+      const cached = this.manifests.get(root)
       if (cached !== undefined) return JSON.parse(cached) as T
+      const missingAt = this.missing.get(root)
+      if (this.opts.device?.isAbandoned(root) || (missingAt !== undefined && Date.now() - missingAt < MISSING_RETRY_MS)) {
+        skipped.push(`block ${event.blockNumber} txSeq ${event.txSeq}: never uploaded`)
+        continue
+      }
       try {
         const { data, decrypted } = await timed('listings', downloadFile(
           [event.rootHash],
@@ -191,12 +251,73 @@ export class DriveStore {
         ) {
           throw err // wrong key fails for every candidate — stop
         }
+        if (err instanceof NotUploadedError) await this.noteNeverUploaded(event)
         skipped.push(`block ${event.blockNumber} txSeq ${event.txSeq}: ${(err as Error).message}`)
         // this version is unreadable (pruned / not yet stored / non-JSON) —
         // try older
       }
     }
     return null
+  }
+
+  /**
+   * A listing whose transaction is on chain but whose data never reached
+   * the nodes. Skipped for a while in case its upload is still running;
+   * once its transaction is old, for good, telling the user the change it
+   * belonged to was undone.
+   */
+  private async noteNeverUploaded(event: UploadEvent): Promise<void> {
+    const root = event.rootHash.toLowerCase()
+    this.missing.set(root, Date.now())
+    const block = await rpcProvider(this.network).getBlock(event.blockNumber).catch(() => null)
+    if (!block || Date.now() - block.timestamp * 1000 < (this.opts.abandonedAfterMs ?? ABANDONED_AFTER_MS)) return
+    this.opts.device?.markAbandoned(root)
+    this.progress(
+      `Interrupted change: a change made ${new Date(block.timestamp * 1000).toLocaleString()} never finished ` +
+        `uploading (the page closed before its data was sent), so it was undone. Do it again if you still want it.`
+    )
+  }
+
+  /**
+   * Changes this device saved but didn't finish storing: if their
+   * transaction is on chain, show them as done now (their listings are
+   * here) and send their data in the background, with no new transaction.
+   */
+  private async finishInterrupted(): Promise<void> {
+    const device = this.opts.device
+    if (!device) return
+    const writes = await device.pending().catch(() => [] as PendingWrite[])
+    const onChain = new Set(this.events.map((e) => e.rootHash.toLowerCase()))
+    const changes = new Map<string, PendingWrite[]>()
+    for (const w of writes) changes.set(w.change, [...(changes.get(w.change) ?? []), w])
+    for (const [change, ws] of changes) {
+      if (this.finishing.has(change)) continue
+      ws.sort((a, b) => a.order - b.order)
+      // one transaction: all of its listings landed, or none did
+      if (!ws.every((w) => onChain.has(w.root.toLowerCase()))) {
+        if (Date.now() - ws[0].savedAt > NEVER_SENT_AFTER_MS) await device.removePending(change).catch(() => undefined)
+        continue
+      }
+      for (const w of ws) {
+        const { data, decrypted } = decryptDownloaded(w.bytes, { symmetricKey: this.masterKey })
+        if (decrypted) this.manifests.set(w.root.toLowerCase(), new TextDecoder().decode(data))
+      }
+      this.finishing.add(change)
+      void this.finishChange(change, ws).finally(() => this.finishing.delete(change))
+    }
+  }
+
+  private async finishChange(change: string, ws: PendingWrite[]): Promise<void> {
+    this.progress('Interrupted change: sending the data of your last change (no new transaction or fee)…')
+    const stage0 = ws.filter((w) => w.stage === 0)
+    const ok0 = (await resumeWrites(stage0, this.network, this.signer)).every(Boolean)
+    const ok1 = ok0 && (await resumeWrites(ws.filter((w) => w.stage === 1), this.network, this.signer)).every(Boolean)
+    if (ok1) {
+      await this.opts.device?.removePending(change).catch(() => undefined)
+      this.progress('Interrupted change: finished — it is stored now.')
+    } else {
+      this.progress('Interrupted change: could not send its data yet; will try again on your next visit.')
+    }
   }
 
   private async loadIndex(): Promise<LoadedIndex> {
@@ -250,6 +371,7 @@ export class DriveStore {
   /** Load the whole drive state from the chain (fresh scan). */
   async loadDrive(): Promise<DriveState> {
     await this.refreshEvents()
+    await this.finishInterrupted()
     const { tree } = await this.loadIndex()
     const paths = tree.paths()
     // folders are independent downloads: fetch them a few at a time
@@ -717,11 +839,41 @@ export class DriveStore {
     // asks no storage node anything before the wallet prompt
     const primary = first.length > 0 ? first : then
     const extras = first.length > 0 ? then : []
-    const res = await uploadBatch(primary, this.network, this.signer, {
-      finalize: extras.length > 0 ? async () => extras : undefined,
-      finalityRequired: this.opts.finalityRequired ?? true,
-      onProgress: (msg) => this.progress(msg),
-    })
+    // kept on this device until stored (see DriveDevice)
+    const device = this.opts.device
+    const change = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    let sent = false
+    let res: Awaited<ReturnType<typeof uploadBatch>>
+    this.finishing.add(change) // a reload meanwhile must not "finish" it too
+    try {
+      res = await uploadBatch(primary, this.network, this.signer, {
+        finalize: extras.length > 0 ? async () => extras : undefined,
+        beforeSend: device
+          ? (writes) =>
+              device
+                .savePending(
+                  writes.map((w, i) => ({
+                    ...w,
+                    change,
+                    stage: i < primary.length ? 0 : 1,
+                    order: i,
+                    savedAt: Date.now(),
+                  }))
+                )
+                .catch(() => undefined) // best effort: never blocks the change
+          : undefined,
+        onSent: () => (sent = true),
+        finalityRequired: this.opts.finalityRequired ?? true,
+        onProgress: (msg) => this.progress(msg),
+      })
+      if ([...res.items, ...res.extras].every((r) => r.ok)) await device?.removePending(change).catch(() => undefined)
+    } catch (err) {
+      // not sent (e.g. rejected in the wallet): nothing to finish later
+      if (!sent) await device?.removePending(change).catch(() => undefined)
+      throw err
+    } finally {
+      this.finishing.delete(change)
+    }
     res.items.forEach((r, i) => r.ok && remember(primary[i], r.result.rootHash))
     res.extras.forEach((r, i) => r.ok && remember(extras[i], r.result.rootHash))
     for (const r of res.items) {

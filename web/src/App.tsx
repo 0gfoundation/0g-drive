@@ -34,6 +34,7 @@ import {
   fileNameProblem,
   startActionTiming,
   timed,
+  unstoredWrites,
   folderNameProblem,
   type DriveState,
   type FileMeta,
@@ -57,6 +58,7 @@ import {
 } from './wallet'
 import { Logo } from './Logo'
 import { keepConnectionsWarm, preconnect } from './keepWarm'
+import { driveDeviceFor } from './driveDevice'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
 import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
@@ -81,6 +83,15 @@ const markAction = () => {
   startActionTiming()
 }
 for (const ev of ['click', 'keydown', 'drop', 'change']) window.addEventListener(ev, markAction, true)
+
+// A change whose transaction is sent but whose data isn't on the storage
+// nodes yet would be left half done by closing the page: ask first. (The
+// next visit can usually finish it, but only on this device.)
+window.addEventListener('beforeunload', (e) => {
+  if (unstoredWrites() === 0) return
+  e.preventDefault()
+  e.returnValue = ''
+})
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
 /** "Asked your wallet to approve, 3.9 s after your click (chain check 3.4 s · …)": the steps
  *  core and the upload timed (see core timing.ts), what's left as "other", and whether the
@@ -778,10 +789,11 @@ export default function App() {
     async (signer: WalletState['signer'], masterKey: Uint8Array, address: string) => {
       const store = new DriveStore(NETWORK, signer, masterKey, {
         onProgress: (msg) => {
-          if (msg.includes('sealed') || msg.includes('Repair')) log(msg)
+          if (msg.includes('sealed') || msg.includes('Repair') || msg.startsWith('Interrupted change')) log(msg)
           if (msg.startsWith('Waiting for wallet approval')) log(walletAskedMessage())
         },
         eventCache: eventCacheFor(address),
+        device: driveDeviceFor(address),
       })
       storeRef.current = store
       // read-only: has this account published a share key?

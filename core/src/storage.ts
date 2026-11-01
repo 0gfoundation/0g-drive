@@ -122,6 +122,71 @@ const SEGMENT_CONCURRENCY = 6
 const SEGMENT_ROUNDS = 3
 
 /**
+ * A log entry whose transaction is on chain but whose data no storage node
+ * ever received: the uploader closed the page in between. Downloads say so
+ * after one pass over the nodes instead of retrying them for seconds.
+ */
+export class NotUploadedError extends Error {
+  constructor(readonly rootHash: string) {
+    super(`no data was ever uploaded for ${rootHash}`)
+    this.name = 'NotUploadedError'
+  }
+}
+
+type NodeEntry = { node: StorageNode; shardId: number; numShard: number }
+
+/** The nodes whose shard holds at least one of the entry's segments. */
+function segmentHolders(nodes: NodeEntry[], startSeg: number, numSegments: number): NodeEntry[] {
+  return nodes.filter(
+    (e) =>
+      numSegments >= e.numShard ||
+      Array.from({ length: numSegments }, (_, i) => startSeg + i).some((s) => s % e.numShard === e.shardId)
+  )
+}
+
+/**
+ * True when every holder that answers reports the entry unfinished with no
+ * segments: its data never arrived. Only holders count: a node whose shard
+ * holds none of the entry reports it "finalized" right away (observed with
+ * scripts/probe-unuploaded.mjs).
+ */
+async function noDataOnHolders(holders: NodeEntry[], ask: (node: StorageNode) => Promise<unknown>): Promise<boolean> {
+  const infos = (await Promise.all(holders.map(({ node }) => ask(node).catch(() => null)))) as (FileInfoLike | null)[]
+  const answered = infos.filter((i): i is FileInfoLike => i !== null && typeof i === 'object')
+  return answered.length > 0 && answered.every((i) => !i.finalized && i.uploadedSegNum === 0)
+}
+
+/**
+ * Writes whose transaction is sent (or about to be) but whose data hasn't
+ * reached the storage nodes yet. Closing the page now would leave their
+ * log entries empty, so the app asks first.
+ */
+let unstored = 0
+const unstoredListeners = new Set<(count: number) => void>()
+
+function trackUnstored(): () => void {
+  unstored++
+  unstoredListeners.forEach((fn) => fn(unstored))
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    unstored--
+    unstoredListeners.forEach((fn) => fn(unstored))
+  }
+}
+
+export function unstoredWrites(): number {
+  return unstored
+}
+
+/** Call `fn` with the count whenever it changes; returns an unsubscribe. */
+export function onUnstoredWritesChange(fn: (count: number) => void): () => void {
+  unstoredListeners.add(fn)
+  return () => unstoredListeners.delete(fn)
+}
+
+/**
  * App-wide limit on segment requests in flight. Browsers allow ~6
  * connections per host and the RPC timeout (30 s) counts time spent queued
  * behind them, so parallel downloads (preview + thumbnails + indexing) on a
@@ -198,12 +263,10 @@ async function uploadAbstract(
   }
 
   opts.onProgress?.('Uploading to 0G Storage…')
-  const [tx, uploadErr] = await indexer.upload(
-    payload,
-    network.rpcUrl,
-    signer as unknown as SdkSigner,
-    uploadOpts
-  )
+  const stored = trackUnstored()
+  const [tx, uploadErr] = await indexer
+    .upload(payload, network.rpcUrl, signer as unknown as SdkSigner, uploadOpts)
+    .finally(stored)
   if (uploadErr !== null) {
     throw new Error(`Upload failed: ${uploadErr}`)
   }
@@ -361,6 +424,15 @@ export interface BatchOpts {
    * their log entries stay empty and readers fall back to older versions.
    */
   finalize?: (roots: string[]) => Promise<BatchItem[]>
+  /**
+   * Called with every item's exact stored bytes (ciphertext when
+   * encrypted), in order, just before the wallet is asked: keep them, and
+   * resumeWrites can finish the upload if the page closes after the
+   * transaction but before the data is sent.
+   */
+  beforeSend?: (writes: { root: string; bytes: Uint8Array }[]) => Promise<void>
+  /** Called once the transaction is sent. */
+  onSent?: (txHash: string) => void
   finalityRequired?: boolean
   finalityTimeoutMs?: number
   maxRepairs?: number
@@ -514,6 +586,14 @@ export async function uploadBatch(
     0n
   )
   const fee = sectors * (await timed('price', price))
+  if (opts.beforeSend) {
+    started = performance.now()
+    const writes = await Promise.all(
+      all.map(async (p) => ({ root: p.root, bytes: (await p.payload.readFromFile(0, p.payload.size())).buffer }))
+    )
+    await opts.beforeSend(writes)
+    addActionTiming('preparing', performance.now() - started)
+  }
   all.forEach((_, i) => onItem(i, 'approve'))
   opts.onProgress?.('Waiting for wallet approval…')
   const tx = {
@@ -525,105 +605,172 @@ export async function uploadBatch(
   // would first ask it for the block number and a gas estimate (two
   // round trips through the extension, ~0.9 s) that the wallet then
   // works out again itself before its prompt.
-  const sent = {
-    hash:
-      signer instanceof ethers.JsonRpcSigner
-        ? ((await signer.provider.send('eth_sendTransaction', [
-            { from: submitter, to: tx.to, data: tx.data, value: ethers.toQuantity(tx.value) },
-          ])) as string)
-        : (await signer.sendTransaction(tx)).hash,
-  }
-  opts.onProgress?.(`Transaction submitted: ${sent.hash}`)
-  const receipt = await provider.waitForTransaction(sent.hash)
-  if (!receipt || receipt.status !== 1) throw new Error(`batch transaction failed (${sent.hash})`)
-
-  const txSeqByRoot = new Map<string, number>()
-  for (const log of receipt.logs) {
-    if (log.address.toLowerCase() !== network.flowAddress.toLowerCase()) continue
-    try {
-      const parsed = flow.interface.parseLog({ topics: [...log.topics], data: log.data })
-      if (parsed?.name !== 'Submit') continue
-      txSeqByRoot.set(foldNodesToRoot(parsed.args.submission.nodes), Number(parsed.args.submissionIndex))
-    } catch {
-      // not a Flow event
+  const unsent = trackUnstored()
+  try {
+    const sent = {
+      hash:
+        signer instanceof ethers.JsonRpcSigner
+          ? ((await signer.provider.send('eth_sendTransaction', [
+              { from: submitter, to: tx.to, data: tx.data, value: ethers.toQuantity(tx.value) },
+            ])) as string)
+          : (await signer.sendTransaction(tx)).hash,
     }
-  }
-  for (const p of all) {
-    if (!txSeqByRoot.has(p.root)) throw new Error(`batch receipt is missing the entry for ${p.root}`)
-  }
+    opts.onProgress?.(`Transaction submitted: ${sent.hash}`)
+    opts.onSent?.(sent.hash)
+    const receipt = await provider.waitForTransaction(sent.hash)
+    if (!receipt || receipt.status !== 1) throw new Error(`batch transaction failed (${sent.hash})`)
 
-  // 3. Segments (no transactions possible from here on), then sealing
+    const txSeqByRoot = new Map<string, number>()
+    for (const log of receipt.logs) {
+      if (log.address.toLowerCase() !== network.flowAddress.toLowerCase()) continue
+      try {
+        const parsed = flow.interface.parseLog({ topics: [...log.topics], data: log.data })
+        if (parsed?.name !== 'Submit') continue
+        txSeqByRoot.set(foldNodesToRoot(parsed.args.submission.nodes), Number(parsed.args.submissionIndex))
+      } catch {
+        // not a Flow event
+      }
+    }
+    for (const p of all) {
+      if (!txSeqByRoot.has(p.root)) throw new Error(`batch receipt is missing the entry for ${p.root}`)
+    }
+
+    // 3. Segments (no transactions possible from here on), then sealing
+    const indexer = new SessionIndexer(network.indexerRpc)
+    const guard = noTxSigner(signer)
+    const strict = opts.finalityRequired ?? true
+
+    const store = async (p: Prepared, index: number): Promise<BatchItemResult> => {
+      try {
+        onItem(index, 'uploading')
+        await waitVisible(indexer, p.root)
+        const [, err] = await indexer.upload(p.payload, network.rpcUrl, guard as unknown as SdkSigner, {
+          skipTx: true,
+          skipIfFinalized: false, // see ensureFinality: one node's view isn't enough
+          finalityRequired: false,
+          tags: p.tags,
+        })
+        if (err !== null) throw err
+        return { ok: true, result: resultFor(p) }
+      } catch (err) {
+        onItem(index, 'error', (err as Error).message)
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+    const resultFor = (p: Prepared): UploadResult => {
+      const txSeq = txSeqByRoot.get(p.root)!
+      return {
+        fragmented: false,
+        rootHashes: [p.root],
+        txHashes: [sent.hash],
+        txSeqs: [txSeq],
+        rootHash: p.root,
+        txHash: sent.hash,
+        txSeq,
+      }
+    }
+    const seal = async (p: Prepared, index: number, r: BatchItemResult): Promise<BatchItemResult> => {
+      if (!r.ok || !strict) {
+        if (r.ok) onItem(index, 'done')
+        return r
+      }
+      try {
+        onItem(index, 'sealing')
+        await ensureFinality(p.payload, indexer, network, guard, [p.root], {
+          finalityTimeoutMs: opts.finalityTimeoutMs,
+          maxRepairs: opts.maxRepairs,
+          onProgress: (m) => onItem(index, 'sealing', m),
+        })
+        onItem(index, 'done')
+        return r
+      } catch (err) {
+        onItem(index, 'error', (err as Error).message)
+        return { ok: false, error: (err as Error).message }
+      }
+    }
+
+    const stored: BatchItemResult[] = []
+    for (let i = 0; i < primary.length; i++) stored.push(await store(primary[i], i))
+    const itemResults = await Promise.all(primary.map((p, i) => seal(p, i, stored[i])))
+
+    let extraResults: BatchItemResult[]
+    if (itemResults.every((r) => r.ok)) {
+      const off = primary.length
+      const s: BatchItemResult[] = []
+      for (let i = 0; i < extras.length; i++) s.push(await store(extras[i], off + i))
+      unsent()
+      extraResults = await Promise.all(extras.map((p, i) => seal(p, off + i, s[i])))
+    } else {
+      extraResults = extras.map((_, i) => {
+        onItem(primary.length + i, 'skipped')
+        return { ok: false, skipped: true, error: 'not stored: an item it depends on failed' }
+      })
+    }
+
+    return { txHash: sent.hash, items: itemResults, extras: extraResults }
+  } finally {
+    unsent()
+  }
+}
+
+/**
+ * Finish writes whose transaction landed but whose data never left the
+ * device (the page closed in between): send each saved blob's segments to
+ * its existing log entry (no transaction, no fee), unless the nodes
+ * already hold it. `bytes` are exactly what was stored (see
+ * BatchOpts.beforeSend). Returns which are now on the nodes.
+ */
+export async function resumeWrites(
+  writes: { root: string; bytes: Uint8Array }[],
+  network: NetworkConfig,
+  signer: ethers.Signer
+): Promise<boolean[]> {
   const indexer = new SessionIndexer(network.indexerRpc)
   const guard = noTxSigner(signer)
-  const strict = opts.finalityRequired ?? true
-
-  const store = async (p: Prepared, index: number): Promise<BatchItemResult> => {
-    try {
-      onItem(index, 'uploading')
-      await waitVisible(indexer, p.root)
-      const [, err] = await indexer.upload(p.payload, network.rpcUrl, guard as unknown as SdkSigner, {
-        skipTx: true,
-        skipIfFinalized: false, // see ensureFinality: one node's view isn't enough
-        finalityRequired: false,
-        tags: p.tags,
-      })
-      if (err !== null) throw err
-      return { ok: true, result: resultFor(p) }
-    } catch (err) {
-      onItem(index, 'error', (err as Error).message)
-      return { ok: false, error: (err as Error).message }
+  const results: boolean[] = []
+  const stored = trackUnstored()
+  try {
+    for (const w of writes) {
+      try {
+        const payload = new MemData(w.bytes)
+        const [tree, err] = await payload.merkleTree()
+        if (err !== null || tree?.rootHash()?.toLowerCase() !== w.root.toLowerCase()) throw new Error('saved bytes do not match')
+        if (await isSealed(indexer, w.root)) {
+          results.push(true)
+          continue
+        }
+        await waitVisible(indexer, w.root)
+        const [, upErr] = await indexer.upload(payload, network.rpcUrl, guard as unknown as SdkSigner, {
+          skipTx: true,
+          skipIfFinalized: false, // see ensureFinality: one node's view isn't enough
+          finalityRequired: false,
+        })
+        if (upErr !== null) throw upErr
+        results.push(true)
+      } catch {
+        results.push(false)
+      }
     }
+  } finally {
+    stored()
   }
-  const resultFor = (p: Prepared): UploadResult => {
-    const txSeq = txSeqByRoot.get(p.root)!
-    return {
-      fragmented: false,
-      rootHashes: [p.root],
-      txHashes: [sent.hash],
-      txSeqs: [txSeq],
-      rootHash: p.root,
-      txHash: sent.hash,
-      txSeq,
-    }
-  }
-  const seal = async (p: Prepared, index: number, r: BatchItemResult): Promise<BatchItemResult> => {
-    if (!r.ok || !strict) {
-      if (r.ok) onItem(index, 'done')
-      return r
-    }
-    try {
-      onItem(index, 'sealing')
-      await ensureFinality(p.payload, indexer, network, guard, [p.root], {
-        finalityTimeoutMs: opts.finalityTimeoutMs,
-        maxRepairs: opts.maxRepairs,
-        onProgress: (m) => onItem(index, 'sealing', m),
-      })
-      onItem(index, 'done')
-      return r
-    } catch (err) {
-      onItem(index, 'error', (err as Error).message)
-      return { ok: false, error: (err as Error).message }
-    }
-  }
+  return results
+}
 
-  const stored: BatchItemResult[] = []
-  for (let i = 0; i < primary.length; i++) stored.push(await store(primary[i], i))
-  const itemResults = await Promise.all(primary.map((p, i) => seal(p, i, stored[i])))
-
-  let extraResults: BatchItemResult[]
-  if (itemResults.every((r) => r.ok)) {
-    const off = primary.length
-    const s: BatchItemResult[] = []
-    for (let i = 0; i < extras.length; i++) s.push(await store(extras[i], off + i))
-    extraResults = await Promise.all(extras.map((p, i) => seal(p, off + i, s[i])))
-  } else {
-    extraResults = extras.map((_, i) => {
-      onItem(primary.length + i, 'skipped')
-      return { ok: false, skipped: true, error: 'not stored: an item it depends on failed' }
-    })
-  }
-
-  return { txHash: sent.hash, items: itemResults, extras: extraResults }
+/** Every node holding a segment of `root` reports it finalized. */
+async function isSealed(indexer: Indexer, root: string): Promise<boolean> {
+  const { trusted } = await indexer.getShardedNodes()
+  const nodes: NodeEntry[] = (trusted ?? []).map((t) => ({
+    node: new StorageNode(t.url),
+    shardId: t.config.shardId,
+    numShard: t.config.numShard,
+  }))
+  const infos = await Promise.all(nodes.map(({ node }) => node.getFileInfo(root, true).catch(() => null)))
+  const any = infos.find((i) => i) as FileInfoLike | undefined
+  if (!any) return false
+  const numSegments = ceilDiv(ceilDiv(Number(any.tx.size), CHUNK_SIZE), SEGMENT_MAX_CHUNKS)
+  const holders = new Set(segmentHolders(nodes, Math.floor(any.tx.startEntryIndex / SEGMENT_MAX_CHUNKS), numSegments))
+  return nodes.every((e, i) => !holders.has(e) || (infos[i] as FileInfoLike | null)?.finalized === true)
 }
 
 /** Upload in-memory bytes (works in Node and browser). */
@@ -818,6 +965,12 @@ export async function downloadFile(
       (fileInfo.tx.startEntryIndex + numChunks - 1) / SEGMENT_MAX_CHUNKS
     )
     const numSegments = endSegGlobal - startSegGlobal + 1
+    // asked once, after a first pass over the nodes finds no segment
+    let arrived: Promise<boolean> | null = null
+    const neverArrived = () =>
+      (arrived ??= noDataOnHolders(segmentHolders(nodeEntries, startSegGlobal, numSegments), (node) =>
+        byTxSeq ? node.getFileInfoByTxSeq(txSeq) : node.getFileInfo(rootHash, true)
+      ))
 
     // Plaintext bytes this fragment will yield (header lives in fragment 0)
     fragmentPlaintextRemaining =
@@ -843,6 +996,7 @@ export async function downloadFile(
       let seg: Uint8Array | null = null
       let lastErr = ''
       for (let a = 0; a < SEGMENT_ROUNDS * candidates.length && seg === null; a++) {
+        if (a === candidates.length && (await neverArrived())) throw new NotUploadedError(rootHash)
         if (a > 0 && a % candidates.length === 0) {
           // every node failed this round: back off, then go round again
           await new Promise((r) => setTimeout(r, 1000 * (a / candidates.length)))
