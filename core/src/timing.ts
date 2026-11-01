@@ -4,7 +4,7 @@
 // adds the time it took. Actions normally run one at a time; overlapping
 // ones just share a record.
 
-export type TimingStep = 'chain' | 'listings' | 'indexing' | 'preparing' | 'price'
+export type TimingStep = 'chain' | 'listings' | 'indexing' | 'preparing' | 'price' | 'gas'
 
 let steps: Partial<Record<TimingStep, number>> = {}
 let details: Partial<Record<TimingStep, string>> = {}

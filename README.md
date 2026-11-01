@@ -78,7 +78,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
 | `npm run test:rename` | file rename: name checks, duplicates refused, one transaction, phone layout; file actions icon-only; Activity notes when the wallet was asked |
 | `npm run test:folder-rename` | folder rename: name checks, one transaction, open folder follows, subfolder kept, phone layout |
-| `npm run test:move` | "Move to…" picker for folders and files: greyed-out places, name clashes refused, new destination folder, one transaction, phone layout; grid "Select all" |
+| `npm run test:move` | "Move to…" picker for folders and files: greyed-out places, name clashes refused, new destination folder, one transaction, phone layout; grid "Select all"; every transaction carries the app's gas limit with room to spare (0G charges ≥ 80 % of the limit) |
 | `node scripts/test-interrupted-change.mjs` | a change interrupted between its transaction and its upload: asks before closing, finished on the next visit with no new transaction, undone (and given up quickly) in another browser |
 | `node scripts/test-abandoned-listing.mjs` | a listing that never got its data, seen from another device: undone; once past the abandon threshold (shortened to 1 minute), marked abandoned, the user told once, skipped afterwards (Node, ~3 min) |
 | `node scripts/test-duplicate-names.mjs` | uploading a name already in the folder: asked first with an editable name per file ("name (1)" suggested; taken, empty, "/" and repeated names refused), Replace (old to trash, one transaction) / Skip / Cancel; restore into a taken name; phone layout |
