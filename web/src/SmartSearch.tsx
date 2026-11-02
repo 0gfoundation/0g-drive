@@ -1,6 +1,7 @@
-// Phase 1 AI in the UI: drive-wide search, indexing older files, and
-// organize suggestions. Everything is computed on this device; the only
-// chain writes are the (batched) folder-manifest updates the user approves.
+// Phase 1 AI in the UI: drive-wide search, background indexing of files
+// that have no search entry, and organize suggestions. Everything is
+// computed on this device; the only chain writes are the (batched)
+// folder-manifest updates the user approves.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DriveState, DriveStore, FileMeta, SearchEntry } from '@0gdrive/core'
@@ -20,6 +21,7 @@ import {
   type ModelStatus,
 } from './ai/client'
 import { rank, suggestMoves, type MoveSuggestion } from './ai/searchcore'
+import { addPendingSearch, pendingSearch, prunePendingSearch, subscribePendingSearch } from './searchPending'
 
 export interface FileHit {
   meta: FileMeta
@@ -37,19 +39,40 @@ interface Deps {
   reloadDrive: () => Promise<void>
   log: (msg: string) => void
   setBusy: (msg: string | null) => void
+  /** a drive opened with its recovery password: nothing can be saved */
+  readOnly: boolean
+  /** something else is using the network or the wallet (an upload, a preview, a change) */
+  paused: boolean
 }
 
 const lastSegment = (path: string) => path.split('/').pop() ?? path
 
+/** A file's search entry: its saved one, else one made on this device and not saved yet. */
+function searchOf(meta: FileMeta): SearchEntry | undefined {
+  if (meta.search) return meta.search
+  const p = pendingSearch().get(meta.id)
+  return p && p.name === meta.name ? p.entry : undefined
+}
+
+/** Every file in the drive (not the trash), with this device's unsaved search entries filled in. */
 function allFiles(drive: DriveState): { meta: FileMeta; folder: string }[] {
   const out: { meta: FileMeta; folder: string }[] = []
   for (const [path, folder] of drive.folders) {
-    for (const meta of folder?.files ?? []) out.push({ meta, folder: path })
+    for (const meta of folder?.files ?? []) {
+      const search = searchOf(meta)
+      out.push({ meta: search === meta.search ? meta : { ...meta, search }, folder: path })
+    }
   }
   return out
 }
 
-export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadDrive, log, setBusy }: Deps) {
+/** Indexed by name only, though its content is what search is for (couldn't be read or had no text). */
+const nameOnly = (meta: FileMeta, e: SearchEntry) => !e.t && !e.c && needsContent(meta.name, meta.mime, meta.size)
+
+/** Between background-indexed files, so the page stays responsive. */
+const INDEX_GAP_MS = 400
+
+export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadDrive, log, setBusy, readOnly, paused }: Deps) {
   const [enabled, setEnabled] = useState(smartSearchEnabled)
   const [model, setModel] = useState<ModelStatus>({ loading: false })
   const [query, setQuery] = useState('')
@@ -60,6 +83,9 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
   const [suggestions, setSuggestions] = useState<MoveSuggestion<FileMeta>[] | null>(null)
   const [suggesting, setSuggesting] = useState(false)
   const searchSeq = useRef(0)
+  /** bumped when this device's unsaved search entries change */
+  const [pendingTick, setPendingTick] = useState(0)
+  useEffect(() => subscribePendingSearch(() => setPendingTick((t) => t + 1)), [])
 
   useEffect(() => subscribeModelStatus(setModel), [])
   // a load failure, in Activity too: readable on phones, which show no tooltips
@@ -112,7 +138,8 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
         if (seq === searchSeq.current) setSearching(false)
       }
     },
-    [drive, enabled, log]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drive, enabled, log, pendingTick]
   )
 
   // debounce typing; results read as "searching" until the new query lands
@@ -127,47 +154,92 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
     setResults(null)
   }, [])
 
-  // ─── Index older files in the current folder ────────────────────────
+  // ─── Background indexing ────────────────────────────────────────────
+  //
+  // Files with no search entry anywhere in the drive (uploaded with smart
+  // search off, before the models were ready, or from another device) are
+  // indexed here one at a time while nothing else runs. The entries are
+  // kept on this device (searchPending.ts) and search uses them at once;
+  // they're saved with the next change the user approves, or with Save.
 
-  const folderFiles = drive?.folders.get(currentPath)?.files ?? []
-  const unindexed = enabled ? folderFiles.filter((f) => !f.search) : []
+  // what the drive as loaded already has drops out
+  useEffect(() => {
+    if (drive) prunePendingSearch(drive)
+  }, [drive])
 
-  const indexFolder = useCallback(async () => {
-    const store = storeRef.current
-    if (!store || unindexed.length === 0) return
-    const n = unindexed.length
-    setBusy(`Indexing ${n} file${n === 1 ? '' : 's'}…`)
-    try {
-      const updated: FileMeta[] = []
-      for (let i = 0; i < unindexed.length; i++) {
-        const meta = unindexed[i]
-        log(`Indexing ${meta.name} (${i + 1}/${n})…`)
+  /** files that couldn't be indexed this visit (not retried until a reload) */
+  const failed = useRef(new Set<string>())
+  const [indexing, setIndexing] = useState<string | null>(null)
+  const [indexTick, setIndexTick] = useState(0)
+  const modelsOk = !model.loading && !model.error
+  const runIndexer = enabled && !readOnly && !paused && modelsOk && drive !== null
+
+  useEffect(() => {
+    if (!runIndexer || !drive) return
+    const pending = pendingSearch()
+    const next = allFiles(drive).find((f) => !f.meta.search && !pending.has(f.meta.id) && !failed.current.has(f.meta.id))
+    if (!next) return
+    let alive = true
+    const timer = setTimeout(async () => {
+      const { meta, folder } = next
+      setIndexing(meta.name)
+      try {
         let blob = new Blob([])
         if (needsContent(meta.name, meta.mime, meta.size)) {
           try {
-            const bytes = await loadBytes(meta)
-            blob = new Blob([bytes as unknown as BlobPart], { type: meta.mime })
-          } catch (err) {
-            log(`  could not read ${meta.name} (${(err as Error).message}) — indexing its name only`)
+            blob = new Blob([(await loadBytes(meta)) as unknown as BlobPart], { type: meta.mime })
+          } catch {
+            // unreadable now: its name only, like an upload that couldn't be read
           }
         }
-        const entry: SearchEntry | undefined = await indexFile(blob, meta.name, meta.mime, meta.thumb)
-        if (entry) updated.push({ ...meta, search: entry })
+        const entry = await indexFile(blob, meta.name, meta.mime, meta.thumb)
+        const id = folder === '' ? '' : drive.tree.idOf(folder)
+        if (entry && id !== null) addPendingSearch(meta.id, { entry, name: meta.name, folder: id })
+        else failed.current.add(meta.id)
+      } catch {
+        failed.current.add(meta.id)
+      } finally {
+        setIndexing(null)
+        if (alive) setIndexTick((t) => t + 1)
       }
-      if (updated.length === 0) {
-        log('Nothing could be indexed.')
-        return
-      }
-      log(`Saving the search index for ${updated.length} file${updated.length === 1 ? '' : 's'} — approve 1 transaction…`)
-      await store.putFileRecords(currentPath, updated)
+    }, INDEX_GAP_MS)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runIndexer, drive, indexTick])
+
+  const index = { unsaved: 0, remaining: 0, nameOnly: 0, working: indexing }
+  for (const folder of drive?.folders.values() ?? []) {
+    for (const f of folder?.files ?? []) {
+      const e = searchOf(f)
+      if (e && !f.search) index.unsaved++ // indexed on this device, not saved in the drive yet
+      if (!e && enabled && !failed.current.has(f.id)) index.remaining++ // the indexer works through these
+      if (e && nameOnly(f, e)) index.nameOnly++
+    }
+  }
+  void pendingTick // the counts read the pending entries
+
+  const [saving, setSaving] = useState(false)
+  const saveIndex = useCallback(async () => {
+    const store = storeRef.current
+    if (!store) return
+    const n = pendingSearch().size
+    setSaving(true)
+    setBusy('Saving the search index…')
+    log(`Saving the search index for ${n} file${n === 1 ? '' : 's'} — approve 1 transaction…`)
+    try {
+      await store.saveSearchEntries()
       await reloadDrive()
-      log(`Indexed ${updated.length} file${updated.length === 1 ? '' : 's'} for search.`)
+      log('Search index saved.')
     } catch (err) {
-      log(`Indexing failed: ${(err as Error).message}`)
+      log(`Saving the search index failed: ${(err as Error).message}`)
     } finally {
+      setSaving(false)
       setBusy(null)
     }
-  }, [storeRef, unindexed, currentPath, loadBytes, reloadDrive, log, setBusy])
+  }, [storeRef, reloadDrive, log, setBusy])
 
   // ─── Organize suggestions ───────────────────────────────────────────
 
@@ -178,9 +250,10 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
       const paths = [...drive.folders.keys()]
       const named = paths.filter((p) => p !== '')
       const nameVecs = named.length ? await embedTexts(named.map(lastSegment)) : []
+      const withEntries = allFiles(drive)
       const folders = paths.map((path) => ({
         path,
-        files: drive.folders.get(path)?.files ?? [],
+        files: withEntries.filter((f) => f.folder === path).map((f) => f.meta),
         nameVec: path === '' ? undefined : nameVecs[named.indexOf(path)],
       }))
       setSuggestions(suggestMoves(folders, currentPath, (m) => m))
@@ -223,8 +296,9 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
     resultsQuery,
     searching,
     clearSearch,
-    unindexed,
-    indexFolder,
+    index,
+    saving,
+    saveIndex,
     suggestions,
     suggesting,
     findSuggestions,

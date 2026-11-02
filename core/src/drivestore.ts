@@ -62,7 +62,26 @@ export interface DriveStoreOpts {
   device?: DriveDevice
   /** How old a listing with no data must be to be abandoned (default 30 minutes; tests shorten it). */
   abandonedAfterMs?: number
+  /**
+   * Search entries made on this device and not saved yet, by file id. Any
+   * folder listing written gets them for its files that have none; other
+   * folders holding some ride along in the same transaction (see
+   * searchSaveItems), so saving them costs no wallet prompt of its own.
+   */
+  pendingSearch?: () => ReadonlyMap<string, PendingSearchEntry>
 }
+
+/** A search entry made on this device, not saved in its folder's listing yet. */
+export interface PendingSearchEntry {
+  entry: SearchEntry
+  /** the file's name when indexed: a file renamed since is indexed again instead */
+  name: string
+  /** the id of the folder it was in */
+  folder: string
+}
+
+/** At most this many folders' listings ride along with one change to save search entries. */
+const SEARCH_SAVE_FOLDERS = 20
 
 /** One listing of a change, kept on the device until its data is stored. */
 export interface PendingWrite {
@@ -843,11 +862,63 @@ export class DriveStore {
   // ─── Multi-manifest writes ──────────────────────────────────────────
 
   private manifestItem(value: unknown, tag: string): BatchItem {
+    if (Array.isArray((value as FolderManifest).files)) this.fillSearch((value as FolderManifest).files)
     return {
       data: new TextEncoder().encode(JSON.stringify(value)),
       encryption: { type: 'aes256', key: this.masterKey },
       tags: tag,
     }
+  }
+
+  /** Give `files` that have no search entry this device's pending one; how many got one. */
+  private fillSearch(files: FileMeta[]): number {
+    const pending = this.opts.pendingSearch?.()
+    if (!pending?.size) return 0
+    let n = 0
+    for (const f of files) {
+      const p = f.search ? undefined : pending.get(f.id)
+      if (p && p.name === f.name) {
+        f.search = p.entry
+        n++
+      }
+    }
+    return n
+  }
+
+  /**
+   * Listings that save this device's pending search entries, for folders
+   * other than those `alongside` already writes (which get theirs anyway),
+   * as batch items to send in the same transaction. Up to
+   * SEARCH_SAVE_FOLDERS folders; [] when nothing is pending. Reads the
+   * events as last scanned (callers refresh them first).
+   */
+  async searchSaveItems(alongside: BatchItem[] = [], max = SEARCH_SAVE_FOLDERS): Promise<BatchItem[]> {
+    const pending = this.opts.pendingSearch?.()
+    if (!pending?.size) return []
+    const written = new Set(alongside.map((i) => i.tags))
+    const index = await this.loadIndex()
+    const ids = [...new Set([...pending.values()].map((p) => p.folder))]
+      .filter((id) => (id === ROOT_ID || index.tree.has(id)) && !written.has(folderTag(id)))
+      .slice(0, max)
+    const out: BatchItem[] = []
+    for (const id of ids) {
+      const folder = await this.loadFolder(id)
+      if (!folder) continue
+      const copy = { ...folder, files: folder.files.map((f) => ({ ...f })) }
+      if (this.fillSearch(copy.files) === 0) continue
+      copy.updatedAt = Date.now()
+      copy.version += 1
+      out.push(this.manifestItem(copy, folderTag(id)))
+    }
+    return out
+  }
+
+  /** Save this device's pending search entries now: one transaction (where batchSubmit is on). */
+  async saveSearchEntries(): Promise<number> {
+    await this.refreshEvents()
+    const items = await this.searchSaveItems([], Number.POSITIVE_INFINITY)
+    if (items.length > 0) await this.writeManifests([], items, '')
+    return items.length
   }
 
   /** The trash with `records` added (a record already there is replaced). */
@@ -889,7 +960,11 @@ export class DriveStore {
     // a single manifest goes this way too: unlike the SDK's own upload, it
     // asks no storage node anything before the wallet prompt
     const primary = first.length > 0 ? first : then
-    const extras = first.length > 0 ? then : []
+    // pending search entries of other folders ride along; if they don't
+    // store, they stay pending (never this change's error)
+    const bonus = await this.searchSaveItems(all).catch(() => [])
+    const required = first.length > 0 ? then.length : 0
+    const extras = [...(first.length > 0 ? then : []), ...bonus]
     // kept on this device until stored (see DriveDevice)
     const device = this.opts.device
     const change = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -930,7 +1005,7 @@ export class DriveStore {
     for (const r of res.items) {
       if (!r.ok) throw new Error(`nothing was changed: a listing could not be stored (${r.error})`)
     }
-    for (const r of res.extras) {
+    for (const r of res.extras.slice(0, required)) {
       if (!r.ok) throw new Error(`${partial} (${r.error})`)
     }
   }
