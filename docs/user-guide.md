@@ -73,7 +73,7 @@ Every file gets its own random key; the file is encrypted with it before upload,
 
 ## Preview and download
 
-File buttons show icons only; point at one to see its name. Click a file name to preview it (images, PDFs, text and code up to 2 MB, audio, video; files up to 100 MB), or use the download button (↓). Files are downloaded from storage nodes and decrypted in your browser. Previewed files are kept on this device **still encrypted**, so the next preview is instant. Thumbnails made by the browser are kept on this device (unencrypted, never uploaded) for speed; clearing the site's data removes them.
+File buttons show icons only; point at one to see its name. Click a file name to preview it (images, PDFs, text and code up to 2 MB, audio, video; files up to 100 MB), or use the download button (↓). Files are downloaded from storage nodes and decrypted in your browser. On phones and tablets a PDF opens as scrollable pages with a page counter; for zoom or search, download it. Previewed files are kept on this device **still encrypted**, so the next preview is instant. Thumbnails made by the browser are kept on this device (unencrypted, never uploaded) for speed; clearing the site's data removes them.
 
 ## Sharing
 
