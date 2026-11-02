@@ -98,6 +98,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:ai-memory` | the AI engine’s memory reservation stays at 1 GB, and models load in a tab that has no room for 4 GB |
 | `npm run test:pdf-preview` | PDF preview on phones: pages drawn and released as you scroll; desktop keeps the browser’s viewer |
 | `npm run test:bg-index` | background indexing: files without search entries indexed on the device, saved with the next approved change or Save |
+| `npm run test:html-preview` | HTML preview: the page shown sandboxed (no scripts, nothing loaded from the internet), or its source |
 | `node scripts/test-ai-loading.mjs` | AI model loading: off on phones (asks before turning on), text model first, photo models on the first photo |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
