@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { FileMeta } from '@0gdrive/core'
 import { getSavedThumb, saveThumb, thumbKey } from './thumbStore'
+import { PdfPages, drawsPdfPages } from './PdfPages'
 
 // ─── Thumbnails ───────────────────────────────────────────────────────
 //
@@ -449,7 +450,7 @@ export function PreviewModal({
   } else if (kind === 'audio') {
     body = <audio className="preview-audio" src={url} controls />
   } else {
-    body = <iframe className="preview-pdf" src={url} title={meta.name} />
+    body = drawsPdfPages() ? <PdfPages data={data} name={meta.name} /> : <iframe className="preview-pdf" src={url} title={meta.name} />
   }
 
   return (

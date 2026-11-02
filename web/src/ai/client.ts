@@ -6,6 +6,7 @@ import { downloadFile, getNetworkConfig, type SearchEntry } from '@0gdrive/core'
 import type { AiMessage, AiRequest, PageReply } from './ai.worker'
 import { TEXT_MODEL_ON_0G, type FileOn0g } from './modelOn0g'
 import type { QueryVectors } from './engine'
+import { loadPdfjs } from '../pdfjs'
 
 export type { QueryVectors }
 
@@ -229,9 +230,7 @@ export function isPhoto(mime: string): boolean {
 }
 
 async function pdfText(blob: Blob): Promise<string | undefined> {
-  const pdfjs = await import('pdfjs-dist')
-  const { default: workerUrl } = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+  const pdfjs = await loadPdfjs()
   const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) })
   const doc = await task.promise
   try {
