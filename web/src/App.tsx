@@ -72,6 +72,7 @@ import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
 import { AssistantPanel, highlight, isNarrow, type DriveStatus } from './Assistant'
 import { SearchBox, SearchResults, SuggestionsPanel, useSmartDrive } from './SmartSearch'
+import { openPendingSearch, pendingSearch } from './searchPending'
 import { describeModelStatus, entryForRename, getModelStatus, modelErrorReason, indexFile, isPhone, isPhoto, modelEta, modelsLoading, smartSearchEnabled, subscribeModelStatus } from './ai/client'
 
 const NETWORK = getNetworkConfig('testnet', 'turbo')
@@ -803,7 +804,9 @@ export default function App() {
 
   const initDrive = useCallback(
     async (signer: WalletState['signer'], masterKey: Uint8Array, address: string) => {
+      await openPendingSearch(address, masterKey)
       const store = new DriveStore(NETWORK, signer, masterKey, {
+        pendingSearch,
         onProgress: (msg) => {
           if (msg.includes('sealed') || msg.includes('Repair') || msg.startsWith('Interrupted change')) log(msg)
           if (msg.startsWith('Waiting for wallet approval')) log(walletAskedMessage())
@@ -1185,6 +1188,7 @@ export default function App() {
       }
 
       let metas: FileMeta[] = []
+      let recordCount = 0
       const ids = files.map(() => 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10))
       const timeout = (ms: number) => new Promise<undefined>((r) => setTimeout(() => r(undefined), ms))
       // Search entries: a one-time model download may still be running —
@@ -1196,7 +1200,7 @@ export default function App() {
         const photos = files.some((f) => isPhoto(f.type))
         if (modelsLoading(photos)) {
           // wait only while the download looks close to done; otherwise the
-          // files go up now and "Index older files" catches them later
+          // files go up now and background indexing catches them later
           const unsub = subscribeModelStatus((st) => {
             if (!st.loading) return
             setAll({
@@ -1235,7 +1239,7 @@ export default function App() {
               }),
             finalize: async (roots) => {
               // entries not ready within the time box are left out — the
-              // folder's "Index older files" picks them up later
+              // background indexing (SmartSearch.tsx) picks them up later
               const searches = await timed('indexing', awaitSearches())
               metas = files.map((file, i) => ({
                 id: ids[i],
@@ -1251,7 +1255,10 @@ export default function App() {
                 ...(prep[i].thumb ? { thumb: prep[i].thumb } : {}),
                 ...(searches[i] ? { search: searches[i] } : {}),
               }))
-              return store.prepareFileRecords(path, metas, replace)
+              const records = await store.prepareFileRecords(path, metas, replace)
+              recordCount = records.length
+              // this device's unsaved search entries of other folders ride along (optional)
+              return [...records, ...(await store.searchSaveItems(records).catch(() => []))]
             },
             onProgress: (msg) => {
               if (msg.startsWith('Waiting for wallet approval')) {
@@ -1287,7 +1294,7 @@ export default function App() {
         res.items.forEach((r, i) => {
           if (!r.ok) log(`${files[i].name} failed: ${r.error}`)
         })
-        const manifestOk = res.extras.length > 0 && res.extras.every((r) => r.ok)
+        const manifestOk = recordCount > 0 && res.extras.slice(0, recordCount).every((r) => r.ok)
         if (manifestOk) {
           setAll({ state: 'done', message: 'in your drive ✓' }, (i) => okIdx.includes(i))
           log(`${n} file${n === 1 ? '' : 's'} stored and registered with 1 wallet approval.`)
@@ -1915,7 +1922,11 @@ export default function App() {
     [drive, currentPath, log, reloadDrive]
   )
 
-  const smart = useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadDrive, log, setBusy })
+  const uploading = queue.some((q) => q.state !== 'done' && q.state !== 'error')
+  const smart = useSmartDrive({
+    drive, storeRef, currentPath, loadBytes, reloadDrive, log, setBusy, readOnly,
+    paused: busy !== null || uploading || previewFor !== null,
+  })
 
   /** what the assistant may know about this drive: on/off facts only — no address, names or keys */
   const assistantStatus = (): DriveStatus => ({
@@ -2447,6 +2458,35 @@ export default function App() {
                       ? 'Off — search matches file names only. Off on phones at first: the models need about 600 MB of memory.'
                       : 'Off — search matches file names only.'}
                 </div>
+                {smart.enabled && !readOnly && (smart.index.remaining > 0 || smart.index.unsaved > 0 || smart.index.nameOnly > 0) && (
+                  <div className="sec-item muted search-index" aria-live="polite">
+                    {smart.index.remaining > 0 && (
+                      <div>
+                        {smart.index.working
+                          ? `Indexing ${smart.index.working}… ${smart.index.remaining} to go`
+                          : `${smart.index.remaining} file${smart.index.remaining === 1 ? '' : 's'} to index for search`}
+                      </div>
+                    )}
+                    {smart.index.unsaved > 0 && (
+                      <div>
+                        {smart.index.unsaved} indexed on this device ·{' '}
+                        <button
+                          className="link"
+                          disabled={busy !== null || smart.saving}
+                          onClick={() => void smart.saveIndex()}
+                          title="Save these files' search entries in your drive, for your other devices (1 wallet approval). They're also saved with your next change."
+                        >
+                          Save
+                        </button>
+                      </div>
+                    )}
+                    {smart.index.nameOnly > 0 && (
+                      <div title="Their content couldn't be read (or has no text), so search matches their names only.">
+                        {smart.index.nameOnly} indexed by name only
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           ) : (
@@ -2652,12 +2692,6 @@ export default function App() {
         <section className="files">
           {view === 'drive' && drive && smart.enabled && shownFiles.length > 0 && !readOnly && (
             <div className="ai-bar">
-              {smart.unindexed.length > 0 && (
-                <button className="btn small" disabled={busy !== null} onClick={smart.indexFolder}
-                  title="Download, read and index these files on this device, then save the index (1 wallet approval)">
-                  Index {smart.unindexed.length} older file{smart.unindexed.length === 1 ? '' : 's'} for search
-                </button>
-              )}
               <button className="btn small" disabled={busy !== null || smart.suggesting} onClick={smart.findSuggestions}>
                 {smart.suggesting ? 'Thinking…' : '✨ Suggest organization'}
               </button>

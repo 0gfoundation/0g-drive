@@ -122,7 +122,9 @@ Sidebar → **On-device AI → Smart search & organize**. When on, AI models run
 **On phones it starts off.** The models need about 600 MB of memory, and some phones and wallet apps' browsers close the page or fail to load them when it runs short. You can still turn it on; the app asks first. Search by file name works either way.
 
 - **Search your drive — English and Chinese**: finds files by meaning, e.g. "猫" finds a cat photo named IMG_0001.jpg, "lease contract" finds a PDF named in Chinese. Names with accents (café, José) work too; text in other languages (Japanese, Korean, Russian…) is matched by file name and exact words only. Matches names, text excerpts and photo content.
-- New uploads are indexed automatically. **Index N older files for search** indexes files uploaded before (downloads them, reads them on your device, saves the index: 1 approval).
+- New uploads are indexed automatically. Files without an index (uploaded with smart search off, before the models were ready, or from another device) are found and indexed **in the background**, anywhere in the drive, one at a time while you're not uploading or previewing. The sidebar shows "N files to index for search" while it works. No wallet prompt: search on this device uses them straight away.
+- Those entries are saved in your drive (for your other devices) with **your next change** — an upload, rename, move or new folder — in the same transaction, so no extra approval. To save them right away, use **Save** next to "N indexed on this device" in the sidebar (1 approval).
+- "N indexed by name only": files whose content couldn't be read (or has no text, like a scanned PDF); search matches their names.
 - **✨ Suggest organization** proposes moving files to better-matching folders; you approve the moves in one transaction, however many folders they go to.
 - When off, search matches file names only.
 
