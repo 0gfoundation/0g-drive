@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { FileMeta } from '@0gdrive/core'
 import { getSavedThumb, saveThumb, thumbKey } from './thumbStore'
 import { PdfPages, drawsPdfPages } from './PdfPages'
+import { HtmlPreview } from './HtmlPreview'
 
 // ─── Thumbnails ───────────────────────────────────────────────────────
 //
@@ -332,10 +333,11 @@ const TEXT_MAX_BYTES = 2 * 1024 * 1024
 const TEXT_EXTS = [
   'txt', 'md', 'csv', 'json', 'log', 'yml', 'yaml', 'toml', 'xml', 'ini',
   'ts', 'tsx', 'js', 'jsx', 'mjs', 'py', 'rs', 'go', 'c', 'h', 'cpp', 'java',
-  'sh', 'css', 'html', 'sql', 'sol',
+  'sh', 'css', 'sql', 'sol',
 ]
+const HTML_EXTS = ['html', 'htm', 'xhtml']
 
-type Kind = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'none'
+type Kind = 'image' | 'video' | 'audio' | 'pdf' | 'html' | 'text' | 'none'
 
 function previewKind(meta: FileMeta, data?: Uint8Array): Kind {
   const ext = meta.name.split('.').pop()?.toLowerCase() ?? ''
@@ -349,6 +351,7 @@ function previewKind(meta: FileMeta, data?: Uint8Array): Kind {
     const head = new TextDecoder().decode(data.subarray(0, 5))
     return head === '%PDF-' ? 'pdf' : 'none'
   }
+  if ((m === 'text/html' || HTML_EXTS.includes(ext)) && meta.size <= TEXT_MAX_BYTES) return 'html'
   if ((m.startsWith('text/') || m.includes('json') || TEXT_EXTS.includes(ext)) && meta.size <= TEXT_MAX_BYTES) {
     return 'text'
   }
@@ -406,13 +409,14 @@ export function PreviewModal({
 
   useEffect(() => {
     if (!data) return
-    if (kind === 'text') {
+    if (kind === 'text' || kind === 'html') {
       setText(new TextDecoder('utf-8', { fatal: false }).decode(data))
       return
     }
     if (kind === 'none') return
-    // HTML is never rendered (a blob: URL would run with the app's origin);
-    // only media types and verified PDFs get an object URL.
+    // HTML never gets an object URL (a blob: URL would run with the app's
+    // origin): it's shown from its text, sandboxed (HtmlPreview.tsx). Only
+    // media types and verified PDFs get one.
     const type = kind === 'pdf' ? 'application/pdf' : meta.mime
     const u = URL.createObjectURL(new Blob([data as unknown as BlobPart], { type }))
     setUrl(u)
@@ -441,6 +445,8 @@ export function PreviewModal({
     )
   } else if (kind === 'text' && text !== null) {
     body = <pre className="preview-text">{text}</pre>
+  } else if (kind === 'html' && text !== null) {
+    body = <HtmlPreview source={text} name={meta.name} />
   } else if (kind === 'none' || !url) {
     body = <p className="preview-note">No preview for this file type.</p>
   } else if (kind === 'image') {

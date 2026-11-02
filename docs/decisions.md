@@ -219,6 +219,15 @@ The user saw files without search entries and no "Index N older files" button: i
 
 Verified: `npm run test:bg-index` (fresh funded drive, 12 checks: found in two folders and indexed with no transaction, searchable before saving, one upload's single transaction saves both folders' entries, present with the device store cleared, Save with one approval, name-only, 390 px).
 
+### D16 — HTML preview: the page, sandboxed; or its source (user decision, 2026-11-02)
+HTML files previewed as their source text only: rendering one from a blob: URL would run it with the app's origin, where its scripts could read the open drive's key. Now the preview shows **Page** (default) or **Source** (`web/src/HtmlPreview.tsx`):
+- The page is an `<iframe sandbox="">` with `srcdoc`: no permissions at all — no scripts, an opaque origin (no access to the app, its storage or cookies), no forms, popups or top navigation.
+- **Nothing loads from the network**: a content policy (`default-src 'none'`; images, media and fonts only as `data:`; inline styles) is put first in the page's head — what Safari enforces — and also set as the iframe's `csp` attribute (Chrome). Otherwise opening a file could tell a tracker (remote image, stylesheet) the viewer's IP and that it was opened.
+- Made inert first with DOMParser (runs and loads nothing): `<script>`, `<noscript>`, `<base>` and refresh `<meta>` removed; links keep their address as a tooltip but lose `href` (a click would load the address inside the frame).
+- Limits: pages that need JavaScript show their static content (running scripts safely would need a separate preview origin); relative images and stylesheets don't resolve; links don't open. Markdown is still shown as text.
+
+Verified: `npm run test:html-preview` (fresh funded drive; a page with scripts, a remote image and stylesheet, a refresh, a form and a link: renders with its own style and inline image, no script runs, the remote loads are blocked in the browser, the policy leads the head, opaque origin, link and form go nowhere, Source exact, 390 px).
+
 ## Verification (M1, 2026-10-24)
 Full roundtrip proven on testnet: 256 KB random payload → ECIES-encrypted to wallet pubkey → on-chain submit (fee via Flow contract) → segment upload → finality → download (file-relative segment indices, shard-affinity routing) → decrypt → byte-exact match. Cost: ~0.0012 0G per 256 KB roundtrip (gas + storage fee).
 
