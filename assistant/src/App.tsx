@@ -6,15 +6,45 @@ import { loadKnowledge, publicUrl, readText } from './knowledge'
 import { closePanel, parentOrigin } from './bridge'
 
 const KEY_STORE = '0gassist:key'
+const KEY_COOKIE = '0gassist_key'
 
-function loadKey(): string | null {
+// The key is also kept in a cookie. Safari's engine (every browser on iPhone)
+// gives a frame from another origin — the assistant, inside the drive — a
+// localStorage and IndexedDB held in memory only, gone when the browser is
+// closed; cookies of a same-site frame (both on 0g.ai) are kept. Readable
+// only on the assistant's own host: the drive never sees it, and it goes
+// nowhere but to the host that serves this code. Safari keeps cookies set
+// from script for 7 days, so it's renewed whenever the assistant opens.
+function readCookie(): string | null {
   try {
-    return localStorage.getItem(KEY_STORE)
+    const m = document.cookie.match(new RegExp(`(?:^|; )${KEY_COOKIE}=([^;]*)`))
+    return m ? decodeURIComponent(m[1]) : null
   } catch {
     return null
   }
 }
+function writeCookie(key: string | null) {
+  try {
+    const attrs = `; Path=/; SameSite=Strict${location.protocol === 'https:' ? '; Secure' : ''}`
+    document.cookie = key ? `${KEY_COOKIE}=${encodeURIComponent(key)}; Max-Age=34560000${attrs}` : `${KEY_COOKIE}=; Max-Age=0${attrs}`
+  } catch {
+    // cookies blocked: localStorage only
+  }
+}
+
+function loadKey(): string | null {
+  let key: string | null = null
+  try {
+    key = localStorage.getItem(KEY_STORE)
+  } catch {
+    // private window or blocked storage: the cookie may still have it
+  }
+  key ??= readCookie()
+  if (key) saveKey(key) // renews the cookie, and refills localStorage if it was cleared
+  return key
+}
 function saveKey(key: string | null) {
+  writeCookie(key)
   try {
     if (key) localStorage.setItem(KEY_STORE, key)
     else localStorage.removeItem(KEY_STORE)
@@ -254,10 +284,17 @@ export default function App() {
         const stopped = err.name === 'AbortError'
         update(i, { error: stopped ? 'Stopped.' : err.message, thinking: false, done: true })
         if (err.status === 401 || err.status === 403) {
-          // the key was revoked or mistyped: back to setup
-          saveKey(null)
-          setKey(null)
-          setKeyError(err.message)
+          // back to setup only if the key itself is refused (revoked or
+          // mistyped), not for a refusal of this one request
+          const refused = await checkKey(key).then(
+            () => false,
+            (c: Error & { status?: number }) => c.status === 401 || c.status === 403
+          )
+          if (refused) {
+            saveKey(null)
+            setKey(null)
+            setKeyError(err.message)
+          }
         }
       } finally {
         setBusy(false)

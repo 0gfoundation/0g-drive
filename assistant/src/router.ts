@@ -33,10 +33,11 @@ export class RouterError extends Error {
 }
 
 function explain(status: number, code: string | undefined, message: string): string {
-  if (status === 401 || status === 403) return 'The API key was refused. Check it, or create a new one at pc.0g.ai.'
   if (status === 402 || code === 'insufficient_balance') return 'Your 0G Private Computer balance is empty. Deposit 0G at pc.0g.ai, then ask again.'
   if (status === 429) return 'Too many requests right now — wait a moment and ask again.'
   if (code === 'no_provider_for_trust_mode') return 'No private (TEE) provider is serving the model right now. Try again in a few minutes.'
+  if (status === 401 || status === 403)
+    return `The API key was refused${message ? ` (${message})` : ''}. Check it, or create a new one at pc.0g.ai.`
   if (status >= 500) return `The 0G Router had a problem (${status}). Try again in a moment.`
   return message || `Request failed (${status})`
 }

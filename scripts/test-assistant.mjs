@@ -205,7 +205,11 @@ try {
   await frame.fill('input[type=password]', routerKey)
   await frame.getByRole('button', { name: 'Save key' }).click()
   await frame.locator('textarea').waitFor({ timeout: 60_000 })
-  const keyInDrive = await page.evaluate((k) => Object.values(localStorage).some((v) => v.includes(k)), routerKey)
+  // (cookies don't separate ports, so on localhost the drive shares the assistant's)
+  const keyInDrive = await page.evaluate(
+    ({ k, local }) => Object.values(localStorage).some((v) => v.includes(k)) || (!local && document.cookie.includes(encodeURIComponent(k))),
+    { k: routerKey, local: /^http:\/\/localhost/.test(base) }
+  )
   const keyInFrame = await frame.evaluate(() => localStorage.getItem('0gassist:key')?.startsWith('sk-'))
   check('key accepted; stored on the assistant origin only', keyInFrame === true && !keyInDrive)
 
