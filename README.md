@@ -101,6 +101,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:html-preview` | HTML preview: the page shown sandboxed (no scripts, nothing loaded from the internet), or its source |
 | `node scripts/test-ai-loading.mjs` | AI model loading: off on phones (asks before turning on), text model first, photo models on the first photo |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
+| `npm run test:assistant-key` | the assistant's API key survives a browser restart in WebKit (iPhone) and Chromium; a refused question doesn't forget it (Router mocked; no cost) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
 | `node scripts/gen-test-wallet.mjs` | create a throwaway test wallet in `.env` |
 
