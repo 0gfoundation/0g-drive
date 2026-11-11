@@ -3,47 +3,32 @@ import {
   bytesToHex,
   createMasterKey,
   decryptDownloaded,
-  downloadRecord,
   generateFileKey,
   getMasterKeyHex,
   getNetworkConfig,
-  enableShareKey,
-  getProfile,
   hexToBytes,
   importMasterKey,
   unwrapFileKey,
-  uploadBrowserFile,
+  unwrapFileKeyWithPrivateKey,
   wrapFileKey,
   wrapFileKeyToPubKey,
   buildShareLink,
   buildEncryptedShareLink,
-  downloadEncryptedShare,
-  downloadSharedFile,
   parseShareLink,
-  getDriveKeyBackup,
-  hasDriveKeyBackup,
-  restoreDriveKeyBySignature,
-  unlockBackupWithPassword,
-  setRecoveryPassword,
-  setupDriveSecurity,
   unlockShareKey,
   DriveStore,
   TRASH_PATH,
-  actionTiming,
-  actionDetails,
   fileNameProblem,
-  startActionTiming,
   timed,
   uniqueName,
-  unstoredWrites,
   folderNameProblem,
+  type AccountCard,
+  type V2Backend,
   type DriveState,
   type FileMeta,
   type DownloadOpts,
   type SharePayload,
   type EncryptedSharePayload,
-  type EventCache,
-  type UploadEvent,
 } from '@0gdrive/core'
 import {
   activeProvider,
@@ -63,10 +48,24 @@ import {
 import { WALLETCONNECT_ID, resetWalletConnect } from './walletConnect'
 import { Logo } from './Logo'
 import { keepConnectionsWarm, preconnect } from './keepWarm'
-import { driveDeviceFor } from './driveDevice'
+import {
+  FIRST_DEPOSIT,
+  V2_RECORD_NETWORK,
+  backendFor,
+  balanceOf,
+  deposit,
+  isShortfall,
+  uploadNeed,
+  keyMatches,
+  lookupDrive,
+  readV2,
+  restoreByPassword as unlockByPassword,
+  restoreBySignature as unlockBySignature,
+  setupDrive,
+  withPassword,
+} from './v2drive'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
 import { FileIcon } from './fileIcons'
-import { hashInWorkers, prestartHashWorkers } from './hashPool'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
 import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
@@ -77,54 +76,6 @@ import { describeModelStatus, entryForRename, getModelStatus, modelErrorReason, 
 
 const NETWORK = getNetworkConfig('testnet', 'turbo')
 preconnect(NETWORK)
-
-/**
- * When the user last acted (click, key, file drop or pick): the start of
- * whatever asks the wallet next, so the Activity log can say how long the
- * app took before handing over to the wallet. Closing a browser dialog
- * (prompt/confirm) counts as acting too — see markAction.
- */
-let lastActionAt = 0
-let aiBusyAtAction = false
-const markAction = () => {
-  lastActionAt = performance.now()
-  aiBusyAtAction = getModelStatus().loading
-  startActionTiming()
-}
-for (const ev of ['click', 'keydown', 'drop', 'change']) window.addEventListener(ev, markAction, true)
-
-// A change whose transaction is sent but whose data isn't on the storage
-// nodes yet would be left half done by closing the page: ask first. (The
-// next visit can usually finish it, but only on this device.)
-window.addEventListener('beforeunload', (e) => {
-  if (unstoredWrites() === 0) return
-  e.preventDefault()
-  e.returnValue = ''
-})
-const secs = (ms: number) => `${(ms / 1000).toFixed(1)} s`
-/** "Asked your wallet to approve, 3.9 s after your click (chain check 3.4 s · …)": the steps
- *  core and the upload timed (see core timing.ts), what's left as "other", and whether the
- *  AI model download was competing for the network meanwhile. */
-const walletAskedMessage = () => {
-  const total = performance.now() - lastActionAt
-  const t = actionTiming()
-  const detail = actionDetails()
-  const steps: [string, number | undefined][] = [
-    ['chain check', t.chain],
-    ['listings', t.listings],
-    ['search indexing', t.indexing],
-    ['preparing', t.preparing],
-    ['price', t.price],
-    ['gas estimate', t.gas],
-  ]
-  const parts = steps
-    .filter(([, ms]) => ms !== undefined && ms >= 50)
-    .map(([label, ms]) => `${label} ${secs(ms!)}${label === 'preparing' && detail.preparing ? ` (${detail.preparing})` : ''}`)
-  const other = total - steps.reduce((n, [, ms]) => n + (ms ?? 0), 0)
-  if (other >= 200) parts.push(`other ${secs(other)}`)
-  if (aiBusyAtAction || getModelStatus().loading) parts.push('AI download running')
-  return `Asked your wallet to approve, ${secs(total)} after your click${parts.length ? ` (${parts.join(' · ')})` : ''}.`
-}
 
 interface Activity {
   id: number
@@ -179,6 +130,12 @@ function fmtSize(bytes: number): string {
 
 function fmtDate(ts: number): string {
   return new Date(ts).toLocaleString()
+}
+
+/** A storage balance (wei) for display: 4 significant digits. */
+function fmtBalance(wei: bigint): string {
+  const n = Number(wei) / 1e18
+  return n === 0 ? '0' : n >= 1 ? n.toFixed(3) : n.toPrecision(3)
 }
 
 function shortHash(hash: string): string {
@@ -528,17 +485,14 @@ function ShareView({
     try {
       const privateKey = viaWallet ? await walletShareKey() : keyInput.trim()
       if (privateKey === null) return // wallet picker dismissed
+      // links made before the drive moved to V2 name V1 files (with their txSeqs), which are gone
+      if (p.q?.length) throw new Error('This link is from 0GDrive’s previous storage network, which is no longer used. Ask the sender for a new link.')
       setBusy('Downloading…')
-      const res =
-        mode === 'link'
-          ? await downloadSharedFile(payload as SharePayload, NETWORK, (msg, pct) =>
-              log(`${p.n}: ${msg}`)
-            )
-          : await downloadEncryptedShare(
-              payload as EncryptedSharePayload,
-              NETWORK,
-              privateKey
-            )
+      const fileKey = mode === 'link' ? p.k : await unwrapFileKeyWithPrivateKey(privateKey, p.w)
+      const res = await readV2(p.r, {
+        decryption: { symmetricKey: fileKey },
+        onProgress: (msg) => log(`${p.n}: ${msg}`),
+      })
       if (!res.decrypted) throw new Error('decryption failed')
       await saveBytes(res.data, p.n, p.m)
       log(`shared file "${p.n}" downloaded.`)
@@ -604,61 +558,16 @@ function ShareView({
 
 const MIN_PASSWORD = 12
 
-/**
- * The drive key from the on-chain backup's password wrap. Tries the
- * password as typed, then trimmed (passwords used to be set untrimmed
- * and restored trimmed).
- */
+/** A drive's key from its card's password wrap, found from the drive's wallet address alone. */
 async function unlockWithPassword(
   address: string,
   password: string,
-  cache?: EventCache,
   onUnlocking?: () => void
-): Promise<{ masterKey: Uint8Array }> {
-  const backup = await getDriveKeyBackup(address, NETWORK, cache)
-  if (!backup) throw new Error('No drive backup found for this address.')
-  if (!backup.wrappedUnderPassword) {
-    throw new Error('This drive has no recovery password — it can only be restored with its wallet or key file.')
-  }
+): Promise<{ masterKey: Uint8Array; card: AccountCard }> {
+  const found = await lookupDrive(address, false)
+  if (!found) throw new Error('No drive found for this address.')
   onUnlocking?.()
-  for (const pw of new Set([password, password.trim()])) {
-    try {
-      return { masterKey: await unlockBackupWithPassword(backup, pw) }
-    } catch {
-      // try the next form
-    }
-  }
-  throw new Error('Wrong recovery password.')
-}
-
-/** The wallet's upload-event list, kept in localStorage so a page load only
- *  scans new blocks (shared by the drive, recovery and share-key checks). */
-function eventCacheFor(address: string): EventCache {
-  // v2: v1 caches could have skipped events (see scanUploadsCached), so
-  // they're rebuilt once
-  const key = `0gdrive:events:v2:${address.toLowerCase()}`
-  try {
-    localStorage.removeItem(`0gdrive:events:${address.toLowerCase()}`)
-  } catch {
-    // storage unavailable
-  }
-  return {
-    load() {
-      try {
-        const raw = localStorage.getItem(key)
-        return raw ? JSON.parse(raw) : null
-      } catch {
-        return null
-      }
-    },
-    save(events: UploadEvent[], toBlock: number) {
-      try {
-        localStorage.setItem(key, JSON.stringify({ events, toBlock }))
-      } catch {
-        /* storage full — cache is best-effort */
-      }
-    },
-  }
+  return { masterKey: await unlockByPassword(found.card, password), card: found.card }
 }
 
 // ─── Main app ─────────────────────────────────────────────────────────
@@ -677,7 +586,7 @@ export default function App() {
   const [restoreError, setRestoreError] = useState<string | null>(null)
   const [restorePassword, setRestorePassword] = useState('')
   const [showPasswordRestore, setShowPasswordRestore] = useState(false)
-  /** whether the on-chain backup has a password wrap (null: unknown) */
+  /** whether the drive's card has a password wrap (null: unknown) */
   const [hasPassword, setHasPassword] = useState<boolean | null>(null)
   const [pwDialog, setPwDialog] = useState(false)
   const [pw1, setPw1] = useState('')
@@ -700,12 +609,11 @@ export default function App() {
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [dragOver, setDragOver] = useState(false)
   const [keyImport, setKeyImport] = useState('')
-  const [profilePubKey, setProfilePubKey] = useState<string | null>(null)
-  /** the published key is the legacy wallet key, not a derived sharing key */
-  const [profileLegacy, setProfileLegacy] = useState(false)
-  /** 'checking' | 'ok' | error message — a failed lookup is not "unpublished" */
-  const [profileState, setProfileState] = useState<string>('checking')
-  const [publishing, setPublishing] = useState(false)
+  /** the drive's card (its storage account, recovery wraps, sharing key); null: this wallet has no drive yet */
+  const [card, setCard] = useState<AccountCard | null>(null)
+  /** the storage account's balance (wei), once read */
+  const [balance, setBalance] = useState<bigint | null>(null)
+  const [depositBusy, setDepositBusy] = useState<string | null>(null)
   const [shareFor, setShareFor] = useState<FileMeta | null>(null)
   const [renameFor, setRenameFor] = useState<RenameTarget | null>(null)
   /** an upload whose names are taken, waiting for Replace / Keep both / Skip / Cancel */
@@ -791,45 +699,34 @@ export default function App() {
     }
   }, [log])
 
-  const checkProfile = useCallback((address: string) => {
-    setProfileState('checking')
-    getProfile(address, NETWORK, eventCacheFor(address))
-      .then((p) => {
-        setProfilePubKey(p?.pubKey ?? null)
-        setProfileLegacy(p !== null && p.kind !== 'share')
-        setProfileState('ok')
-      })
-      .catch((err) => setProfileState((err as Error).message ?? String(err)))
+  /** The drive as its card says: found (or just set up) for this wallet, or none (null). */
+  const adoptCard = useCallback((c: AccountCard | null) => {
+    setCard(c)
+    setHasBackup(c !== null)
+    setHasPassword(c === null ? false : Boolean(c.wrappedUnderPassword))
+  }, [])
+
+  const refreshBalance = useCallback((masterKey: Uint8Array) => {
+    balanceOf(masterKey).then(setBalance, (err) => console.warn('[drive] balance', err))
   }, [])
 
   const initDrive = useCallback(
-    async (signer: WalletState['signer'], masterKey: Uint8Array, address: string) => {
+    async (signer: WalletState['signer'], masterKey: Uint8Array, address: string, driveCard: AccountCard | null) => {
       await openPendingSearch(address, masterKey)
-      const store = new DriveStore(NETWORK, signer, masterKey, {
-        pendingSearch,
-        onProgress: (msg) => {
-          if (msg.includes('sealed') || msg.includes('Repair') || msg.startsWith('Interrupted change')) log(msg)
-          if (msg.startsWith('Waiting for wallet approval')) log(walletAskedMessage())
-        },
-        eventCache: eventCacheFor(address),
-        device: driveDeviceFor(address),
-      })
+      const store = new DriveStore(backendFor(masterKey, driveCard), { pendingSearch })
       storeRef.current = store
-      // read-only: has this account published a share key?
-      checkProfile(address)
+      refreshBalance(masterKey)
       setBusy('Loading drive from 0G…')
       try {
         setDrive(await store.loadDrive())
-        log('Drive loaded from chain.')
-        // ready before the first upload: starting them then took seconds
-        prestartHashWorkers()
+        log('Drive loaded from 0G Storage.')
       } catch (err) {
         log(`Drive load failed: ${(err as Error).message}`)
       } finally {
         setBusy(null)
       }
     },
-    [log, checkProfile]
+    [log, refreshBalance]
   )
 
   const checkBackup = useCallback(
@@ -838,21 +735,20 @@ export default function App() {
       setBackupCheckError(null)
       setHasPassword(null)
       try {
-        const exists = await hasDriveKeyBackup(address, NETWORK, eventCacheFor(address))
-        setHasBackup(exists)
-        if (!exists) setHasPassword(false)
-        else {
-          getDriveKeyBackup(address, NETWORK, eventCacheFor(address))
-            .then((b) => b && setHasPassword(Boolean(b.wrappedUnderPassword)))
-            .catch(() => {}) // stays unknown
+        const found = await lookupDrive(address)
+        adoptCard(found?.card ?? null)
+        // a key on this device for another drive (e.g. one replaced on another device): restore this one instead
+        const local = getMasterKeyHex(address)
+        if (found && local && !keyMatches(hexToBytes(local), found.card)) {
+          setMasterKeyHex(null)
+          setRestoreError('The drive key on this device belongs to a different drive. Restore this wallet’s drive below.')
         }
       } catch (err) {
-        // unknown is not "no backup": offering setup / a new drive here
-        // could replace an existing drive's key
+        // unknown is not "no drive": offering setup here could replace an existing drive
         setBackupCheckError((err as Error).message ?? String(err))
       }
     },
-    []
+    [adoptCard]
   )
 
   const adoptWallet = useCallback(
@@ -942,12 +838,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, queue])
 
+  // the drive opens once its card is found and this device's key is its key
   useEffect(() => {
-    if (wallet && masterKeyHex && !busy && !storeRef.current) {
-      void initDrive(wallet.signer, hexToBytes(masterKeyHex), wallet.address)
+    if (wallet && masterKeyHex && card && keyMatches(hexToBytes(masterKeyHex), card) && !busy && !storeRef.current) {
+      void initDrive(wallet.signer, hexToBytes(masterKeyHex), wallet.address, card)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallet?.address, masterKeyHex])
+  }, [wallet?.address, masterKeyHex, card])
 
   useEffect(() => {
     const offChain = onChainChanged(() => window.location.reload())
@@ -966,67 +863,63 @@ export default function App() {
     }
   }, [log])
 
-  const generateKey = useCallback(() => {
+  /**
+   * Set up this wallet's drive for the key on this device (created now when
+   * there is none): 3 signatures and the first deposit, then the first root.
+   * Run again after an interruption, it finishes (an account already funded
+   * isn't funded twice).
+   */
+  const createDrive = useCallback(async () => {
     if (!wallet) return
-    createMasterKey(wallet.address)
-    setMasterKeyHex(getMasterKeyHex(wallet.address))
-    log('Drive key created — enable on-chain recovery below (two signatures, one transaction).')
-  }, [wallet, log])
-
-  const enableRecovery = useCallback(async () => {
-    if (!wallet || !masterKeyHex) return
     setRestoreBusy('Waiting for signature…')
     setRestoreError(null)
     try {
-      // one tx (the message is signed twice, to check the wallet signs
-      // deterministically): recovery backup + share key together
-      const res = await setupDriveSecurity(
-        NETWORK, wallet.signer, wallet.address, hexToBytes(masterKeyHex)
-      )
-      setHasBackup(true)
-      setProfilePubKey(res.shareKey)
-      setProfileLegacy(false)
-      log('Drive security enabled — recovery + share key published (2 signatures, 1 tx).')
+      if (!getMasterKeyHex(wallet.address)) createMasterKey(wallet.address)
+      const keyHex = getMasterKeyHex(wallet.address)!
+      const { parseEther } = await import('ethers')
+      const c = await setupDrive(wallet.signer, wallet.address, hexToBytes(keyHex), parseEther(FIRST_DEPOSIT), setRestoreBusy)
+      setMasterKeyHex(keyHex)
+      adoptCard(c)
+      log(`Drive created: recovery, share key and a ${FIRST_DEPOSIT} 0G storage deposit (3 signatures, 1 transaction).`)
     } catch (err) {
       setRestoreError((err as Error).message)
-      log(`Enable security failed: ${(err as Error).message}`)
+      log(`Drive setup failed: ${(err as Error).message}`)
     } finally {
       setRestoreBusy(null)
     }
-  }, [wallet, masterKeyHex, log])
+  }, [wallet, log, adoptCard])
 
   const restoreBySignature = useCallback(async () => {
-    if (!wallet) return
+    if (!wallet || !card) return
     setRestoreBusy('Waiting for signature…')
     setRestoreError(null)
     try {
-      const res = await restoreDriveKeyBySignature(wallet.address, NETWORK, wallet.signer, eventCacheFor(wallet.address))
-      if (!res) throw new Error('no backup found')
-      importMasterKey(wallet.address, bytesToHex(res.masterKey))
-      setMasterKeyHex(bytesToHex(res.masterKey))
-      log('Drive key restored from on-chain backup.')
+      const masterKey = await unlockBySignature(wallet.signer, wallet.address, card)
+      importMasterKey(wallet.address, bytesToHex(masterKey))
+      setMasterKeyHex(bytesToHex(masterKey))
+      log('Drive key restored with your wallet signature.')
     } catch (err) {
       setRestoreError((err as Error).message)
     } finally {
       setRestoreBusy(null)
     }
-  }, [wallet, log])
+  }, [wallet, card, log])
 
   const restoreByPassword = useCallback(async () => {
-    if (!wallet || !restorePassword.trim()) return
+    if (!wallet || !card || !restorePassword.trim()) return
     setRestoreBusy('Deriving key from password…')
     setRestoreError(null)
     try {
-      const res = await unlockWithPassword(wallet.address, restorePassword, eventCacheFor(wallet.address))
-      importMasterKey(wallet.address, bytesToHex(res.masterKey))
-      setMasterKeyHex(bytesToHex(res.masterKey))
+      const masterKey = await unlockByPassword(card, restorePassword)
+      importMasterKey(wallet.address, bytesToHex(masterKey))
+      setMasterKeyHex(bytesToHex(masterKey))
       log('Drive key restored via password.')
     } catch (err) {
       setRestoreError((err as Error).message)
     } finally {
       setRestoreBusy(null)
     }
-  }, [wallet, restorePassword, log])
+  }, [wallet, card, restorePassword, log])
 
   const openPasswordDialog = useCallback(() => {
     setPw1('')
@@ -1035,8 +928,10 @@ export default function App() {
     setPwDialog(true)
   }, [])
 
+  /** A new password goes in the drive's card, stored with a new root: no wallet prompt. */
   const submitPassword = useCallback(async () => {
-    if (!wallet || !masterKeyHex) return
+    const store = storeRef.current
+    if (!wallet || !masterKeyHex || !card || !store) return
     if (pw1.length < MIN_PASSWORD) {
       setPwError(`Use at least ${MIN_PASSWORD} characters — a few unrelated words is easiest to remember.`)
       return
@@ -1046,12 +941,12 @@ export default function App() {
       return
     }
     setPwError(null)
-    setRestoreBusy('Waiting for signature…')
+    setRestoreBusy('Saving…')
     try {
-      await setRecoveryPassword(NETWORK, wallet.signer, wallet.address, hexToBytes(masterKeyHex), pw1)
+      const next = await withPassword(card, hexToBytes(masterKeyHex), pw1)
+      await (store.backend as V2Backend).saveCard(next)
+      adoptCard(next)
       log(hasPassword ? 'Recovery password changed — the old one no longer works.' : 'Recovery password set.')
-      setHasBackup(true)
-      setHasPassword(true)
       setPwDialog(false)
       setPw1('')
       setPw2('')
@@ -1061,7 +956,39 @@ export default function App() {
     } finally {
       setRestoreBusy(null)
     }
-  }, [wallet, masterKeyHex, pw1, pw2, hasPassword, log])
+  }, [wallet, masterKeyHex, card, pw1, pw2, hasPassword, log, adoptCard])
+
+  /** Fund the drive's storage account from the wallet: one transaction. */
+  const topUp = useCallback(
+    async (suggested = FIRST_DEPOSIT): Promise<boolean> => {
+      if (!wallet || !masterKeyHex) return false
+      const amount = window.prompt('Deposit to your storage balance (0G):', suggested)?.trim()
+      if (!amount) return false
+      const { parseEther } = await import('ethers')
+      let wei: bigint
+      try {
+        wei = parseEther(amount)
+        if (wei <= 0n) throw new Error()
+      } catch {
+        log(`Not an amount: ${amount}`)
+        return false
+      }
+      setDepositBusy('Approve the deposit in your wallet…')
+      try {
+        await deposit(wallet.signer, hexToBytes(masterKeyHex), wei)
+        log(`Deposited ${amount} 0G to your storage balance.`)
+        refreshBalance(hexToBytes(masterKeyHex))
+        return true
+      } catch (err) {
+        const msg = (err as Error).message
+        log(/user (rejected|denied)|ACTION_REJECTED/i.test(msg) ? 'Deposit rejected in wallet.' : `Deposit failed: ${msg}`)
+        return false
+      } finally {
+        setDepositBusy(null)
+      }
+    },
+    [wallet, masterKeyHex, log, refreshBalance]
+  )
 
   /** Open someone's drive read-only from its address + recovery password (lost wallet). */
   const recoverWithoutWallet = useCallback(async () => {
@@ -1073,7 +1000,7 @@ export default function App() {
     setLostError(null)
     setLostBusy('Finding the drive backup…')
     try {
-      const res = await unlockWithPassword(address, lostPassword, undefined, () => setLostBusy('Unlocking…'))
+      const res = await unlockWithPassword(address, lostPassword, () => setLostBusy('Unlocking…'))
       const { JsonRpcProvider, VoidSigner, formatEther, getAddress } = await import('ethers')
       const provider = new JsonRpcProvider(NETWORK.rpcUrl)
       const balance = await provider.getBalance(address).then(formatEther).catch(() => '0')
@@ -1089,8 +1016,7 @@ export default function App() {
         chainId: NETWORK.chainId,
         signer: new VoidSigner(address, provider) as unknown as WalletState['signer'],
       })
-      setHasBackup(true)
-      setHasPassword(true)
+      adoptCard(res.card)
       // kept in memory only: this may not be the owner's own device
       setMasterKeyHex(bytesToHex(res.masterKey))
       setLostPassword('')
@@ -1100,7 +1026,7 @@ export default function App() {
     } finally {
       setLostBusy(null)
     }
-  }, [lostAddress, lostPassword, log])
+  }, [lostAddress, lostPassword, log, adoptCard])
 
   const importKey = useCallback(() => {
     if (!wallet || !keyImport.trim()) return
@@ -1128,32 +1054,13 @@ export default function App() {
     URL.revokeObjectURL(url)
   }, [masterKeyHex, wallet])
 
-  const publishShareKey = useCallback(async () => {
-    if (!wallet || publishing) return
-    setPublishing(true)
-    try {
-      if (!masterKeyHex) throw new Error('drive key not loaded')
-      const res = await enableShareKey(
-        NETWORK, wallet.signer, wallet.address, hexToBytes(masterKeyHex), eventCacheFor(wallet.address)
-      )
-      setProfilePubKey(res.shareKey)
-      setProfileLegacy(false)
-      log('Share key published — others can now send you encrypted files, opened with a wallet signature.')
-    } catch (err) {
-      log(`Publish share key failed: ${(err as Error).message}`)
-    } finally {
-      setPublishing(false)
-    }
-  }, [wallet, publishing, masterKeyHex, log])
-
   // ─── Upload queue ───────────────────────────────────────────────────
 
   /**
-   * One-prompt upload (networks with batchSubmit on): every file AND
-   * the folder manifest listing them go into a single storage transaction.
-   * The manifest's segments are uploaded only after every file is stored
-   * and sealed; if any file fails, the stored ones are registered with a
-   * separate manifest write instead.
+   * Upload a batch: the files, then (when every one stored) the folder
+   * listing them, as one change, with no wallet prompt (the storage
+   * account signs, see v2drive.ts). If any file fails, the stored ones are
+   * registered with a separate change instead.
    */
   const uploadBatched = useCallback(
     async (store: DriveStore, path: string, items: QueueItem[], files: File[], replace: string[]) => {
@@ -1228,7 +1135,6 @@ export default function App() {
         const res = await store.backend.uploadFiles(
           files.map((file, i) => ({ data: file, encryption: { type: 'aes256' as const, key: prep[i].fileKey } })),
           {
-            segmentHasher: hashInWorkers,
             onItemProgress: (i, phase, f) =>
               setItem(i, {
                 percent: Math.min(99, Math.round(f * 100)),
@@ -1245,29 +1151,15 @@ export default function App() {
                 mime: prep[i].mime,
                 uploadedAt: Date.now(),
                 encryption: 'aes256',
-                ...refs[i], // V1: txHashes and txSeqs filled from chain events on load
+                ...refs[i],
                 wrappedKey: prep[i].wrappedKey,
-                network: 'testnet:turbo',
+                network: V2_RECORD_NETWORK,
                 ...(prep[i].thumb ? { thumb: prep[i].thumb } : {}),
                 ...(searches[i] ? { search: searches[i] } : {}),
               }))
               const records = await store.prepareFileRecords(path, metas, replace)
               // this device's unsaved search entries of other folders ride along (optional)
               return { records, extras: await store.searchSaveItems(records).catch(() => []) }
-            },
-            onProgress: (msg) => {
-              if (msg.startsWith('Waiting for wallet approval')) {
-                log(walletAskedMessage())
-                setAll({
-                  state: 'approving',
-                  percent: undefined,
-                  message: n === 1
-                    ? 'approve the storage transaction in your wallet'
-                    : `approve 1 transaction for all ${n} files in your wallet`,
-                })
-              } else if (msg.startsWith('Transaction submitted')) {
-                setAll({ state: 'uploading', message: 'approved — storing segments…' })
-              }
             },
             onItem: (i, phase, msg) => {
               if (i >= n) {
@@ -1287,15 +1179,15 @@ export default function App() {
 
         const okIdx = res.files.map((r, i) => (r.ok ? i : -1)).filter((i) => i >= 0)
         res.files.forEach((r, i) => {
-          if (!r.ok) log(`${files[i].name} failed: ${r.error}`)
+          if (!r.ok) log(`${files[i].name} failed: ${isShortfall(r.error) ? 'your storage balance ran out — deposit, then upload it again' : r.error}`)
         })
         if (res.recordsStored) {
           setAll({ state: 'done', message: 'in your drive ✓' }, (i) => okIdx.includes(i))
-          log(`${n} file${n === 1 ? '' : 's'} stored and registered with 1 wallet approval.`)
+          log(`${n} file${n === 1 ? '' : 's'} stored in your drive.`)
         } else if (okIdx.length > 0) {
           // some files failed (or the batched record didn't store): register
           // the stored files with a normal manifest write
-          setAll({ state: 'registering', message: 'registering — check your wallet', percent: undefined }, (i) => okIdx.includes(i))
+          setAll({ state: 'registering', message: 'saving to your drive…', percent: undefined }, (i) => okIdx.includes(i))
           const stored = okIdx.map((i) => {
             const r = res.files[i]
             return r.ok ? { ...metas[i], ...r.ref } : metas[i]
@@ -1304,145 +1196,40 @@ export default function App() {
           setAll({ state: 'done', message: 'in your drive ✓' }, (i) => okIdx.includes(i))
         }
         await reloadDrive()
+        refreshBalance(hexToBytes(masterKeyHex))
       } catch (err) {
         const msg = (err as Error).message
-        const rejected = /user (rejected|denied)|ACTION_REJECTED/i.test(msg)
-        // uploadBatch only throws before any segment is stored (hashing,
-        // signing, receipt) — or the fallback registration failed
-        setAll({ state: 'error', message: rejected ? 'transaction rejected in wallet' : msg, percent: undefined })
-        log(`Upload failed: ${rejected ? 'transaction rejected in wallet' : msg}`)
+        // the files' records couldn't be saved (the files themselves stored)
+        setAll({ state: 'error', message: msg, percent: undefined })
+        log(`Upload failed: ${msg}`)
       }
     },
-    [wallet, masterKeyHex, log, reloadDrive]
+    [wallet, masterKeyHex, log, reloadDrive, refreshBalance]
   )
 
   /** Upload one dropped batch (already queued) into `path`. */
   const runUpload = useCallback(
     async (store: DriveStore, path: string, items: QueueItem[], files: File[], replace: string[]) => {
       if (!wallet || !masterKeyHex) return
-      if (NETWORK.batchSubmit) {
-        await uploadBatched(store, path, items, files, replace)
-        return
-      }
-
-      const metas: FileMeta[] = []
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i]
-        const file = files[i]
-        const setItem = (patch: Partial<QueueItem>) =>
-          setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, ...patch } : x)))
-        try {
-          setItem({ state: 'uploading', message: 'preparing…' })
-          const mime = file.type || 'application/octet-stream'
-          const thumb = await makeThumbnail(file, mime)
-          // on-device search entry, built while the upload runs (reads the
-          // original File, not the progress proxy below)
-          const searchP = smartSearchEnabled()
-            ? indexFile(file, file.name, mime, thumb)
-            : Promise.resolve(undefined)
-          const fileKey = generateFileKey()
-          const wrappedKey = await wrapFileKey(hexToBytes(masterKeyHex), fileKey)
-          // read-progress proxy: the SDK reads the file twice (merkle pass,
-          // then segment upload) via File.slice — counting bytes gives a
-          // genuine two-phase progress bar with no SDK changes.
-          // The hashing pass reads exactly file.size bytes (verified), and
-          // the SDK builds + sends the storage tx right after it — so the
-          // moment pass 1 completes is when the wallet prompt is coming.
-          let bytesRead = 0
-          let phase: 'hash' | 'approve' | 'upload' = 'hash'
-          const totalBytes = file.size * 2
-          const progressFile = new Proxy(file, {
-            get(target, prop) {
-              if (prop === 'slice') {
-                return (s: number, e: number, ct?: string) => {
-                  bytesRead += Math.max(0, e - s)
-                  const pct = Math.min(99, Math.round((bytesRead / totalBytes) * 100))
-                  if (phase === 'hash' && bytesRead >= file.size) {
-                    phase = 'approve'
-                    setItem({
-                      state: 'approving',
-                      message: 'approve the storage transaction in your wallet',
-                      percent: undefined,
-                    })
-                  } else if (phase === 'hash') {
-                    setItem({ state: 'uploading', message: 'hashing & encrypting…', percent: pct })
-                  } else {
-                    setItem({ state: 'uploading', message: 'uploading segments…', percent: pct })
-                  }
-                  return target.slice(s, e, ct)
-                }
-              }
-              const v = Reflect.get(target, prop, target)
-              return typeof v === 'function' ? v.bind(target) : v
-            },
-          }) as unknown as File
-          const result = await uploadBrowserFile(progressFile, NETWORK, wallet.signer, {
-            encryption: { type: 'aes256', key: fileKey },
-            onProgress: (msg) => {
-              if (msg.includes('sealing')) {
-                setItem({ state: 'sealing', message: 'sealing on 0G…', percent: undefined })
-              } else if (msg.includes('Transaction submitted')) {
-                phase = 'upload'
-                setItem({ state: 'uploading', message: 'approved — storing segments…', percent: undefined })
-              }
-              // other phases are covered by the read-progress proxy
-            },
-          })
-          const search = await searchP
-          metas.push({
-            id: 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10),
-            name: file.name,
-            size: file.size,
-            mime: file.type || 'application/octet-stream',
-            uploadedAt: Date.now(),
-            encryption: 'aes256',
-            rootHashes: result.rootHashes,
-            txHashes: result.txHashes,
-            txSeqs: result.txSeqs,
-            wrappedKey,
-            network: 'testnet:turbo',
-            ...(thumb ? { thumb } : {}),
-            ...(search ? { search } : {}),
-          })
-          setItem({ state: 'done', message: 'stored permanently — registering in drive…' })
-        } catch (err) {
-          setItem({ state: 'error', message: (err as Error).message })
-          log(`${item.name} failed: ${(err as Error).message}`)
+      // an upload holds about a week of rent up front: top up first when the balance is short
+      const need = uploadNeed(files.reduce((n, f) => n + f.size, 0))
+      const have = await balanceOf(hexToBytes(masterKeyHex)).catch(() => null)
+      if (have !== null && have < need) {
+        const { formatEther } = await import('ethers')
+        const fmt = (wei: bigint) => Number(formatEther(wei)).toPrecision(2)
+        const ok =
+          window.confirm(
+            `Your storage balance (${fmt(have)} 0G) is below the ~${fmt(need)} 0G ${files.length === 1 ? 'this file needs' : 'these files need'} up front (about a week of storage). Deposit now?`
+          ) && (await topUp(Number(formatEther(need * 10n > 10n ** 17n ? need * 10n : 10n ** 17n)).toString()))
+        if (!ok) {
+          const ids = new Set(items.map((i) => i.id))
+          setQueue((q) => q.map((x) => (ids.has(x.id) ? { ...x, state: 'error', message: 'storage balance too low — deposit, then upload again', percent: undefined } : x)))
+          return
         }
       }
-
-      // batch: one manifest transaction for all successfully uploaded files
-      if (metas.length > 0) {
-        setQueue((q) =>
-          q.map((x) =>
-            metas.some((m) => m.name === x.name)
-              ? { ...x, state: 'registering', message: '' }
-              : x
-          )
-        )
-        try {
-          await store.putFileRecords(path, metas, replace)
-          await reloadDrive()
-          setQueue((q) =>
-            q.map((x) =>
-              metas.some((m) => m.name === x.name)
-                ? { ...x, state: 'done', message: 'in your drive ✓' }
-                : x
-            )
-          )
-        } catch (err) {
-          log(`Drive registration failed: ${(err as Error).message} — files are stored but not registered; re-run "Sync" or contact support.`)
-          setQueue((q) =>
-            q.map((x) =>
-              metas.some((m) => m.name === x.name)
-                ? { ...x, state: 'error', message: 'stored, but drive registration failed' }
-                : x
-            )
-          )
-        }
-      }
+      await uploadBatched(store, path, items, files, replace)
     },
-    [wallet, masterKeyHex, log, reloadDrive, uploadBatched]
+    [wallet, masterKeyHex, uploadBatched, topUp]
   )
 
   // Drops never get lost: each one is queued immediately (target folder
@@ -1542,10 +1329,10 @@ export default function App() {
     [masterKeyHex, log]
   )
 
-  /** A drive file's bytes, from the drive's backend (V1 when no drive is open yet: reads need no wallet). */
+  /** A drive file's bytes, from the drive's backend (reads need no account, so also before the drive is open). */
   const readFile = useCallback(
     (meta: FileMeta, opts?: DownloadOpts) =>
-      storeRef.current ? storeRef.current.backend.download(meta, opts) : downloadRecord(NETWORK, meta, opts),
+      storeRef.current ? storeRef.current.backend.download(meta, opts) : readV2(meta.rootHashes, opts),
     []
   )
 
@@ -1646,7 +1433,7 @@ export default function App() {
       if (shareMode === 'A') {
         const link = base + buildShareLink({
           v: 1, n: shareFor.name, m: shareFor.mime, z: shareFor.size,
-          r: shareFor.rootHashes, q: shareFor.txSeqs ?? [],
+          r: shareFor.rootHashes, q: [],
           k: bytesToHex(fileKey),
         })
         setShareLink(link)
@@ -1657,28 +1444,18 @@ export default function App() {
           throw new Error('enter a valid recipient address')
         }
         setShareBusy('Looking up recipient share key…')
-        const profile = await getProfile(recipient, NETWORK)
-        if (!profile) {
-          throw new Error(
-            'recipient has not published a share key (they need to open 0GDrive and publish one)'
-          )
+        const shareKey = (await lookupDrive(recipient, false))?.card.shareKey
+        if (!shareKey) {
+          throw new Error('this address has no 0GDrive yet (the recipient needs to open 0GDrive and create one)')
         }
         setShareBusy('Wrapping key…')
-        const wrapped = await wrapFileKeyToPubKey(profile.pubKey, fileKey)
-        const derived = profile.kind === 'share'
+        const wrapped = await wrapFileKeyToPubKey(shareKey, fileKey)
         const link = base + buildEncryptedShareLink({
           v: 1, n: shareFor.name, m: shareFor.mime, z: shareFor.size,
-          r: shareFor.rootHashes, q: shareFor.txSeqs ?? [],
-          w: wrapped, to: recipient,
-          ...(derived ? { d: 1 as const, p: profile.pubKey } : {}),
+          r: shareFor.rootHashes, q: [],
+          w: wrapped, to: recipient, d: 1, p: shareKey,
         })
         setShareLink(link)
-        if (!derived) {
-          setShareError(
-            'This recipient published an older share key: they’ll need their raw private key to open the link. ' +
-            'If they open 0GDrive and update their share key, a new link opens with a wallet signature.'
-          )
-        }
         log(`Encrypted share created for ${shortHash(recipient)}.`)
       }
     } catch (err) {
@@ -1694,11 +1471,12 @@ export default function App() {
     async (meta: FileMeta) => {
       const store = storeRef.current
       if (!store) return
-      setBusy(view === 'trash' ? `Removing ${meta.name} from trash…` : `Moving ${meta.name} to trash…`)
+      if (view === 'trash' && !window.confirm(`Delete "${meta.name}" forever? The file is deleted from 0G Storage; links you shared stop working.`)) return
+      setBusy(view === 'trash' ? `Deleting ${meta.name}…` : `Moving ${meta.name} to trash…`)
       try {
         if (view === 'trash') {
           await store.purgeFromTrash(meta.id)
-          log(`${meta.name} removed from trash (blob remains on the network).`)
+          log(`${meta.name} deleted forever.`)
         } else {
           await store.removeFileRecord(currentPath, meta.id, true)
           log(`${meta.name} moved to trash.`)
@@ -1836,7 +1614,6 @@ export default function App() {
     if (!store || selectedIds.length === 0) return
     const n = selectedIds.length
     if (!window.confirm(`Move ${n} file${n === 1 ? '' : 's'} to trash?`)) return
-    markAction()
     setBusy(`Moving ${n} file${n === 1 ? '' : 's'} to trash…`)
     try {
       await store.removeFileRecords(view === 'trash' ? TRASH_PATH : currentPath, selectedIds, view !== 'trash')
@@ -1873,7 +1650,6 @@ export default function App() {
     if (!store) return
     const name = window.prompt('New folder name:')
     if (!name?.trim()) return
-    markAction()
     const path = currentPath === '' ? name.trim() : currentPath + '/' + name.trim()
     setBusy(`Creating folder ${name}…`)
     try {
@@ -1901,7 +1677,6 @@ export default function App() {
           ? `Move "${path}" and ${count} file${count === 1 ? '' : 's'} to trash?`
           : `Delete the empty folder "${path}"?`
       if (!window.confirm(msg)) return
-      markAction()
       setBusy(`Moving ${path} to trash…`)
       try {
         await store.trashFolder(path)
@@ -1930,25 +1705,17 @@ export default function App() {
   const assistantStatus = (): DriveStatus => ({
     screen: drive ? 'drive' : 'start',
     walletConnected: !!wallet && !readOnly,
-    network: `${NETWORK.chainName} (${NETWORK.mode})`,
+    network: `${NETWORK.chainName} (Storage V2)`,
     driveOpen: !!masterKeyHex,
     readOnly,
     recovery: hasBackup ? 'on' : hasBackup === false ? 'off' : wallet && !backupCheckError ? 'checking' : 'unknown',
     password: hasPassword ? 'set' : hasPassword === false ? 'not-set' : 'unknown',
-    shareKey:
-      profilePubKey && !profileLegacy
-        ? 'published'
-        : profileState === 'checking'
-          ? 'checking'
-          : profileState !== 'ok'
-            ? 'unknown'
-            : profilePubKey
-              ? 'outdated'
-              : 'not-published',
+    shareKey: card?.shareKey ? 'published' : hasBackup === false ? 'not-published' : hasBackup === null ? 'checking' : 'unknown',
     onDeviceAi: !smart.enabled ? 'off' : smart.model.loading ? 'loading' : smart.model.error ? 'error' : 'ready',
     view,
     uploading: queue.some((q) => q.state !== 'done' && q.state !== 'error'),
-    lowBalance: !!wallet && !readOnly && Number(wallet.balance) < 0.01,
+    // the storage balance pays for the drive; the wallet only for deposits
+    lowBalance: !!wallet && !readOnly && balance !== null && balance < 10n ** 16n,
   })
   const showForAssistant = (target: string) =>
     highlight(target, (sidebar) => {
@@ -2007,7 +1774,7 @@ export default function App() {
         <button className="btn small" disabled={busy !== null} onClick={() => restoreFile(f)} title="Restore" aria-label="Restore">
           <ActionLabel icon="restore" />
         </button>
-        <button className="btn small danger" disabled={busy !== null} onClick={() => trashFile(f)} title="Remove record from trash" aria-label="Remove from trash">
+        <button className="btn small danger" disabled={busy !== null} onClick={() => trashFile(f)} title="Delete forever" aria-label="Delete forever">
           <ActionLabel icon="close" />
         </button>
       </>
@@ -2069,7 +1836,7 @@ export default function App() {
           <Logo className="logo-mark" />
           <span className="brand-name">Drive</span>
           <span className="network-badge">
-            {NETWORK.chainName} · {NETWORK.mode}
+            {NETWORK.chainName} · Storage V2
           </span>
         </div>
         <div className="header-right">
@@ -2208,7 +1975,7 @@ export default function App() {
         </div>
       )}
 
-      {wallet && !masterKeyHex && (
+      {wallet && !readOnly && !(masterKeyHex && card) && (
         <div className="banner key">
           {hasBackup === null && backupCheckError ? (
             <div>
@@ -2223,12 +1990,12 @@ export default function App() {
             </div>
           ) : hasBackup === null ? (
             <div>
-              <strong>Checking for an existing drive on-chain…</strong> (scanning this
-              account's upload history)
+              <strong>Looking for your drive…</strong> (checking this wallet’s storage
+              deposits on 0G)
             </div>
           ) : hasBackup ? (
             <div>
-              <strong>This account has a drive on-chain.</strong> Restore it with one
+              <strong>This wallet has a drive on 0G.</strong> Restore it on this device with one
               wallet signature — no files, no passwords needed.
               <div className="banner-actions">
                 <button className="btn primary" disabled={restoreBusy !== null} onClick={restoreBySignature}>
@@ -2271,20 +2038,28 @@ export default function App() {
             </div>
           ) : (
             <div>
-              <strong>Create your drive.</strong> A key is generated in this browser;
-              files are encrypted with it before ever leaving your device.
+              <strong>{masterKeyHex ? 'Finish creating your drive.' : 'Create your drive.'}</strong> A key is
+              generated in this browser; files are encrypted with it before ever leaving your device.
+              Setup asks your wallet for 3 signatures (recovery and sharing, then linking your wallet to
+              your drive) and one deposit of {FIRST_DEPOSIT} 0G to your storage balance, which pays for
+              the space your files take.
               <div className="banner-actions">
-                <button className="btn primary" onClick={generateKey}>
-                  Create my drive
+                <button className="btn primary" disabled={restoreBusy !== null} onClick={() => void createDrive()}>
+                  {restoreBusy ?? (masterKeyHex ? 'Finish setup' : 'Create my drive')}
                 </button>
-                <input
-                  className="key-input"
-                  placeholder="or import an existing 0x… key"
-                  value={keyImport}
-                  onChange={(e) => setKeyImport(e.target.value)}
-                />
-                <button className="btn" onClick={importKey}>Import</button>
+                {!masterKeyHex && (
+                  <>
+                    <input
+                      className="key-input"
+                      placeholder="or import an existing 0x… key"
+                      value={keyImport}
+                      onChange={(e) => setKeyImport(e.target.value)}
+                    />
+                    <button className="btn" onClick={importKey}>Import</button>
+                  </>
+                )}
               </div>
+              {restoreError && <p className="error-text">⚠ {restoreError}</p>}
             </div>
           )}
         </div>
@@ -2338,35 +2113,35 @@ export default function App() {
                     {!readOnly && (
                       <>
                         <SecRow
-                          id="recovery"
-                          label="Recovery"
-                          hint="Your drive key, locked to a wallet signature and backed up on-chain"
+                          id="storage"
+                          label="Storage"
+                          hint="Your storage balance on 0G: it pays for the space your files take. Deposits come from your wallet."
                           status={
-                            hasBackup ? (
-                              <SecOk>On</SecOk>
-                            ) : hasBackup === null ? (
-                              <SecOff>{backupCheckError ? 'Couldn’t check' : 'Checking…'}</SecOff>
+                            balance === null ? (
+                              <SecOff>Checking…</SecOff>
+                            ) : balance < 10n ** 16n ? (
+                              <SecOff>{fmtBalance(balance)} 0G</SecOff>
                             ) : (
-                              <SecOff>Off</SecOff>
+                              <SecOk>{fmtBalance(balance)} 0G</SecOk>
                             )
                           }
                           action={
-                            hasBackup === null && backupCheckError ? (
-                              <button className="sec-action" onClick={() => void checkBackup(wallet.address)} title={backupCheckError}>
-                                Retry
-                              </button>
-                            ) : hasBackup === false ? (
-                              <button
-                                className="sec-action primary"
-                                onClick={enableRecovery}
-                                disabled={restoreBusy !== null}
-                                aria-label="Set up recovery"
-                                title="2 signatures + 1 transaction: backs up your drive key on-chain and publishes your share key"
-                              >
-                                {restoreBusy?.includes('signature') ? 'Signing…' : 'Set up'}
-                              </button>
-                            ) : null
+                            <button
+                              className="sec-action primary"
+                              onClick={() => void topUp()}
+                              disabled={depositBusy !== null}
+                              aria-label="Deposit to storage balance"
+                              title="1 transaction from your wallet"
+                            >
+                              {depositBusy ? 'Depositing…' : 'Deposit'}
+                            </button>
                           }
+                        />
+                        <SecRow
+                          id="recovery"
+                          label="Recovery"
+                          hint="Your drive key, locked to a wallet signature and kept with your drive on 0G"
+                          status={card?.wrappedUnderSignature ? <SecOk>On</SecOk> : <SecOff>Off</SecOff>}
                         />
                         <SecRow
                           id="password"
@@ -2384,41 +2159,12 @@ export default function App() {
                             </button>
                           }
                         />
-                        {hasBackup && (
-                          <SecRow
-                            id="share-key"
-                            label="Share key"
-                            hint="Lets others send you encrypted files that open with a wallet signature"
-                            status={
-                              profilePubKey && !profileLegacy ? (
-                                <SecOk>Published</SecOk>
-                              ) : profileState === 'checking' ? (
-                                <SecOff>Checking…</SecOff>
-                              ) : profileState !== 'ok' ? (
-                                <SecOff>Couldn’t check</SecOff>
-                              ) : (
-                                <SecOff>{profilePubKey ? 'Outdated' : 'Not published'}</SecOff>
-                              )
-                            }
-                            action={
-                              profilePubKey && !profileLegacy ? null : profileState === 'checking' ? null : profileState !== 'ok' ? (
-                                <button className="sec-action" onClick={() => checkProfile(wallet.address)} title={profileState}>
-                                  Retry
-                                </button>
-                              ) : (
-                                <button
-                                  className="sec-action primary"
-                                  onClick={publishShareKey}
-                                  disabled={publishing}
-                                  aria-label={profilePubKey ? 'Update share key' : 'Publish share key'}
-                                  title="2 signatures + 1 transaction"
-                                >
-                                  {publishing ? 'Publishing…' : profilePubKey ? 'Update' : 'Publish'}
-                                </button>
-                              )
-                            }
-                          />
-                        )}
+                        <SecRow
+                          id="share-key"
+                          label="Share key"
+                          hint="Lets others send you encrypted files that open with a wallet signature"
+                          status={card?.shareKey ? <SecOk>Published</SecOk> : <SecOff>Not published</SecOff>}
+                        />
                       </>
                     )}
                     <SecRow
@@ -2472,7 +2218,7 @@ export default function App() {
                           className="link"
                           disabled={busy !== null || smart.saving}
                           onClick={() => void smart.saveIndex()}
-                          title="Save these files' search entries in your drive, for your other devices (1 wallet approval). They're also saved with your next change."
+                          title="Save these files' search entries in your drive, for your other devices (no wallet prompt). They're also saved with your next change."
                         >
                           Save
                         </button>
@@ -2647,7 +2393,7 @@ export default function App() {
                   )}
               </div>
               <div className="dropzone-sub">
-                Per-file encryption · metadata on-chain · stored on 0G Storage
+                Per-file encryption · no wallet prompt per upload · stored on 0G Storage
               </div>
             </div>
           </label>
@@ -2712,7 +2458,7 @@ export default function App() {
               <HeroIcon />
               <h3>Your drive lives on 0G Storage</h3>
               <p className="hero-sub">
-                Encrypted per file · metadata on-chain · restorable on any device with one signature
+                Encrypted per file · paid from your storage balance · restorable on any device with one signature
               </p>
               <p className="hero-hint">Use the upload zone above to store your first file</p>
             </div>
@@ -2811,14 +2557,7 @@ export default function App() {
                     <td className="col-wide">{fmtSize(f.size)}</td>
                     <td className="col-wide">{fmtDate(f.uploadedAt)}</td>
                     <td className="col-wide">
-                      <a
-                        href={`${NETWORK.storageScanUrl}/file/${f.rootHashes[0]}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={f.rootHashes[0]}
-                      >
-                        {shortHash(f.rootHashes[0])}
-                      </a>
+                      <span title={f.rootHashes[0]}>{shortHash(f.rootHashes[0])}</span>
                     </td>
                     <td className="row-actions">{fileActions(f)}</td>
                   </tr>
@@ -2908,7 +2647,7 @@ export default function App() {
                 {restoreBusy ?? (hasPassword ? 'Change password' : 'Set password')}
               </button>
             </div>
-            <p className="muted small-print">1 signature + 1 transaction</p>
+            <p className="muted small-print">No wallet prompt · saved with your drive on 0G</p>
           </form>
         </div>
       )}
@@ -3075,8 +2814,8 @@ export default function App() {
               </div>
               <p className="muted small-print">
                 {isFile
-                  ? '1 transaction · the file itself isn’t re-uploaded · links you already shared keep the old name'
-                  : '1 transaction · nothing inside is re-uploaded · subfolders and files keep their place'}
+                  ? 'No wallet prompt · the file itself isn’t re-uploaded · links you already shared keep the old name'
+                  : 'No wallet prompt · nothing inside is re-uploaded · subfolders and files keep their place'}
               </p>
             </form>
           </div>
@@ -3195,7 +2934,7 @@ export default function App() {
                   {busy !== null ? 'Moving…' : 'Move here'}
                 </button>
               </div>
-              <p className="muted small-print">1 transaction · nothing is re-uploaded{movePending.length > 0 ? ' · new folders are created by the same transaction' : ''}</p>
+              <p className="muted small-print">No wallet prompt · nothing is re-uploaded{movePending.length > 0 ? ' · new folders are created in the same change' : ''}</p>
             </form>
           </div>
         )

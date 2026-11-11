@@ -1,7 +1,4 @@
-import { ethers } from 'ethers'
-import { hkdf } from '@noble/hashes/hkdf'
-import { hmac } from '@noble/hashes/hmac'
-import { sha256 } from '@noble/hashes/sha256'
+import type { ethers } from 'ethers'
 import { cryptAt, newEciesHeader, newSymmetricHeader, parseEncryptionHeader } from '@0gfoundation/0g-storage-ts-sdk'
 import { decryptDownloaded } from './storage.js'
 import { hexToBytes } from './keystore.js'
@@ -38,17 +35,27 @@ interface ListingRef {
 interface FoundRoot {
   root: Root
   hash: string
+  /** the account card stored with it (public; see v2account.ts) */
+  card: unknown
 }
 
 export interface V2BackendOpts {
   onProgress?: (msg: string) => void
   /** files uploaded at once (each sends a few parts in parallel; the relayer allows 8 per account) */
   fileConcurrency?: number
+  /** the account card to store with every root (v2account.ts); else the latest root's is kept */
+  card?: unknown
 }
 
-/** a root's file starts with this many bytes of tag (see rootTag) */
-const TAG_BYTES = 32
-const ROOT_TAG_INFO = '0gdrive/root-tag/v1'
+/**
+ * A root file: this magic, the card's length (u32, big-endian), the card
+ * (public JSON: anyone can find a drive account's card as its newest
+ * root's), then the root, encrypted with the drive key.
+ */
+const ROOT_MAGIC = new TextEncoder().encode('0GDrive root v2\n')
+const PREFIX_BYTES = ROOT_MAGIC.length + 4
+/** a card is a few hundred bytes; this is a sanity bound */
+const MAX_CARD_BYTES = 64 * 1024
 /** listings uploaded at once */
 const LISTING_CONCURRENCY = 3
 /** bytes encrypted at a time on reads of an EncryptedSource */
@@ -62,6 +69,43 @@ const MERGE_ROUNDS = 3
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const strip0x = (h: string) => h.replace(/^0x/i, '').toLowerCase()
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i])
+
+/** The card length a root file's first bytes give, or null when it isn't a root. */
+function cardLength(prefix: Uint8Array): number | null {
+  if (prefix.length < PREFIX_BYTES || !sameBytes(prefix.subarray(0, ROOT_MAGIC.length), ROOT_MAGIC)) return null
+  const n = new DataView(prefix.buffer, prefix.byteOffset).getUint32(ROOT_MAGIC.length)
+  return n <= MAX_CARD_BYTES ? n : null
+}
+
+function parseCard(bytes: Uint8Array): unknown {
+  if (bytes.length === 0) return null
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The card stored with an account's newest root (public: no key needed),
+ * or null when the account has no root. Checks at most `maxFiles` files.
+ */
+export async function readAccountCard(relayer: RelayerClient, account: string, maxFiles = 500): Promise<unknown> {
+  let before: string | undefined
+  for (let seen = 0; seen < maxFiles; ) {
+    const page = await relayer.list(account, { limit: 100, before })
+    for (const f of page.files) {
+      if (++seen > maxFiles) return null
+      if (f.fileSize < PREFIX_BYTES) continue
+      const n = cardLength(await relayer.head(strip0x(f.dataHash), PREFIX_BYTES))
+      if (n === null) continue
+      return parseCard((await relayer.head(strip0x(f.dataHash), PREFIX_BYTES + n)).subarray(PREFIX_BYTES))
+    }
+    if (!page.next || page.files.length === 0) return null
+    before = page.next
+  }
+  return null
+}
 
 /**
  * Bytes as stored: an encryption header (the SDK's, as on V1, so the same
@@ -102,13 +146,13 @@ const asBlob = (data: Blob | Uint8Array) => (data instanceof Uint8Array ? new Bl
 
 /**
  * 0G Storage V2 through the relayer (v2relayer.ts). No transactions: the
- * storage account (derived from the recovery signature) signs statements
+ * storage account (derived from the drive key, see v2account.ts) signs statements
  * locally, and its balance in the PaymentVault pays rent. See D18 in
  * docs/decisions.md.
  *
  * Listings are encrypted files; a root (also encrypted) names the current
  * version of each, and is found as the newest of the account's files that
- * starts with this account's root tag. Superseded versions are deleted a
+ * starts with the root magic. Superseded versions are deleted a
  * change later, so the account doesn't pay rent for history.
  */
 export class V2Backend implements DriveBackend {
@@ -120,7 +164,7 @@ export class V2Backend implements DriveBackend {
   private notRoots = new Set<string>()
   /** one change at a time: each reads the latest root and replaces it */
   private writing: Promise<unknown> = Promise.resolve()
-  private tag: Uint8Array
+  private card: unknown
 
   constructor(
     readonly relayer: RelayerClient,
@@ -130,10 +174,7 @@ export class V2Backend implements DriveBackend {
     private masterKey: Uint8Array,
     private opts: V2BackendOpts = {}
   ) {
-    // keyed by the account, not the drive key: a wrong drive key still finds
-    // the root, and fails loudly instead of showing an empty drive
-    const tagKey = hkdf(sha256, ethers.getBytes(account.privateKey), undefined, ROOT_TAG_INFO, 32)
-    this.tag = hmac(sha256, tagKey, new TextEncoder().encode('root'))
+    this.card = opts.card
   }
 
   get address(): string {
@@ -142,6 +183,19 @@ export class V2Backend implements DriveBackend {
 
   async refresh(): Promise<void> {
     this.current = this.newer(await this.findRoot(), this.current)
+  }
+
+  /** The card stored with the current root (after refresh). */
+  get currentCard(): unknown {
+    return this.card ?? this.current?.card ?? null
+  }
+
+  /** Store `card` with a new root now (the drive's first root, or a card change). */
+  saveCard(card: unknown): Promise<void> {
+    this.card = card
+    const run = this.writing.then(() => this.commit({}))
+    this.writing = run.catch(() => undefined)
+    return run
   }
 
   /**
@@ -165,8 +219,8 @@ export class V2Backend implements DriveBackend {
         const hash = strip0x(f.dataHash)
         if (this.current?.hash === hash) return this.current
         if (this.notRoots.has(hash)) continue
-        if (f.fileSize > TAG_BYTES && sameBytes(await this.relayer.head(hash, TAG_BYTES), this.tag)) {
-          return { root: await this.readRoot(hash, f.fileSize), hash }
+        if (f.fileSize > PREFIX_BYTES && cardLength(await this.relayer.head(hash, PREFIX_BYTES)) !== null) {
+          return { ...(await this.readRoot(hash, f.fileSize)), hash }
         }
         this.notRoots.add(hash)
       }
@@ -175,14 +229,17 @@ export class V2Backend implements DriveBackend {
     }
   }
 
-  private async readRoot(hash: string, size: number): Promise<Root> {
+  private async readRoot(hash: string, size: number): Promise<{ root: Root; card: unknown }> {
     const { blob } = await this.relayer.download(hash, { size })
     const bytes = new Uint8Array(await blob.arrayBuffer())
-    const root = this.decryptJson<Root>(bytes.subarray(TAG_BYTES))
+    const n = cardLength(bytes)!
+    // the magic is public, so anyone can find the root; only the drive key
+    // reads it, and a wrong one fails loudly instead of showing an empty drive
+    const root = this.decryptJson<Root>(bytes.subarray(PREFIX_BYTES + n))
     if (root?.v !== 1 || typeof root.listings !== 'object') {
       throw new Error('Manifest decryption failed — wrong drive key for this account')
     }
-    return root
+    return { root, card: parseCard(bytes.subarray(PREFIX_BYTES, PREFIX_BYTES + n)) }
   }
 
   /** JSON encrypted with the drive key, or null when it isn't (wrong key, or not ours). */
@@ -300,18 +357,25 @@ export class V2Backend implements DriveBackend {
       listings: { ...base?.root.listings, ...refs },
       retired,
     }
+    const card = this.card ?? base?.card ?? null
+    const cardBytes = card === null ? new Uint8Array(0) : new TextEncoder().encode(JSON.stringify(card))
+    const prefix = new Uint8Array(PREFIX_BYTES + cardBytes.length)
+    prefix.set(ROOT_MAGIC)
+    new DataView(prefix.buffer).setUint32(ROOT_MAGIC.length, cardBytes.length)
+    prefix.set(cardBytes, PREFIX_BYTES)
     const src = new EncryptedSource(new Blob([JSON.stringify(root)]), { type: 'aes256', key: this.masterKey })
-    const tagged: ByteSource = {
-      size: TAG_BYTES + src.size,
+    const file: ByteSource = {
+      size: prefix.length + src.size,
       slice: async (from, to) => {
         const out = new Uint8Array(to - from)
-        if (from < TAG_BYTES) out.set(this.tag.subarray(from, Math.min(to, TAG_BYTES)))
-        if (to > TAG_BYTES) out.set(await src.slice(Math.max(from, TAG_BYTES) - TAG_BYTES, to - TAG_BYTES), Math.max(0, TAG_BYTES - from))
+        const pl = prefix.length
+        if (from < pl) out.set(prefix.subarray(from, Math.min(to, pl)))
+        if (to > pl) out.set(await src.slice(Math.max(from, pl) - pl, to - pl), Math.max(0, pl - from))
         return out
       },
     }
-    const r = await this.relayer.upload(this.account, tagged)
-    this.current = { root, hash: r.dataHash }
+    const r = await this.relayer.upload(this.account, file)
+    this.current = { root, hash: r.dataHash, card }
     // what the replaced root retired is now two changes old: stop paying for it
     if (base) void this.deleteAll(base.root.retired)
     return this.current
@@ -348,8 +412,10 @@ export class V2Backend implements DriveBackend {
           results[i] = { ok: true, ref: { rootHashes: ['0x' + r.dataHash], txHashes: [] } }
           opts.onItem?.(i, 'done')
         } catch (err) {
-          results[i] = { ok: false, error: (err as Error).message }
-          opts.onItem?.(i, 'error', (err as Error).message)
+          // the reason code too: the app tells a storage-balance shortfall (PAYER_SHORTFALL) from other failures
+          const error = (err as Error).message + (err instanceof RelayerError && err.reason ? ` (${err.reason})` : '')
+          results[i] = { ok: false, error }
+          opts.onItem?.(i, 'error', error)
         }
       }
     }
@@ -374,29 +440,42 @@ export class V2Backend implements DriveBackend {
 
   fixRecords(_files: FileMeta[]): void {}
 
-  async download(meta: FileMeta, opts: DownloadOpts = {}): Promise<DownloadResult> {
-    if (meta.rootHashes.length !== 1) throw new Error('not a V2 file record')
-    const { blob } = await this.relayer.download(strip0x(meta.rootHashes[0]), {
-      onProgress: (got, total) => opts.onProgress?.(`Downloading ${got} of ${total} bytes`, total > 0 ? Math.round((got / total) * 100) : undefined),
-    })
-    const stored = new Uint8Array(await blob.arrayBuffer())
-    if (!opts.decryption) {
-      opts.onPlainChunk?.(stored)
-      return { data: opts.onPlainChunk ? new Uint8Array(0) : stored, decrypted: true }
-    }
-    if (opts.onPlainChunk && opts.decryption.symmetricKey) {
-      // AES-256 (v1 header): decrypt and hand over a piece at a time
-      const header = parseEncryptionHeader(stored)
-      if (header.version !== 1) throw new Error('Streaming download supports AES-256 (v1) files only')
-      const key = typeof opts.decryption.symmetricKey === 'string' ? hexToBytes(opts.decryption.symmetricKey) : opts.decryption.symmetricKey
-      const body = stored.subarray(header.size())
-      for (let at = 0; at < body.length; at += ENC_PIECE) {
-        const piece = body.slice(at, at + ENC_PIECE)
-        cryptAt(key, header.nonce, at, piece)
-        opts.onPlainChunk(piece)
-      }
-      return { data: new Uint8Array(0), decrypted: true }
-    }
-    return decryptDownloaded(stored, opts.decryption)
+  download(meta: FileMeta, opts: DownloadOpts = {}): Promise<DownloadResult> {
+    return downloadV2(this.relayer, meta.rootHashes, opts)
   }
+
+  /** Delete the files' bytes: rent stops. In the background; a failure only costs rent. */
+  async discard(files: FileMeta[]): Promise<void> {
+    void this.deleteAll(files.flatMap((f) => f.rootHashes.map(strip0x)))
+  }
+}
+
+/**
+ * A V2 file's bytes by its data hash (a record's rootHashes, or a share
+ * link's): no account or key needed to read, only to decrypt.
+ */
+export async function downloadV2(relayer: RelayerClient, rootHashes: string[], opts: DownloadOpts = {}): Promise<DownloadResult> {
+  if (rootHashes.length !== 1) throw new Error('not a V2 file record')
+  const { blob } = await relayer.download(strip0x(rootHashes[0]), {
+    onProgress: (got, total) => opts.onProgress?.(`Downloading ${got} of ${total} bytes`, total > 0 ? Math.round((got / total) * 100) : undefined),
+  })
+  const stored = new Uint8Array(await blob.arrayBuffer())
+  if (!opts.decryption) {
+    opts.onPlainChunk?.(stored)
+    return { data: opts.onPlainChunk ? new Uint8Array(0) : stored, decrypted: true }
+  }
+  if (opts.onPlainChunk && opts.decryption.symmetricKey) {
+    // AES-256 (v1 header): decrypt and hand over a piece at a time
+    const header = parseEncryptionHeader(stored)
+    if (header.version !== 1) throw new Error('Streaming download supports AES-256 (v1) files only')
+    const key = typeof opts.decryption.symmetricKey === 'string' ? hexToBytes(opts.decryption.symmetricKey) : opts.decryption.symmetricKey
+    const body = stored.subarray(header.size())
+    for (let at = 0; at < body.length; at += ENC_PIECE) {
+      const piece = body.slice(at, at + ENC_PIECE)
+      cryptAt(key, header.nonce, at, piece)
+      opts.onPlainChunk(piece)
+    }
+    return { data: new Uint8Array(0), decrypted: true }
+  }
+  return decryptDownloaded(stored, opts.decryption)
 }

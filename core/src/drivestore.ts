@@ -1,5 +1,3 @@
-import type { ethers } from 'ethers'
-import type { NetworkConfig } from './config.js'
 import type { FileMeta, SearchEntry } from './types.js'
 import {
   ROOT_ID,
@@ -11,7 +9,6 @@ import {
 } from './manifest.js'
 import { FolderTree } from './tree.js'
 import type { DriveBackend, ManifestWrite } from './backend.js'
-import { V1Backend, type V1BackendOpts } from './v1backend.js'
 
 export interface DriveState {
   /** Every folder's path (not the root), parents before children. */
@@ -35,15 +32,13 @@ interface LoadedIndex {
   version: number
 }
 
-/** The V1 backend's options (used when no `backend` is given), and the drive's own. */
-export interface DriveStoreOpts extends V1BackendOpts {
-  /** Where the drive's data lives (default: 0G Storage V1, built from the other options). */
-  backend?: DriveBackend
+/** The drive's own options. */
+export interface DriveStoreOpts {
   /**
    * Search entries made on this device and not saved yet, by file id. Any
    * folder listing written gets them for its files that have none; other
-   * folders holding some ride along in the same transaction (see
-   * searchSaveItems), so saving them costs no wallet prompt of its own.
+   * folders holding some ride along in the same change (see
+   * searchSaveItems), so saving them needs no change of its own.
    */
   pendingSearch?: () => ReadonlyMap<string, PendingSearchEntry>
 }
@@ -112,8 +107,7 @@ const emptyFolder = (key: string): FolderManifest => ({ path: key, files: [], up
 
 /**
  * Serverless drive metadata: encrypted manifest files, stored and found by
- * a DriveBackend (V1: tagged uploads found via on-chain Submit events, see
- * docs/decisions.md D3).
+ * a DriveBackend (V2: listings named by a root, docs/decisions.md D18).
  *
  * All mutations store a new manifest version — one per touched folder,
  * plus the index when the folder tree changes; one change in all.
@@ -122,17 +116,11 @@ const emptyFolder = (key: string): FolderManifest => ({ path: key, files: [], up
  * the folder's permanent id, which is what its manifest is keyed by.
  */
 export class DriveStore {
-  readonly backend: DriveBackend
-
   constructor(
-    network: NetworkConfig,
-    signer: ethers.Signer,
-    /** Drive master key (32 bytes) — manifests are encrypted with it. */
-    masterKey: Uint8Array,
+    /** where the drive's data lives (V2Backend), encrypted with the drive key */
+    readonly backend: DriveBackend,
     private opts: DriveStoreOpts = {}
-  ) {
-    this.backend = opts.backend ?? new V1Backend(network, signer, masterKey, opts)
-  }
+  ) {}
 
   /** Bring the backend's view of the drive up to date. */
   refresh(): Promise<void> {
@@ -171,7 +159,7 @@ export class DriveStore {
 
   // ─── Public API ─────────────────────────────────────────────────────
 
-  /** Load the whole drive state from the chain (fresh scan). */
+  /** Load the whole drive state from storage (fresh read). */
   async loadDrive(): Promise<DriveState> {
     await this.backend.refresh(true)
     const { tree } = await this.loadIndex()
@@ -209,8 +197,7 @@ export class DriveStore {
 
   /**
    * Add or update multiple file records in one folder manifest upload —
-   * ONE transaction for the whole batch (fewer wallet prompts, one
-   * sealing wait). Files themselves are already uploaded by the caller.
+   * ONE change for the whole batch. Files themselves are already uploaded by the caller.
    */
   async putFileRecords(folderPath: string, metas: FileMeta[], replace: string[] = []): Promise<void> {
     const items = await this.prepareFileRecords(folderPath, metas, replace)
@@ -226,7 +213,7 @@ export class DriveStore {
 
   /**
    * The manifest write(s) for adding `metas` to a folder, as batch items
-   * instead of uploads — so they can ride in the same transaction as the
+   * instead of uploads — so they can ride in the same change as the
    * files themselves (storage.uploadBatch → finalize). Same contents as
    * putFileRecords would write: the index first if the folder is new, the
    * trash if `replace` moves files there, then the folder.
@@ -276,8 +263,7 @@ export class DriveStore {
 
   /**
    * Remove file records from one folder: the folder's listing, plus the
-   * trash's when they go to trash, in one transaction where batchSubmit is
-   * on. Trash is stored first, so a failure part-way leaves a file in both
+   * trash's when they go to trash, in one change. Trash is stored first, so a failure part-way leaves a file in both
    * places, never in neither.
    */
   async removeFileRecords(
@@ -315,10 +301,11 @@ export class DriveStore {
       [this.manifestItem(folder, folderTag(key))],
       'the files were added to trash but are still listed in their folder too. Move them to trash again to finish.'
     )
+    if (!toTrash) await this.backend.discard(removed)
   }
 
   /**
-   * Rename a file: one folder-manifest write (one transaction). The blob
+   * Rename a file: one folder-manifest write (one change). The blob
    * doesn't change — names live only in the encrypted manifest. `search`
    * replaces the record's search entry (recomputed for the new name by
    * the caller); left out, the old entry is kept. Refuses an invalid name
@@ -384,7 +371,7 @@ export class DriveStore {
 
   /**
    * Move a folder and everything inside it (including all descendant
-   * folders) to trash, in one transaction where batchSubmit is on:
+   * folders) to trash, in one change:
    *   1. trash manifest update — all file records, each tagged with its
    *      original folder (restorable individually); stored first
    *   2. index update — the folder and its descendants leave the tree
@@ -423,7 +410,7 @@ export class DriveStore {
   }
 
   /**
-   * Rename a folder: one index write (one transaction), however many files
+   * Rename a folder: one index write (one change), however many files
    * and subfolders it holds — manifests are tagged by folder id, not path.
    * Refuses an invalid name or one a sibling folder already has (ignoring
    * case). Returns the folder's new path.
@@ -449,7 +436,7 @@ export class DriveStore {
 
   /**
    * Move a folder (with everything inside it) into another folder, '' for
-   * the top level: one index write (one transaction) — manifests are
+   * the top level: one index write (one change) — manifests are
    * tagged by folder id, not path. A destination that doesn't exist yet is
    * created in the same write. Refuses a move into the folder itself or a
    * folder inside it, and a destination that already has a folder of that
@@ -487,7 +474,7 @@ export class DriveStore {
   /**
    * Restore multiple trashed records (records remember their original
    * folders): a manifest write per target folder, the index if a target is
-   * new, and the trash — in one transaction where batchSubmit is on.
+   * new, and the trash — in one change.
    * Targets are stored first, so a failure part-way leaves a file in both
    * places, never in neither.
    */
@@ -554,8 +541,7 @@ export class DriveStore {
   /**
    * Move file records out of one folder, each to its own destination: a
    * manifest write per destination folder, one for the source, plus an
-   * index write if a destination is new — in one transaction where
-   * batchSubmit is on. Destinations are stored first, so a failure
+   * index write if a destination is new — in one change. Destinations are stored first, so a failure
    * part-way leaves a file in both folders, never in neither. Metadata
    * only — blobs don't move. With `refuseNameClash`, nothing moves if a
    * destination already has a file of the same name (ignoring case), or
@@ -670,7 +656,7 @@ export class DriveStore {
     return out
   }
 
-  /** Save this device's pending search entries now: one transaction (where batchSubmit is on). */
+  /** Save this device's pending search entries now: one change. */
   async saveSearchEntries(): Promise<number> {
     await this.refresh()
     const items = await this.searchSaveItems([], Number.POSITIVE_INFINITY)
@@ -702,15 +688,17 @@ export class DriveStore {
     await this.backend.writeManifests(first, then, extras, partial)
   }
 
-  /** Permanently drop a record from trash (metadata only; blobs persist). */
+  /** Permanently drop a record from trash, and its file where the backend can delete it. */
   async purgeFromTrash(id: string): Promise<void> {
     await this.refresh()
     const trash = await this.loadFolder(TRASH_PATH)
-    if (trash === null || !trash.files.some((f) => f.id === id)) return
+    const removed = trash?.files.filter((f) => f.id === id) ?? []
+    if (trash === null || removed.length === 0) return
     trash.files = trash.files.filter((f) => f.id !== id)
     trash.updatedAt = Date.now()
     trash.version += 1
     await this.writeManifests([], [this.manifestItem(trash, folderTag(TRASH_PATH))], '')
+    await this.backend.discard(removed)
   }
 }
 

@@ -5,8 +5,8 @@
 //   connects and the other gets no request; after a reload it's listed
 //   first as "Last used"; Escape dismisses with no request; phone width
 //   one wallet that only sets window.ethereum → connects with no picker
-//   a wallet that signs with a random nonce → recovery setup refused
-//   after 2 signatures, before any transaction
+//   a wallet that signs with a random nonce → drive setup refused after 2
+//   signatures, before the deposit (no transaction), and no drive opens
 //   a wallet that returns a non-ECDSA (smart-account) signature → refused
 //   after 1 signature
 //
@@ -328,14 +328,15 @@ try {
     const { context, page } = await open([w])
     await page.goto(base)
     await connectExtension(page)
+    // setup starts with the recovery signature: an unstable one stops it before the deposit
     await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-    await page.getByRole('button', { name: 'Set up recovery' }).click({ timeout: 120_000 })
     const err = page.getByText(pattern).first()
     await err.waitFor({ timeout: 60_000 })
     const text = await err.textContent()
-    check(`${name}: recovery refused before any transaction (${wantSigs} signature${wantSigs > 1 ? 's' : ''}), points to the key file`,
-      w.count('personal_sign') === wantSigs && w.count('eth_sendTransaction') === 0 && /Export the key file/.test(text) &&
-        (await page.locator('.sec-row[data-row=recovery] .sec-ok').count()) === 0,
+    check(`${name}: drive setup refused before any transaction (${wantSigs} signature${wantSigs > 1 ? 's' : ''}), no drive opened`,
+      w.count('personal_sign') === wantSigs && w.count('eth_sendTransaction') === 0 &&
+        (await page.getByRole('button', { name: '+ New folder' }).count()) === 0 &&
+        (await page.getByRole('button', { name: /Create my drive|Finish setup/ }).count()) === 1,
       JSON.stringify({ sign: w.count('personal_sign'), tx: w.count('eth_sendTransaction'), text: text.slice(0, 120) }))
     await context.close()
   }

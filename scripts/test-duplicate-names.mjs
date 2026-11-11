@@ -6,7 +6,8 @@
 //   repeated within the drop)
 //   a typed name: taken, empty, with "/" or given twice is refused
 //   upload with a typed name; with the suggestion; Replace → old b.txt to
-//   trash, same transaction; Skip → the rest only; Cancel → nothing
+//   trash, in the same change; Skip → the rest only; Cancel → nothing
+//   (no change prompts the wallet)
 //   phone width: the dialog fits, fields and buttons thumb-sized
 //   restoring the replaced b.txt → "b (1).txt", with an Activity note
 //   after a reload every name is there once
@@ -19,7 +20,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -39,7 +40,7 @@ const check = (name, ok, detail = '') => {
 
 const wallet = ethers.Wallet.createRandom().connect(provider)
 const funder = new ethers.Wallet(funderKey, provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.5') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 step(`fresh wallet ${wallet.address} funded`)
 
 const browser = await chromium.launch()
@@ -48,9 +49,8 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 900 
 const page = await context.newPage()
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 let txs = 0
-const walletCalls = [] // method names, in order
+let signs = 0
 await page.exposeFunction('__eth', async (method, params) => {
-  walletCalls.push(method)
   try {
     switch (method) {
       case 'eth_requestAccounts':
@@ -64,6 +64,7 @@ await page.exposeFunction('__eth', async (method, params) => {
       case 'wallet_addEthereumChain':
         return { ok: null }
       case 'personal_sign': {
+        signs++
         const [data] = params
         return { ok: await wallet.signMessage(ethers.isHexString(data) ? ethers.getBytes(data) : data) }
       }
@@ -99,6 +100,17 @@ await context.addInitScript(() => {
   }
 })
 
+/** Delete every file of the drive's storage account (rent stops), with its key from the page. */
+async function deleteDriveFiles(pg = page, address = wallet.address) {
+  const hex = await pg.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), address).catch(() => null)
+  if (!hex) return
+  const account = deriveStorageKey(hexToBytes(hex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
+
 
 const names = () => page.$$eval('table .fname-btn', (els) => els.map((e) => e.textContent.trim()).sort())
 const row = (name) => page.locator('table tr', { has: page.locator('.fname-btn', { hasText: new RegExp(`^${name.replace(/[.()]/g, '\\$&')}$`) }) })
@@ -133,6 +145,8 @@ try {
   step('a.txt, b.txt, notes.txt uploaded')
 
   // a taken name (differing only in case counts): asked, with a name to edit
+  // no change after setup prompts the wallet
+  const setupSigns = signs
   let tx = txs
   await drop([file('A.txt', 'A2'), file('c.txt', 'C1')])
   await dialog.waitFor({ timeout: 10_000 })
@@ -159,31 +173,31 @@ try {
   await field('A.txt').fill('A-v2.txt')
   await uploadBtn().click()
   await waitNames(['a.txt', 'A-v2.txt', 'b.txt', 'c.txt', 'notes.txt'])
-  check('upload with a typed name: "A-v2.txt", one transaction', txs - tx === 1 && (await preview('A-v2.txt')) === 'A2', `${txs - tx} tx`)
+  check('upload with a typed name: "A-v2.txt", no wallet prompt', txs === tx && (await preview('A-v2.txt')) === 'A2', `${txs - tx} tx`)
 
   // Replace: the old one goes to trash in the same transaction
   tx = txs
-  const registered = await page.$$eval('.activity li', (els) => els.filter((e) => e.textContent.includes('stored and registered')).length)
+  const registered = await page.$$eval('.activity li', (els) => els.filter((e) => e.textContent.includes('stored in your drive')).length)
   await drop([file('b.txt', 'B2')])
   await dialog.getByRole('button', { name: 'Replace' }).click()
   await page.waitForFunction(
-    (n) => [...document.querySelectorAll('.activity li')].filter((e) => e.textContent.includes('stored and registered')).length > n,
+    (n) => [...document.querySelectorAll('.activity li')].filter((e) => e.textContent.includes('stored in your drive')).length > n,
     registered,
     { timeout: 8 * 60_000, polling: 1000 }
   )
   // the drive re-syncs after the upload: wait for it to start and finish
-  await page.waitForFunction(() => document.body.textContent.includes('Syncing drive from chain'), null, { timeout: 10_000 }).catch(() => undefined)
-  await page.waitForFunction(() => !document.body.textContent.includes('Syncing drive from chain'), null, { timeout: 2 * 60_000 })
+  await page.waitForFunction(() => document.body.textContent.includes('Syncing drive'), null, { timeout: 10_000 }).catch(() => undefined)
+  await page.waitForFunction(() => !document.body.textContent.includes('Syncing drive'), null, { timeout: 2 * 60_000 })
   const afterReplace = await names()
   const bText = await preview('b.txt')
-  check('Replace: one b.txt, with the new content, one transaction', afterReplace.filter((n) => n === 'b.txt').length === 1 && bText === 'B2' && txs - tx === 1, `${JSON.stringify(afterReplace)} · ${bText} · ${txs - tx} tx`)
+  check('Replace: one b.txt, with the new content, no wallet prompt', afterReplace.filter((n) => n === 'b.txt').length === 1 && bText === 'B2' && txs === tx, `${JSON.stringify(afterReplace)} · ${bText} · ${txs - tx} tx`)
 
   // Skip: the clashing file is left out, the rest go up
   tx = txs
   await drop([file('notes.txt', 'N2'), file('d.txt', 'D1')])
   await dialog.getByRole('button', { name: 'Skip' }).click()
   await waitNames(['a.txt', 'A-v2.txt', 'b.txt', 'c.txt', 'd.txt', 'notes.txt'])
-  check('Skip: d.txt added, notes.txt unchanged', (await preview('notes.txt')) === 'N1' && txs - tx === 1, `${txs - tx} tx`)
+  check('Skip: d.txt added, notes.txt unchanged, no wallet prompt', (await preview('notes.txt')) === 'N1' && txs === tx, `${txs - tx} tx`)
 
   // the same name twice in one drop: nothing to replace, so no Replace
   await drop([file('e.txt', 'E1'), file('e.txt', 'E2')])
@@ -194,13 +208,13 @@ try {
   await waitNames(['a.txt', 'A-v2.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt', 'e (1).txt', 'notes.txt'])
   check('…the suggested name as is: e.txt and e (1).txt', true)
 
-  // Cancel: nothing queued, no transaction
+  // Cancel: nothing queued
   tx = txs
   const queued = await page.locator('.queue-item').count()
   await drop([file('a.txt', 'A3')])
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await page.waitForTimeout(4000)
-  check('Cancel: nothing queued, no transaction', (await page.locator('.queue-item').count()) === queued && txs === tx && (await dialog.count()) === 0)
+  check('Cancel: nothing queued', (await page.locator('.queue-item').count()) === queued && txs === tx && (await dialog.count()) === 0)
 
   // phone width: the dialog fits, fields and buttons are thumb-sized
   await page.setViewportSize({ width: 390, height: 800 })
@@ -241,7 +255,8 @@ try {
   const note = page.locator('.activity li', { hasText: 'restored to' })
   await note.first().waitFor({ timeout: 10 * 60_000 })
   const noteText = await note.first().textContent()
-  check('restore into a taken name: "b (1).txt", and Activity says why', noteText.includes('as “b (1).txt”') && txs - tx === 1, noteText)
+  check('restore into a taken name: "b (1).txt", and Activity says why (no wallet prompt)', noteText.includes('as “b (1).txt”') && txs === tx, noteText)
+  check('no change after setup asked for a signature', signs === setupSigns, `${signs - setupSigns} signatures`)
 
   await page.reload() // reconnects by itself
   await page.locator('.nav .nav-item', { hasText: 'My Drive' }).first().click({ timeout: 5 * 60_000 })
@@ -252,6 +267,7 @@ try {
 } catch (err) {
   check('run completed', false, err.message.split('\n')[0])
 } finally {
+  await deleteDriveFiles()
   await browser.close()
 }
 

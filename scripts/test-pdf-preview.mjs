@@ -5,15 +5,16 @@
 //     scrolling to the end draws page 12 and releases page 1; no sideways
 //     scroll; Download still gives the whole file; a broken PDF says so
 //   desktop: the browser's own viewer (a frame), as before
-// Makes a drive on a FRESH key funded from .env's test wallet, refunded at
-// the end. Usage: node scripts/test-pdf-preview.mjs [http://localhost:5173]
+// Makes a V2 drive on a FRESH key funded from .env's test wallet (the setup
+// deposit and gas); the drive's files are deleted and the wallet refunded
+// at the end. Usage: node scripts/test-pdf-preview.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -58,6 +59,16 @@ const report = makePdf(PAGES)
 const broken = Buffer.from('%PDF-1.4\nthis is not really a PDF\n'.repeat(20))
 
 const browser = await chromium.launch()
+
+/** Stop paying for the test drive: delete every file of its storage account. */
+async function deleteDriveFiles(masterKeyHex) {
+  if (!masterKeyHex) return
+  const account = deriveStorageKey(hexToBytes(masterKeyHex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  console.log(`${at()} deleted the drive's ${files.length} files`)
+}
 
 /** A context with `wallet` injected. */
 async function openPage(contextOpts, wallet) {
@@ -115,17 +126,20 @@ async function openPage(contextOpts, wallet) {
 }
 
 const wallet = ethers.Wallet.createRandom().connect(provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.3') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 console.log(`${at()} fresh wallet ${wallet.address}`)
 
+let masterKeyHex = null
 try {
   // ---- phone
   const phone = await openPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 }, wallet)
   const page = phone.page
   await page.goto(base)
   await connectExtension(page)
+  // setup: 3 signatures and the storage deposit (one transaction)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: /New folder/ }).first().waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: /New folder/ }).first().waitFor({ timeout: 5 * 60_000 })
+  masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   await page.setInputFiles('.dropzone input[type=file]', [
     { name: 'report.pdf', mimeType: 'application/pdf', buffer: report },
     { name: 'broken.pdf', mimeType: 'application/pdf', buffer: broken },
@@ -197,6 +211,7 @@ try {
   console.log(`${at()} ERROR ${e.message.split('\n')[0]}`)
 } finally {
   await browser.close()
+  await deleteDriveFiles(masterKeyHex)
   await refund(wallet, funder.address)
 }
 console.log(failed ? `${failed} FAILED` : 'PDF PREVIEW TEST PASSED ✓')

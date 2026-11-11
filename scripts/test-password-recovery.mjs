@@ -1,12 +1,15 @@
 // Recovery password, in the browser (headless Chromium + dev server), with
-// an injected wallet backed by a FRESH key funded from .env's test wallet:
-//   create drive + upload a file + set up security
-//   set the password (dialog: mismatch / too short rejected) → status shows
-//   it, also after a reload; change it
+// an injected wallet backed by a FRESH key funded from .env's test wallet,
+// on 0G Storage V2:
+//   create drive (recovery included) + upload a file
+//   set the password (dialog: mismatch / too short rejected; no wallet
+//   prompt) → status shows it, also after a reload; change it
 //   a browser with NO wallet opens the drive read-only with address +
 //   password: wrong / old password refused, file listed and previewed,
 //   no upload / new-folder / trash controls, and no thumbnails saved on
 //   that device (the owner's browser does save them)
+//   an address without a drive gets a clear error
+// The drive's files are deleted at the end and the wallet refunded.
 //
 //   node scripts/test-password-recovery.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
@@ -15,7 +18,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -35,7 +38,7 @@ const check = (name, ok, detail = '') => {
 
 const wallet = ethers.Wallet.createRandom().connect(provider)
 const funder = new ethers.Wallet(funderKey, provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.5') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 step(`fresh wallet ${wallet.address} funded`)
 
 const browser = await chromium.launch()
@@ -122,22 +125,23 @@ async function gridThumbsSaved(page) {
 const CONTENT = 'Passport scan notes — recover me. ' + Date.now()
 const PW1 = 'copper lantern orbit meadow'
 const PW2 = 'violet harbor sixteen kites'
+let masterKeyHex = null
 
 try {
   const { context, page } = await openWithWallet()
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   await page.setInputFiles('.dropzone input[type=file]', [
     { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from(CONTENT) },
     { name: 'cat.jpg', mimeType: 'image/jpeg', buffer: CAT },
   ])
   await page.locator('table .fname-btn', { hasText: 'notes.txt' }).waitFor({ timeout: 8 * 60_000 })
   check('owner\'s browser saves thumbnails (control)', (await gridThumbsSaved(page)) > 0)
-  await page.getByRole('button', { name: 'Set up recovery' }).click()
-  await page.locator('.sec-row[data-row=recovery] .sec-ok').waitFor({ timeout: 5 * 60_000 })
-  step('drive created, file uploaded, security set up')
+  await page.locator('.sec-row[data-row=recovery] .sec-ok').waitFor({ timeout: 60_000 })
+  step('drive created (recovery on), file uploaded')
 
   // ── set the password ──
   await page.getByRole('button', { name: 'Set recovery password' }).click()
@@ -155,8 +159,8 @@ try {
   await page.fill('input[placeholder="type it again"]', PW1)
   await page.getByRole('button', { name: 'Set password' }).click()
   await page.locator('.sec-row[data-row=password] .sec-ok').waitFor({ timeout: 5 * 60_000 })
-  check('password set: 1 signature + 1 tx, sidebar shows "✓ Set  Change"',
-    prompts.sign - before.sign === 1 && prompts.tx - before.tx === 1 &&
+  check('password set with no wallet prompt, sidebar shows "✓ Set  Change"',
+    prompts.sign === before.sign && prompts.tx === before.tx &&
       (await page.getByRole('button', { name: 'Change recovery password' }).count()) === 1,
     JSON.stringify({ sign: prompts.sign - before.sign, tx: prompts.tx - before.tx }))
 
@@ -193,7 +197,7 @@ try {
 
   await page.reload() // reconnects by itself
   await page.locator('.sec-row[data-row=password] .sec-ok').waitFor({ timeout: 3 * 60_000 })
-  check('status read back from chain after reload', true)
+  check('status read back from 0G after reload', true)
 
   // ── change it ──
   await page.getByRole('button', { name: 'Change recovery password' }).click()
@@ -257,7 +261,7 @@ try {
   await p3.fill('.lost-wallet input[type=password]', PW2)
   await p3.getByRole('button', { name: 'Open drive' }).click()
   const noneErr = await p3.locator('.lost-wallet .error-text').textContent({ timeout: 2 * 60_000 })
-  check('address without a drive: clear error', /No drive backup found/.test(noneErr), noneErr)
+  check('address without a drive: clear error', /No drive found for this address/.test(noneErr), noneErr)
   await none.close()
 } catch (err) {
   check('run completed', false, err.message.split('\n')[0])
@@ -268,5 +272,13 @@ try {
   console.log(`${pass}/${results.length} checks passed`)
   process.exitCode = pass === results.length && errors.length === 0 ? 0 : 1
   await browser.close()
+  if (masterKeyHex) {
+    // stop paying for the test drive
+    const account = deriveStorageKey(hexToBytes(masterKeyHex))
+    const relayer = new RelayerClient(V2_TESTNET)
+    const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+    for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+    step(`deleted the drive's ${files.length} files`)
+  }
   await refund(wallet, funder.address)
 }

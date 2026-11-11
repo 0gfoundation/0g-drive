@@ -4,7 +4,7 @@
 // Work from the sidebar:
 //   the whole name is pre-selected
 //   a sibling's name (any case), "/" and the reserved trash name are refused
-//   the rename takes ONE transaction; the open folder follows to the new path
+//   the rename prompts the wallet for nothing; the open folder follows to the new path
 //   the subfolder and its file survive a reload, and the file still opens
 //   phone width: the tree's buttons fit the drawer, the dialog fits the screen
 // On-device AI is switched off, so no model download.
@@ -16,7 +16,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -36,7 +36,7 @@ const check = (name, ok, detail = '') => {
 
 const wallet = ethers.Wallet.createRandom().connect(provider)
 const funder = new ethers.Wallet(funderKey, provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.5') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 step(`fresh wallet ${wallet.address} funded`)
 
 const browser = await chromium.launch()
@@ -45,6 +45,7 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 900 
 const page = await context.newPage()
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 let txs = 0
+let signs = 0
 await page.exposeFunction('__eth', async (method, params) => {
   try {
     switch (method) {
@@ -59,6 +60,7 @@ await page.exposeFunction('__eth', async (method, params) => {
       case 'wallet_addEthereumChain':
         return { ok: null }
       case 'personal_sign': {
+        signs++
         const [data] = params
         return { ok: await wallet.signMessage(ethers.isHexString(data) ? ethers.getBytes(data) : data) }
       }
@@ -93,6 +95,17 @@ await context.addInitScript(() => {
     removeListener() {},
   }
 })
+
+/** Delete every file of the drive's storage account (rent stops), with its key from the page. */
+async function deleteDriveFiles(pg = page, address = wallet.address) {
+  const hex = await pg.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), address).catch(() => null)
+  if (!hex) return
+  const account = deriveStorageKey(hexToBytes(hex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
 
 const crumbs = () => page.$$eval('.breadcrumb .crumb', (els) => els.map((e) => e.textContent.trim()).join('/'))
 const treeNames = () => page.$$eval('.sidebar .tree-name', (els) => els.map((e) => e.textContent.trim()))
@@ -155,15 +168,15 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 })
 
   await input.fill('Projects')
-  const before = txs
+  const before = { txs, signs }
   await submit.click()
   await page.locator('.activity li', { hasText: 'Renamed folder Work → Projects' }).waitFor({ timeout: 10 * 60_000 })
   await dialog.waitFor({ state: 'detached' })
   await treeRow('Projects').waitFor({ timeout: 2 * 60_000 })
   await page.locator('table .fname-btn', { hasText: 'report.txt' }).waitFor({ timeout: 2 * 60_000 })
-  const after = { txs: txs - before, tree: await treeNames(), crumbs: await crumbs() }
-  check('rename takes one transaction; the open folder follows to Projects/2025',
-    after.txs === 1 && JSON.stringify(after.tree.sort()) === '["2025","Docs","Projects"]' && after.crumbs === 'My drive/Projects/2025',
+  const after = { txs: txs - before.txs, signs: signs - before.signs, tree: await treeNames(), crumbs: await crumbs() }
+  check('rename prompts the wallet for nothing; the open folder follows to Projects/2025',
+    after.txs === 0 && after.signs === 0 && JSON.stringify(after.tree.sort()) === '["2025","Docs","Projects"]' && after.crumbs === 'My drive/Projects/2025',
     JSON.stringify(after))
 
   // phone: the drawer's tree rows fit, with touch-sized buttons
@@ -196,6 +209,7 @@ try {
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {
+  await deleteDriveFiles()
   await browser.close()
 }
 

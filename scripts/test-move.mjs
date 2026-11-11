@@ -4,11 +4,10 @@
 // Work/Reports (with a.txt, b.txt), plus A.TXT in My drive, then:
 //   folder: the current place and the folder itself are greyed out; a
 //     same-named folder (any case) in the destination is refused; a new
-//     destination folder is made in the picker; ONE transaction; the open
+//     destination folder is made in the picker; no wallet prompt; the open
 //     folder follows
-//   every transaction carries the app's gas limit, using ≤ 90 % of it
 //   files: two selected files can't go where A.TXT is (any case); moved to
-//     Docs in ONE transaction; a row's Move opens the picker for that file
+//     Docs with no wallet prompt; a row's Move opens the picker for that file
 //   phone width: the picker, file rows (5 actions) and tree rows fit
 //   after a reload everything is where it was moved to, and opens
 // On-device AI is switched off, so no model download.
@@ -20,7 +19,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -40,7 +39,7 @@ const check = (name, ok, detail = '') => {
 
 const wallet = ethers.Wallet.createRandom().connect(provider)
 const funder = new ethers.Wallet(funderKey, provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.5') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 step(`fresh wallet ${wallet.address} funded`)
 
 const browser = await chromium.launch()
@@ -49,6 +48,7 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 900 
 const page = await context.newPage()
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 let txs = 0
+let signs = 0
 await page.exposeFunction('__eth', async (method, params) => {
   try {
     switch (method) {
@@ -63,6 +63,7 @@ await page.exposeFunction('__eth', async (method, params) => {
       case 'wallet_addEthereumChain':
         return { ok: null }
       case 'personal_sign': {
+        signs++
         const [data] = params
         return { ok: await wallet.signMessage(ethers.isHexString(data) ? ethers.getBytes(data) : data) }
       }
@@ -76,7 +77,6 @@ await page.exposeFunction('__eth', async (method, params) => {
           value: tx.value ? BigInt(tx.value) : 0n,
           gasLimit: tx.gas ? BigInt(tx.gas) : undefined,
         })
-        sentTxs.push({ hash: sent.hash, gasFromApp: !!tx.gas })
         return { ok: sent.hash }
       }
       default:
@@ -100,6 +100,17 @@ await context.addInitScript(() => {
   }
 })
 
+/** Delete every file of the drive's storage account (rent stops), with its key from the page. */
+async function deleteDriveFiles(pg = page, address = wallet.address) {
+  const hex = await pg.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), address).catch(() => null)
+  if (!hex) return
+  const account = deriveStorageKey(hexToBytes(hex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
+
 const crumbs = () => page.$$eval('.breadcrumb .crumb', (els) => els.map((e) => e.textContent.trim()).join('/'))
 const treeNames = () => page.$$eval('.sidebar .tree-name', (els) => els.map((e) => e.textContent.trim()))
 const treeRow = (name) => page.locator('.sidebar .tree-row', { has: page.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) })
@@ -110,7 +121,6 @@ const opt = (label) => picker.getByRole('option', { name: new RegExp(`^${label}\
 const moveHere = picker.getByRole('button', { name: 'Move here' })
 const pickerError = () => picker.locator('.error-text').allTextContents().then((t) => t.join(' | '))
 let promptAnswer = ''
-const sentTxs = [] // { hash, gasFromApp }
 // what the page was doing, printed if the run fails (setup has stalled now and then)
 const consoleTail = []
 const walletLog = []
@@ -214,14 +224,14 @@ try {
   await picker.getByRole('button', { name: 'Add' }).click()
   const pending = { selected: await opt('2026').first().getAttribute('aria-selected'), error: await pickerError() }
   check('"New folder in Docs" adds Docs/2026 and selects it', pending.selected === 'true' && pending.error === '', JSON.stringify(pending))
-  let before = txs
+  let before = { txs, signs }
   await moveHere.click()
   await page.locator('.activity li', { hasText: 'Moved folder Work/Reports → Docs/2026/Reports' }).waitFor({ timeout: 10 * 60_000 })
   await picker.waitFor({ state: 'detached' })
   await fileRow('a.txt').waitFor({ timeout: 2 * 60_000 })
-  const afterFolder = { txs: txs - before, crumbs: await crumbs(), files: await names() }
-  check('folder move with a new destination: one transaction; the open folder follows',
-    afterFolder.txs === 1 && afterFolder.crumbs === 'My drive/Docs/2026/Reports' && afterFolder.files.join() === 'a.txt,b.txt',
+  const afterFolder = { txs: txs - before.txs, signs: signs - before.signs, crumbs: await crumbs(), files: await names() }
+  check('folder move with a new destination: no wallet prompt; the open folder follows',
+    afterFolder.txs === 0 && afterFolder.signs === 0 && afterFolder.crumbs === 'My drive/Docs/2026/Reports' && afterFolder.files.join() === 'a.txt,b.txt',
     JSON.stringify(afterFolder))
 
   // ── files: both selected → My drive refused (A.TXT) → Docs, one transaction
@@ -235,12 +245,13 @@ try {
     fileClash.title === 'Move “2 files”' && fileClash.disabled && /already a file named “a\.txt” in My drive/.test(fileClash.error),
     JSON.stringify(fileClash))
   await opt('Docs').click()
-  before = txs
+  before = { txs, signs }
   await moveHere.click()
   await page.locator('.activity li', { hasText: 'Moved 2 files to Docs' }).waitFor({ timeout: 10 * 60_000 })
   await picker.waitFor({ state: 'detached' })
   await page.waitForFunction(() => document.querySelectorAll('table .fname-btn').length === 0, null, { timeout: 2 * 60_000 })
-  check('2 files moved in one transaction; the folder they left is empty', txs - before === 1, `${txs - before} tx`)
+  check('2 files moved with no wallet prompt; the folder they left is empty',
+    txs === before.txs && signs === before.signs, `${txs - before.txs} tx, ${signs - before.signs} signatures`)
 
   // ── the row's Move button opens the picker for that file; phone row fits
   await openFolder('Docs')
@@ -285,19 +296,6 @@ try {
   check('after reload: Docs/2026/Reports kept, Work empty of it, files in Docs and they open',
     tree.includes('Docs/2026') && !tree.includes('Work/Reports') && docsFiles.join() === 'a.txt,b.txt' && text.startsWith('Alpha'),
     JSON.stringify({ tree, docsFiles }))
-  // every transaction carries the app's gas limit, with room to spare (a
-  // bare estimate once left ~3 % and a batch ran out of gas on chain). 0G
-  // reports at least 80 % of the limit as used, so ≤ 90 % means headroom.
-  const gas = []
-  for (const t of sentTxs) {
-    const [r, tx] = await Promise.all([provider.getTransactionReceipt(t.hash), provider.getTransaction(t.hash)])
-    gas.push({ app: t.gasFromApp, ok: r.status === 1, used: Number(r.gasUsed) / Number(tx.gasLimit) })
-  }
-  check(
-    'every transaction had the app’s gas limit and used at most 90 % of it',
-    gas.length > 0 && gas.every((g) => g.app && g.ok && g.used <= 0.9),
-    gas.map((g) => `${g.app ? '' : 'no app gas · '}${g.ok ? '' : 'FAILED · '}${(g.used * 100).toFixed(0)}%`).join(', ')
-  )
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
   const q = await page.$$eval('.queue-item', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' '))).catch(() => [])
@@ -309,6 +307,7 @@ try {
   console.log(`wallet transactions: ${walletLog.join(', ') || 'none'}`)
   console.log('console tail:\n  ' + consoleTail.join('\n  '))
 } finally {
+  await deleteDriveFiles()
   await browser.close()
 }
 

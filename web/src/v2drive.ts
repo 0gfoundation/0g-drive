@@ -1,0 +1,151 @@
+// The drive on 0G Storage V2 (docs/decisions.md D18, D19): the relayer,
+// the wallet's drive account and its card, setup, and reads that need no
+// account (share links). The app keeps no V1 drive code.
+import {
+  RelayerClient,
+  RelayerError,
+  V2Backend,
+  V2_TESTNET,
+  UnstableSignatureError,
+  depositForUser,
+  deriveStorageKey,
+  downloadV2,
+  findDrive,
+  makeCard,
+  signBinding,
+  signForKeys,
+  storageBalance,
+  unlockCardByPassword,
+  unlockCardBySignature,
+  type AccountCard,
+  type DepositCache,
+  type DownloadOpts,
+} from '@0gdrive/core'
+
+export const V2 = V2_TESTNET
+export const relayer = new RelayerClient(V2)
+/** what records stored on V2 say they're on */
+export const V2_RECORD_NETWORK = 'testnet:v2'
+/** the first deposit at setup (an upload needs about a week of rent up front) */
+export const FIRST_DEPOSIT = '0.1'
+
+/** The wallet's scanned deposits, kept so a page load only scans new blocks. */
+function depositCacheFor(address: string): DepositCache {
+  const key = `0gdrive:v2deposits:${address.toLowerCase()}`
+  return {
+    load() {
+      try {
+        const raw = localStorage.getItem(key)
+        return raw ? JSON.parse(raw) : null
+      } catch {
+        return null
+      }
+    },
+    save(value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value))
+      } catch {
+        // best effort
+      }
+    },
+  }
+}
+
+/** The wallet's drive on V2 (its account and card), or null when it has none. */
+export function lookupDrive(address: string, ownWallet = true) {
+  return findDrive(V2, relayer, address, ownWallet ? depositCacheFor(address) : undefined)
+}
+
+/** Does this drive key belong to that drive? */
+export function keyMatches(masterKey: Uint8Array, card: AccountCard): boolean {
+  return deriveStorageKey(masterKey).address.toLowerCase() === card.account
+}
+
+export function backendFor(masterKey: Uint8Array, card?: AccountCard | null) {
+  return new V2Backend(relayer, deriveStorageKey(masterKey), masterKey, card ? { card } : {})
+}
+
+export const balanceOf = (masterKey: Uint8Array) => storageBalance(V2, deriveStorageKey(masterKey).address)
+
+/** Fund the drive's storage account from the wallet (one transaction). */
+export function deposit(signer: Parameters<typeof depositForUser>[1], masterKey: Uint8Array, amount: bigint) {
+  return depositForUser(V2, signer, deriveStorageKey(masterKey).address, amount)
+}
+
+type Signer = Parameters<typeof depositForUser>[1] & { signMessage(message: string): Promise<string> }
+
+/**
+ * Set up a drive for this key: the recovery signature (twice: the wallet
+ * must sign it the same way), the signature linking the wallet to the
+ * storage account, the first deposit (skipped when the account already
+ * has a balance: a setup interrupted after it), then the first root,
+ * carrying the card.
+ */
+export async function setupDrive(
+  signer: Signer,
+  address: string,
+  masterKey: Uint8Array,
+  firstDeposit: bigint,
+  onStep: (step: string) => void
+): Promise<AccountCard> {
+  const account = deriveStorageKey(masterKey).address
+  onStep('Waiting for signature (1 of 3)…')
+  const { recoveryKey, shareKey } = await signForKeys(signer, address, true)
+  onStep('Waiting for signature (3 of 3)…')
+  const binding = await signBinding(signer, address, account)
+  if ((await storageBalance(V2, account)) === 0n) {
+    onStep('Approve the deposit in your wallet…')
+    await depositForUser(V2, signer, account, firstDeposit)
+  }
+  onStep('Saving your drive…')
+  const card = await makeCard({ wallet: address, account, binding, masterKey, recoveryKey, shareKey: shareKey.pubKey })
+  await backendFor(masterKey, card).saveCard(card)
+  return card
+}
+
+/** The drive key from the card with the wallet's recovery signature. */
+export async function restoreBySignature(signer: Signer, address: string, card: AccountCard): Promise<Uint8Array> {
+  const { recoveryKey } = await signForKeys(signer, address)
+  return unlockCardBySignature(card, recoveryKey)
+}
+
+/** The drive key from the card with its password: as typed, then trimmed (passwords used to be set untrimmed). */
+export async function restoreByPassword(card: AccountCard, password: string): Promise<Uint8Array> {
+  if (!card.wrappedUnderPassword) throw new Error('This drive has no recovery password — it can only be restored with its wallet or key file.')
+  for (const pw of new Set([password, password.trim()])) {
+    try {
+      return await unlockCardByPassword(card, pw)
+    } catch {
+      // try the next form
+    }
+  }
+  throw new Error('Wrong recovery password.')
+}
+
+/** A new card with a new password (the signature recovery and the binding kept: no prompt). */
+export async function withPassword(card: AccountCard, masterKey: Uint8Array, password: string): Promise<AccountCard> {
+  return makeCard({ wallet: card.wallet, account: card.account, binding: card.binding, masterKey, password, previous: card })
+}
+
+/** A shared or record-named file's bytes: reads need no account. */
+export function readV2(rootHashes: string[], opts?: DownloadOpts) {
+  return downloadV2(relayer, rootHashes, opts)
+}
+
+/**
+ * What an upload needs in the storage balance before it starts: about a
+ * week of rent (testnet: ~38.9 0G per TB per month), doubled for margin.
+ * The relayer has the final word (PAYER_SHORTFALL).
+ */
+export function uploadNeed(bytes: number): bigint {
+  const weiPerByteWeek = ((38.9e18 / 1e12) * 7) / 30
+  return BigInt(Math.ceil(bytes * weiPerByteWeek * 2))
+}
+
+/** The relayer refused for lack of storage balance. */
+export function isShortfall(err: unknown): boolean {
+  if (err instanceof RelayerError) return err.reason === 'PAYER_SHORTFALL' || err.status === 402
+  return /PAYER_SHORTFALL/.test(String((err as Error)?.message ?? err))
+}
+
+export { UnstableSignatureError }

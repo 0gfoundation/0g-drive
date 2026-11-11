@@ -1,9 +1,11 @@
 // Full in-browser test of the app (headless Chromium + dev server), with an
 // injected EIP-1193 wallet backed by a FRESH key funded from .env's test
-// wallet. Exercises the real UI end to end and counts wallet prompts:
-//   create drive → new folder → batched uploads (1 prompt each) → smart
-//   search (Chinese queries) → organize suggestion → move → reload from
-//   chain → preview a file.
+// wallet (gas and the first storage deposit). Exercises the real UI end to
+// end on 0G Storage V2 and counts wallet prompts:
+//   create drive (3 signatures + 1 deposit) → new folder → uploads (no
+//   prompt) → smart search (Chinese queries) → organize suggestion → move →
+//   reload from 0G → preview a file → trash and restore (no prompt). The
+//   drive's files are deleted at the end.
 //
 //   node scripts/test-browser-e2e.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
@@ -12,7 +14,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -27,7 +29,8 @@ const step = (m) => console.log(`${el()} ${m}`)
 // ── fresh funded wallet ──
 const wallet = ethers.Wallet.createRandom().connect(provider)
 const funder = new ethers.Wallet(funderKey, provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('2') })).wait()
+const FUNDING = ethers.parseEther('2')
+await (await funder.sendTransaction({ to: wallet.address, value: FUNDING })).wait()
 step(`fresh wallet ${wallet.address} funded with 2 0G`)
 
 // ── injected wallet ──
@@ -125,8 +128,19 @@ function makePdf(text) {
   return Buffer.from(out)
 }
 
+/** Upload and wait until listed; the wallet prompts it caused (V2: none). */
+/** Stop paying for the drive: delete every file of its storage account. */
+async function deleteDriveFiles(keyHex) {
+  if (!keyHex) return
+  const account = deriveStorageKey(hexToBytes(keyHex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
+
 async function uploadAndWait(files) {
-  const before = prompts.tx
+  const before = prompts.tx + prompts.sign
   const queued = await page.$$eval('.queue-item', (els) => els.length)
   const inputState = await page.$eval('.dropzone input[type=file]', (el) => ({ disabled: el.disabled, cls: el.closest('.dropzone').className }))
   step(`upload ${files.map((f) => f.name).join(', ')} — input ${JSON.stringify(inputState)}`)
@@ -143,12 +157,13 @@ async function uploadAndWait(files) {
   )
   const failed = await page.$$eval('.queue-item', (rows) => rows.filter((r) => r.textContent.includes('✗')).map((r) => r.textContent))
   if (failed.length) throw new Error(`upload failed: ${failed.join(' | ')}`)
-  // "in your drive" shows before the list reloads from chain — wait for it
+  // "in your drive" shows before the list reloads — wait for it
   for (const f of files) await page.locator('table .fname-btn', { hasText: f.name }).waitFor({ timeout: 3 * 60_000 })
-  return prompts.tx - before
+  return prompts.tx + prompts.sign - before
 }
 
 const results = []
+let masterKeyHex = null
 const check = (name, ok, detail = '') => {
   results.push({ name, ok })
   console.log(`${el()} ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
@@ -158,13 +173,14 @@ try {
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
-  step('drive created')
+  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  check('drive created: 3 signatures + 1 deposit transaction', prompts.sign === 3 && prompts.tx === 1, JSON.stringify(prompts))
+  masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
 
-  let tx = prompts.tx
+  let asked = prompts.tx + prompts.sign
   await page.getByRole('button', { name: '+ New folder' }).click()
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).waitFor({ timeout: 10 * 60_000 })
-  step(`folder created (${prompts.tx - tx} tx)`)
+  check('folder created with no wallet prompt', prompts.tx + prompts.sign === asked)
 
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).click()
   await page.locator('.breadcrumb', { hasText: 'Recipes' }).waitFor()
@@ -172,7 +188,7 @@ try {
     { name: 'pancakes.md', mimeType: 'text/markdown', buffer: Buffer.from('Fluffy pancakes: 200g flour, 2 eggs, 300ml milk, butter for the pan. Whisk and rest 20 minutes before cooking.') },
     { name: 'ramen.txt', mimeType: 'text/plain', buffer: Buffer.from('拉面做法:猪骨熬汤八小时,加入酱油和味醂调味,面条煮两分钟,配叉烧和溏心蛋。') },
   ])
-  check('2 files into Recipes with ONE wallet prompt', n1 === 1, `${n1} tx`)
+  check('2 files into Recipes with no wallet prompt', n1 === 0, `${n1} prompt(s)`)
 
   await page.locator('.sidebar .nav-item', { hasText: 'My Drive' }).click()
   const n2 = await uploadAndWait([
@@ -180,7 +196,7 @@ try {
     { name: 'lease-2026.pdf', mimeType: 'application/pdf', buffer: makePdf('Residential Lease Agreement between Landlord and Tenant. Monthly rent 1450 EUR. Notice period sixty days.') },
     { name: 'carbonara.md', mimeType: 'text/markdown', buffer: Buffer.from('Spaghetti carbonara: 200g spaghetti, guanciale, 2 eggs, pecorino romano, black pepper. Boil the pasta in salted water.') },
   ])
-  check('3 files (photo, PDF, text) with ONE wallet prompt', n2 === 1, `${n2} tx`)
+  check('3 files (photo, PDF, text) with no wallet prompt', n2 === 0, `${n2} prompt(s)`)
   const thumbs = await page.$$eval('table .fthumb', (els) => els.length)
   check('photo thumbnail shown in list', thumbs >= 1, `${thumbs} thumbnail(s)`)
   const indexed = await page.evaluate(() => document.querySelector('.ai-bar')?.textContent ?? '')
@@ -212,17 +228,17 @@ try {
   check('suggests carbonara.md → Recipes, nothing else', want && noise.length === 0, JSON.stringify(sugg))
 
   if (want) {
-    tx = prompts.tx
+    asked = prompts.tx + prompts.sign
     // apply only the expected suggestion
     for (const li of await page.$$('.suggest-list li')) {
       if (!(await li.textContent()).includes('carbonara.md')) await (await li.$('input')).uncheck()
     }
     await page.locator('.suggest-actions button').click()
     await page.locator('.activity li', { hasText: 'Moved 1 file' }).waitFor({ timeout: 10 * 60_000 })
-    check('move applied in one transaction', prompts.tx - tx === 1, `${prompts.tx - tx} tx (destination + source manifests)`)
+    check('move applied with no wallet prompt', prompts.tx + prompts.sign === asked, `${prompts.tx + prompts.sign - asked} prompt(s)`)
   }
 
-  // fresh load from chain: records written in batch must have txSeqs backfilled
+  // a fresh load from 0G: the drive's latest root and listings
   await page.reload() // reconnects by itself
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).waitFor({ timeout: 5 * 60_000 })
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).click()
@@ -238,18 +254,18 @@ try {
   check('preview downloads + decrypts the moved file', text.startsWith('Spaghetti carbonara'), JSON.stringify(text.slice(0, 40)))
   await page.keyboard.press('Escape')
 
-  // trash and restore through the UI, one transaction each
+  // trash and restore through the UI, no wallet prompt either
   const row = (name) => page.locator('table tr', { has: page.locator('.fname-btn', { hasText: name }) })
-  tx = prompts.tx
+  asked = prompts.tx + prompts.sign
   await row('carbonara.md').getByRole('button', { name: 'Move to trash' }).click()
   await page.locator('.activity li', { hasText: 'carbonara.md moved to trash' }).waitFor({ timeout: 10 * 60_000 })
-  const trashTx = prompts.tx - tx
+  const trashAsked = prompts.tx + prompts.sign - asked
   await page.locator('[data-guide="trash"]').click()
   await row('carbonara.md').waitFor({ timeout: 2 * 60_000 })
-  tx = prompts.tx
+  asked = prompts.tx + prompts.sign
   await row('carbonara.md').getByRole('button', { name: 'Restore' }).click()
   await page.locator('.activity li', { hasText: 'carbonara.md restored' }).waitFor({ timeout: 10 * 60_000 })
-  check('move to trash and restore: one transaction each', trashTx === 1 && prompts.tx - tx === 1, `${trashTx} + ${prompts.tx - tx} tx`)
+  check('move to trash and restore: no wallet prompt', trashAsked === 0 && prompts.tx + prompts.sign === asked, `${trashAsked} + ${prompts.tx + prompts.sign - asked} prompt(s)`)
 } catch (err) {
   check('run completed', false, err.message.split('\n')[0])
   const q = await page.$$eval('.queue-item', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' '))).catch(() => [])
@@ -260,12 +276,13 @@ try {
 } finally {
   const act = await page.$$eval('.activity li', (els) => els.map((e) => e.textContent).reverse()).catch(() => [])
   console.log('\nactivity log:\n  ' + act.join('\n  '))
-  const spent = ethers.formatEther(ethers.parseEther('2') - (await provider.getBalance(wallet.address)))
+  const spent = ethers.formatEther(FUNDING - (await provider.getBalance(wallet.address)))
   console.log(`\nwallet prompts: ${prompts.tx} transactions, ${prompts.sign} signatures; spent ${spent} 0G`)
   if (errors.length) console.log('page errors:\n  ' + errors.join('\n  '))
   const pass = results.filter((r) => r.ok).length
   console.log(`${pass}/${results.length} checks passed`)
   process.exitCode = pass === results.length && errors.length === 0 ? 0 : 1
   await browser.close()
+  await deleteDriveFiles(masterKeyHex)
   await refund(wallet, funder.address)
 }

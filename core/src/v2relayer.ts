@@ -12,8 +12,8 @@ import { sha256 } from '@noble/hashes/sha256'
  *   Delete(bytes32 dataHash, uint64 signedAt)
  * accepted within 15 minutes of signedAt on the relayer's clock, so a
  * long upload signs again. The account is a storage key derived from the
- * drive recovery signature (see recovery.ts), so nothing prompts; the
- * wallet only funds it in the PaymentVault.
+ * drive master key (see v2account.ts), so nothing prompts; the wallet only
+ * funds it in the PaymentVault.
  *
  * Browser-only APIs it needs (fetch, Blob, WebCrypto) are in Node 22 too.
  */
@@ -23,6 +23,8 @@ export interface V2Network {
   chainId: number
   paymentVault: string
   rpc: string
+  /** the PaymentVault's first block: deposits are looked up from here */
+  vaultFromBlock: number
 }
 
 export const V2_TESTNET: V2Network = {
@@ -30,6 +32,7 @@ export const V2_TESTNET: V2Network = {
   chainId: 16602,
   paymentVault: '0x8A3366F6E2F44DaDa740Ea725C24F11a180CCEcD',
   rpc: 'https://evmrpc-testnet.0g.ai',
+  vaultFromBlock: 63_550_840,
 }
 
 export interface RelayerInfo {
@@ -87,19 +90,20 @@ const TYPES = {
 const RESIGN_AFTER_S = 10 * 60
 const MAX_TRIES = 6
 
-const STORAGEKEY_INFO = '0gdrive/storagekey/v1'
+const STORAGEKEY_INFO = '0gdrive/storagekey/v2'
 const VAULT_ABI = [
   'function depositForUser(address user) payable',
   'function getUserBalance(address user) view returns (uint256)',
 ]
 
 /**
- * The storage account's key, derived from the drive recovery signature
- * under its own label, as the sharing key is: one signature, no prompt
- * per upload. Its address owns and pays for the drive's files.
+ * The storage account's key, derived from the drive master key under its
+ * own label: whoever holds the drive key (restored by signature, password
+ * or key file) has its account, and nothing prompts per upload. Its
+ * address owns and pays for the drive's files.
  */
-export function deriveStorageKey(recoverySignature: string): ethers.Wallet {
-  return new ethers.Wallet(ethers.hexlify(hkdf(sha256, ethers.getBytes(recoverySignature), undefined, STORAGEKEY_INFO, 32)))
+export function deriveStorageKey(masterKey: Uint8Array): ethers.Wallet {
+  return new ethers.Wallet(ethers.hexlify(hkdf(sha256, masterKey, undefined, STORAGEKEY_INFO, 32)))
 }
 
 /** Fund an account's storage balance from a wallet. */

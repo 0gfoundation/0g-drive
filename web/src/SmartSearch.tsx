@@ -436,7 +436,6 @@ export function SuggestionsPanel({
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(suggestions.map((s) => s.item.id)))
   useEffect(() => setChosen(new Set(suggestions.map((s) => s.item.id))), [suggestions])
   const picked = suggestions.filter((s) => chosen.has(s.item.id))
-  const txs = picked.length ? new Set(picked.map((p) => p.to)).size + 1 : 0
 
   return (
     <section className="suggest">
@@ -473,7 +472,7 @@ export function SuggestionsPanel({
           </ul>
           <div className="suggest-actions">
             <span className="muted">
-              {picked.length ? `${txs} wallet approval${txs === 1 ? '' : 's'}` : 'nothing selected'}
+              {picked.length ? 'no wallet prompt' : 'nothing selected'}
             </span>
             <button className="btn small primary" disabled={busy || picked.length === 0} onClick={() => onApply(picked)}>
               Move {picked.length || ''} file{picked.length === 1 ? '' : 's'}
