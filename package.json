@@ -39,6 +39,7 @@
     "test:assistant-key": "node scripts/test-assistant-key.mjs",
     "test:v2-vectors": "npm run build -w core && node scripts/test-v2-vectors.mjs",
     "test:v2-relayer": "npm run build -w core && node scripts/test-v2-relayer.mjs",
+    "test:v2-drive": "npm run build -w core && node scripts/test-v2-drive.mjs",
     "test:rename": "npm run build -w core && node scripts/test-rename.mjs",
     "test:folder-rename": "npm run build -w core && node scripts/test-folder-rename.mjs",
     "test:move": "npm run build -w core && node scripts/test-move.mjs"

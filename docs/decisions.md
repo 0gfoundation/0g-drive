@@ -238,6 +238,15 @@ Verified: `npm run test:html-preview` (fresh funded drive; a page with scripts, 
 
 Verified: no behavior change. On V1 (local build, 2026-11-11) all eleven drive suites pass: drive, batch-upload, abandoned-listing, interrupted-change, rename, folder-rename, move, duplicate-names, bg-index, browser-e2e, file-cache.
 
+### D18 — The V2 backend: listings named by a root (2026-11-11)
+`V2Backend` (`core/src/v2backend.ts`) runs the drive on 0G Storage V2 through the relayer (D17's seam). Not wired into the app yet: choosing V2, funding the storage account and moving a V1 drive are still open.
+- **Account**: the storage key (derived from the recovery signature, `deriveStorageKey`) owns and pays for every file and signs the relayer statements locally: no wallet prompt per change. The wallet only deposits into the PaymentVault.
+- **Listings** are files encrypted with the drive key (the SDK's AES-256 format, as on V1). A **root**, also encrypted, names the current version of every listing (key → data hash and size). A change uploads its listings, then a new root; nothing shows until the root is stored, so a change is all or none, and an interrupted one leaves only unreferenced files.
+- **Finding the root**: the account's file listing, newest first; the root is the first file starting with the account's 32-byte root tag (an HMAC keyed from the storage key, so it says nothing to others), read with a 32-byte Range request. The tag is keyed by the account, not the drive key, so a wrong drive key finds the root and fails loudly instead of showing an empty drive.
+- **Two devices**: a change re-reads the latest root just before storing its own and lays its listings over it; a second later it looks again, and if another device's root came in on top without them (both stored at the same moment), it lays them over that one and stores again. So changes to different listings on two devices both survive (tested). The same listing changed on both at once keeps the later version, as on V1 (e.g. two folders created at once both change the index). Roots carry a sequence number; a store never goes back to a lower one. Changes on one device are serialized.
+- **Rent**: each root lists what it made obsolete (the root before it, the listing versions it replaced); those are deleted when the next root is stored, a change later, so a reader on the previous root can finish. Files themselves aren't deleted yet (purge from trash drops the record only, as on V1).
+- **Files**: encrypted as they are read (`EncryptedSource`), so a big file is never held in memory, and uploaded in parts by the relayer client; when every file of a batch stores, their records are stored in the same change, else the app registers the stored ones as on V1.
+
 ## Verification (M1, 2026-10-24)
 Full roundtrip proven on testnet: 256 KB random payload → ECIES-encrypted to wallet pubkey → on-chain submit (fee via Flow contract) → segment upload → finality → download (file-relative segment indices, shard-affinity routing) → decrypt → byte-exact match. Cost: ~0.0012 0G per 256 KB roundtrip (gas + storage fee).
 
