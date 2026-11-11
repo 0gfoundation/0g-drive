@@ -15,7 +15,6 @@ import {
   V2_TESTNET,
   depositForUser,
   storageBalance,
-  getNetworkConfig,
   TRASH_PATH,
 } from '../core/dist/index.js'
 
@@ -41,7 +40,6 @@ const provider = new ethers.JsonRpcProvider(V2_TESTNET.rpc)
 const funder = new ethers.Wallet(privateKey, provider)
 const account = ethers.Wallet.createRandom() // the storage account (the app derives it from the recovery signature)
 const relayer = new RelayerClient(V2_TESTNET)
-const network = getNetworkConfig('testnet', 'turbo') // unused by the V2 backend; DriveStore's signature
 console.log(`Storage account: ${account.address}`)
 
 const DEPOSIT = ethers.parseEther(process.env.V2_DEPOSIT ?? '0.05')
@@ -50,7 +48,7 @@ console.log(`${stamp()} deposited ${ethers.formatEther(DEPOSIT)} 0G`)
 
 const masterKey = crypto.getRandomValues(new Uint8Array(32))
 const newStore = (key = masterKey) =>
-  new DriveStore(network, funder, key, { backend: new V2Backend(new RelayerClient(V2_TESTNET), account, key) })
+  new DriveStore(new V2Backend(new RelayerClient(V2_TESTNET), account, key))
 
 const fileKeys = new Map()
 const bytesOf = new Map()
@@ -181,8 +179,9 @@ try {
   // superseded versions are deleted a change later, in the background
   await new Promise((r) => setTimeout(r, 15_000))
   const listed = await listAll()
-  const tags = await Promise.all(listed.map((f) => relayer.head(f.dataHash, 32)))
-  const roots = tags.filter((t, i) => same(t, tags[0]) && listed[i].fileSize > 32).length
+  const magic = new TextEncoder().encode('0GDrive root v2\n')
+  const heads = await Promise.all(listed.map((f) => relayer.head(f.dataHash, magic.length)))
+  const roots = heads.filter((h) => same(h, magic)).length
   check('superseded roots deleted: at most the current one and the one before', roots <= 2, `${roots} root(s) among ${listed.length} files`)
   // files: 2 uploads (the purged one too: purge drops the record, not the blob)
   // + current listings (index, root, 3+2 folders, trash) + one change of grace

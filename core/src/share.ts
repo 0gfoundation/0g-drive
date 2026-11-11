@@ -123,35 +123,3 @@ export function parseShareLink(
   }
   return null
 }
-
-/** Download + decrypt an encrypted share, unwrapping with the raw private key. */
-export async function downloadEncryptedShare(
-  p: EncryptedSharePayload,
-  network: NetworkConfig,
-  privateKey: Uint8Array | string,
-  onProgress?: ProgressFn
-): Promise<{ data: Uint8Array; decrypted: boolean }> {
-  const { unwrapFileKeyWithPrivateKey } = await import('./keywrap.js')
-  const fileKey = await unwrapFileKeyWithPrivateKey(privateKey, p.w)
-  return downloadFile(p.r, network, {
-    decryption: { symmetricKey: fileKey },
-    txSeqs: p.q,
-    onProgress,
-  })
-}
-
-/**
- * Download + decrypt a shared file with only the share payload (no drive
- * key, no wallet).
- */
-export async function downloadSharedFile(
-  p: SharePayload,
-  network: NetworkConfig,
-  onProgress?: ProgressFn
-): Promise<{ data: Uint8Array; decrypted: boolean }> {
-  return downloadFile(p.r, network, {
-    decryption: { symmetricKey: p.k },
-    txSeqs: p.q,
-    onProgress,
-  })
-}

@@ -7,8 +7,9 @@
 //   reopening that drive with an empty model cache (desktop, and a phone
 //     with smart search turned on): the files download at open, and the
 //     first photo search builds CLIP's text half from the cache (timed)
-// Each part makes a drive on a FRESH key funded from .env's test wallet,
-// refunded at the end. Needs the model CDNs (or the app's /_models route).
+// Each part makes a V2 drive on a FRESH key funded from .env's test wallet
+// (the setup deposit and gas); the drives' files are deleted and the
+// wallets refunded at the end. Needs the model CDNs (or the app's /_models route).
 // Usage: node scripts/test-ai-loading.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
 import { connectExtension } from './lib/connect.mjs'
@@ -17,7 +18,7 @@ import { readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -59,15 +60,30 @@ const rendererMb = () => {
 
 const browser = await chromium.launch()
 
+/** Stop paying for the test drive: delete every file of its storage account. */
+async function deleteDriveFiles(masterKeyHex) {
+  if (!masterKeyHex) return
+  const account = deriveStorageKey(hexToBytes(masterKeyHex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
+
+/** the test drives' keys, for deleting their files at the end */
+const driveKeys = []
+
 /** A context with a fresh funded wallet injected, its drive created. */
 async function openDrive(contextOpts) {
   const wallet = ethers.Wallet.createRandom().connect(provider)
-  await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.3') })).wait()
+  await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
   const s = await openPage(contextOpts, wallet)
   await s.page.goto(base)
   await connectExtension(s.page)
+  // setup: 3 signatures and the storage deposit (one transaction)
   await s.page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await s.page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await s.page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  driveKeys.push(await s.page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address))
   return s
 }
 
@@ -254,6 +270,7 @@ try {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {
   await browser.close()
+  for (const k of driveKeys) await deleteDriveFiles(k)
   for (const w of wallets) await refund(w, funder.address)
 }
 

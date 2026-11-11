@@ -1,14 +1,17 @@
 // Grid thumbnail timing: uploads N phone-sized photos (~5.5 MB each) to a
-// FRESH funded wallet, reloads, and reports how many grid tiles have their
-// sharp preview; then reloads again and checks they come back from this
-// device with no downloads.   N=8 node scripts/test-grid-thumbs.mjs
+// V2 drive on a FRESH funded wallet, reloads, and reports how many grid
+// tiles have their sharp preview; then reloads again and checks they come
+// back from this device with no downloads (no photo fetched from the
+// relayer). The drive's files are deleted and the wallet refunded at the
+// end.   N=8 node scripts/test-grid-thumbs.mjs
 import { chromium } from 'playwright'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { refund } from './lib/refund.mjs'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -61,6 +64,16 @@ async function rpc(method, params) {
 }
 
 const browser = await chromium.launch()
+
+/** Stop paying for the test drive: delete every file of its storage account. */
+async function deleteDriveFiles(masterKeyHex) {
+  if (!masterKeyHex) return
+  const account = deriveStorageKey(hexToBytes(masterKeyHex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  console.log(`${el()} deleted the drive's ${files.length} files`)
+}
 const net = []
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
 const errors = []
@@ -99,16 +112,15 @@ await page.addInitScript(() => {
 })
 
 
+// reads from the V2 relayer: a photo is a file of a megabyte or more (the
+// drive's root and listings are small, and its 32-byte reads find the root)
 page.on('requestfinished', async (req) => {
-  const t = req.timing()
-  let m = ''
-  try { m = JSON.parse(req.postData() ?? '{}').method ?? '' } catch {}
-  if (/zgs_|indexer_/.test(m)) net.push({ at: Date.now() - t0, m, ms: Math.round(t.responseEnd), host: new URL(req.url()).host })
+  if (!req.url().includes('/v1/files/')) return
+  const bytes = (await req.sizes().catch(() => null))?.responseBodySize ?? 0
+  net.push({ at: Date.now() - t0, m: 'file', bytes, ms: Math.round(req.timing().responseEnd) })
 })
 page.on('requestfailed', (req) => {
-  let m = ''
-  try { m = JSON.parse(req.postData() ?? '{}').method ?? '' } catch {}
-  net.push({ at: Date.now() - t0, m, failed: req.failure()?.errorText, host: new URL(req.url()).host })
+  if (req.url().includes('/v1/files/')) net.push({ at: Date.now() - t0, m: 'file', failed: req.failure()?.errorText })
 })
 
 async function photo(i) {
@@ -135,12 +147,15 @@ const tiles = () => page.$$eval('.grid .tile', (els) => els.map((e) => {
   return { name: e.textContent.trim().slice(0, 14), src: img ? img.src.slice(0, 5) : 'none', nw: img?.naturalWidth ?? 0, pending: !!e.querySelector('.thumb-pending') }
 }))
 
+let masterKeyHex = null
 try {
   await page.goto(base)
   await page.evaluate(() => localStorage.setItem('0gdrive:layout', 'grid'))
   await connectExtension(page)
+  // setup: 3 signatures and the storage deposit (one transaction)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   step('drive created')
   const N = Number(process.env.N ?? 8)
   const files = []
@@ -165,8 +180,8 @@ try {
       if (sharp >= N) break
       await page.waitForTimeout(s < 10 ? 500 : 5000)
     }
-    const segs = net.filter((r) => r.m === 'zgs_downloadSegmentByTxSeq').length
-    step(`${label}: ${sharp}/${N} sharp in ${((Date.now() - tl) / 1000).toFixed(1)}s, ${segs} segment downloads`)
+    const segs = net.filter((r) => r.m === 'file' && r.bytes >= 1e6).length
+    step(`${label}: ${sharp}/${N} sharp in ${((Date.now() - tl) / 1000).toFixed(1)}s, ${segs} photo downloads`)
     return { sharp, segs }
   }
   const first = await afterReload('reload 1 (downloads)')
@@ -181,4 +196,6 @@ try {
   console.log(consoleTail.filter((l) => !/vite|React DevTools/.test(l)).slice(-15).join('\n'))
   if (errors.length) console.log(errors)
   await browser.close()
+  await deleteDriveFiles(masterKeyHex)
+  await refund(wallet, funder.address)
 }

@@ -39,7 +39,8 @@ if (!privateKey) throw new Error('PRIVATE_KEY missing from .env')
 const provider = new ethers.JsonRpcProvider(V2_TESTNET.rpc, V2_TESTNET.chainId, { staticNetwork: true })
 const wallet = new ethers.Wallet(privateKey, provider)
 const recoverySig = await wallet.signMessage(RECOVERY_SIGN_MESSAGE)
-const account = deriveStorageKey(recoverySig).address
+// a stand-in drive key, the same every run (so is the account and its deposit)
+const account = deriveStorageKey(ethers.getBytes(ethers.sha256(recoverySig))).address
 let balance = await storageBalance(V2_TESTNET, account)
 console.log(`${at()} storage account ${account}, balance ${ethers.formatEther(balance)} 0G`)
 if (balance < ethers.parseEther('0.01')) {
@@ -73,7 +74,7 @@ async function inPage({ recoverySig, mib, partChunks }) {
   const realNow = Date.now
   Date.now = () => realNow() + 30 * 60_000
   const client = new RelayerClient(V2_TESTNET)
-  const key = deriveStorageKey(recoverySig)
+  const key = deriveStorageKey(ethers.getBytes(ethers.sha256(recoverySig)))
   out.account = key.address
   const info = await client.info()
   out.chunkSize = info.chunkSize

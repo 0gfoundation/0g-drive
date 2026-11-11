@@ -1,6 +1,8 @@
 // Encrypted on-device file cache: upload a PNG to a FRESH funded wallet,
-// preview it after a reload (downloads), reload and preview again (must be
-// 0 segment downloads), and check the saved copy is ciphertext, not PNG.
+// preview it after a reload (downloads it from the V2 relayer), reload and
+// preview again (must be 0 downloads of it), and check the saved copy is
+// ciphertext, not PNG. The drive's files are deleted and the wallet
+// refunded at the end.
 //   node scripts/test-file-cache.mjs
 import { chromium } from 'playwright'
 import { connectExtension } from './lib/connect.mjs'
@@ -8,7 +10,8 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
+import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -99,41 +102,46 @@ await page.addInitScript(() => {
 })
 
 
-// the smart-search model also comes from 0G (web/src/ai/modelOn0g.ts): its
-// segments, fetched in the background, aren't the file's
-const MODEL_TXSEQS = [...readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../web/src/ai/modelOn0g.ts'), 'utf8').matchAll(/txSeq: (\d+)/g)].map((m) => Number(m[1]))
-page.on('requestfinished', async (req) => {
-  const t = req.timing()
-  let m = ''
-  let seq
-  try {
-    const body = JSON.parse(req.postData() ?? '{}')
-    m = body.method ?? ''
-    seq = Number(body.params?.[0])
-  } catch {}
-  if (m === 'zgs_downloadSegmentByTxSeq' && MODEL_TXSEQS.includes(seq)) m += ' (model)'
-  if (/zgs_|indexer_/.test(m)) net.push({ at: Date.now() - t0, m, ms: Math.round(t.responseEnd), host: new URL(req.url()).host })
+// downloads of the file itself from the relayer (GET /v1/files/<its data
+// hash>); the drive's listings and root come from there too, but under
+// other hashes
+let fileHash = ''
+page.on('requestfinished', (req) => {
+  const u = new URL(req.url())
+  if (u.origin === new URL(V2_TESTNET.relayer).origin && u.pathname.startsWith('/v1/files/')) {
+    net.push({ at: Date.now() - t0, hash: u.pathname.split('/')[3], ms: Math.round(req.timing().responseEnd) })
+  }
 })
 page.on('requestfailed', (req) => {
-  let m = ''
-  try { m = JSON.parse(req.postData() ?? '{}').method ?? '' } catch {}
-  net.push({ at: Date.now() - t0, m, failed: req.failure()?.errorText, host: new URL(req.url()).host })
+  net.push({ at: Date.now() - t0, url: req.url(), failed: req.failure()?.errorText })
 })
 
+/** Delete every file of the drive's storage account (rent stops), with its key from the page. */
+async function deleteDriveFiles(pg = page, address = wallet.address) {
+  const hex = await pg.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), address).catch(() => null)
+  if (!hex) return
+  const account = deriveStorageKey(hexToBytes(hex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
 
-const segs = () => net.filter((r) => r.m === 'zgs_downloadSegmentByTxSeq').length
+
+const segs = () => net.filter((r) => fileHash && r.hash === fileHash).length
+/** Downloads of the file since the last reload (its thumbnail too), then the preview. */
 async function openPreview(label) {
-  net.length = 0
   const t = Date.now()
   await page.locator('table .fname-btn', { hasText: 'scan.png' }).click()
   await page.waitForFunction(() => document.querySelector('.preview-media')?.naturalWidth > 0, null, { timeout: 5 * 60_000 })
   const w = await page.$eval('.preview-media', (i) => i.naturalWidth)
   const r = { ms: Date.now() - t, segs: segs(), w }
-  step(`${label}: preview ${w}px wide in ${r.ms}ms, ${r.segs} segment downloads`)
+  step(`${label}: preview ${w}px wide in ${r.ms}ms, ${r.segs} downloads of the file`)
   await page.keyboard.press('Escape')
   return r
 }
 async function reopen() {
+  net.length = 0 // count from the reload: the thumbnail reads the file too
   await page.reload() // reconnects by itself
   await page.locator('table .fname-btn', { hasText: 'scan.png' }).waitFor({ timeout: 5 * 60_000 })
   await page.waitForTimeout(3000) // let thumbnails settle
@@ -156,7 +164,9 @@ try {
   const png = Buffer.from(b64, 'base64')
   await page.setInputFiles('.dropzone input[type=file]', [{ name: 'scan.png', mimeType: 'image/png', buffer: png }])
   await page.locator('table .fname-btn', { hasText: 'scan.png' }).waitFor({ timeout: 10 * 60_000 })
-  step(`uploaded scan.png (${(png.length / 1e6).toFixed(1)} MB)`)
+  // the record's data hash, as the list shows it (title of the hash cell)
+  fileHash = (await page.locator('table tr', { has: page.locator('.fname-btn', { hasText: 'scan.png' }) }).locator('span[title^="0x"]').first().getAttribute('title')).replace(/^0x/, '').toLowerCase()
+  step(`uploaded scan.png (${(png.length / 1e6).toFixed(1)} MB), data hash ${fileHash.slice(0, 10)}…`)
   await reopen()
   const first = await openPreview('after reload 1')
   await reopen()
@@ -173,7 +183,7 @@ try {
   const pngSig = '89504e470d0a1a0a'
   const encrypted = stored.length > 0 && stored.every((r) => r.head !== pngSig && r.head.startsWith('01'))
   step(`saved copies: ${JSON.stringify(stored)} (PNG signature would be ${pngSig})`)
-  const ok = first.w === 1200 && second.w === 1200 && second.segs === 0 && encrypted
+  const ok = first.w === 1200 && second.w === 1200 && first.segs > 0 && second.segs === 0 && encrypted
   console.log(ok ? 'FILE CACHE TEST PASSED ✓' : 'FILE CACHE TEST FAILED')
   if (!ok) process.exitCode = 1
 } catch (e) {
@@ -181,5 +191,7 @@ try {
   process.exitCode = 1
 } finally {
   if (errors.length) console.log(errors)
+  await deleteDriveFiles()
   await browser.close()
+  await refund(wallet, funder.address)
 }

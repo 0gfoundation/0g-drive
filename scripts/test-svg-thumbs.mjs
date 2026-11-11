@@ -1,5 +1,6 @@
 // SVG thumbnails, in the browser (headless Chromium + dev server), with an
-// injected wallet backed by a FRESH key funded from .env's test wallet.
+// injected wallet backed by a FRESH key funded from .env's test wallet (the
+// V2 drive's setup deposit and gas; files deleted and wallet refunded at the end).
 // Uploads three SVGs in one drop:
 //   icon.svg  — states a 24×24 size (drawn at full thumbnail size anyway)
 //   logo.svg  — viewBox only, no width/height
@@ -16,7 +17,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -49,10 +50,20 @@ const CENTRE = { 'icon.svg': 'red', 'logo.svg': 'blue', 'evil.svg': 'green' }
 
 const wallet = ethers.Wallet.createRandom().connect(provider)
 const funder = new ethers.Wallet(funderKey, provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.5') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 step(`fresh wallet ${wallet.address} funded`)
 
 const browser = await chromium.launch()
+
+/** Stop paying for the test drive: delete every file of its storage account. */
+async function deleteDriveFiles(masterKeyHex) {
+  if (!masterKeyHex) return
+  const account = deriveStorageKey(hexToBytes(masterKeyHex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  console.log(`${el()} deleted the drive's ${files.length} files`)
+}
 const errors = []
 const external = []
 const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
@@ -128,13 +139,16 @@ const thumbs = (selector) =>
   }, selector)
 const allCentred = (t) => Object.keys(CENTRE).every((n) => t[n]?.colour === CENTRE[n])
 
+let masterKeyHex = null
 try {
   await page.goto(base)
   await page.evaluate(() => localStorage.setItem('0gdrive:layout', 'list'))
   await page.reload()
   await connectExtension(page)
+  // setup: 3 signatures and the storage deposit (one transaction)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   await page.setInputFiles(
     '.dropzone input[type=file]',
     Object.entries(SVGS).map(([name, s]) => ({ name, mimeType: 'image/svg+xml', buffer: Buffer.from(s) }))
@@ -178,6 +192,7 @@ try {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {
   await browser.close()
+  await deleteDriveFiles(masterKeyHex)
 }
 
 if (errors.length) console.log(errors.join('\n'))

@@ -52,6 +52,13 @@ export interface DriveBackend {
 
   /** A file's bytes by its record; decrypted when `decryption` is given. */
   download(meta: FileMeta, opts?: DownloadOpts): Promise<DownloadResult>
+
+  /**
+   * Files whose records were just dropped for good (purged, deleted from
+   * trash): delete their bytes where the network can (V2: rent stops).
+   * Best effort; never throws.
+   */
+  discard(files: FileMeta[]): Promise<void>
 }
 
 /** One listing to store: its key and its contents. */

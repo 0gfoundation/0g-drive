@@ -68,36 +68,28 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run net-check` | read-only indexer and node connectivity probe |
 | `npm run smoke` | strict E2E: 1 MB upload → finality → download → decrypt → verify, with a cost report |
 | `npm run roundtrip` | fast E2E roundtrip (same flow, 256 KB) |
-| `npm run test:drive` | drive semantics: folder tree, files, trash, folder rename, restart recovery, drives from before the folder tree |
 | `npm run test:e2e` | the full drive UI in a real browser |
-| `npm run test:batch` | one-approval batch uploads |
 | `npm run test:share-wallet` | wallet-locked share links |
 | `npm run test:password` | recovery password and read-only open without the wallet |
 | `npm run test:wallets` | wallet picker with several wallets installed, switching accounts, disconnect and quiet reconnect, keeping connections warm, and the signature check (spends nothing) |
 | `npm run test:svg` | SVG thumbnails, including that an SVG's scripts and external images never load |
 | `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
-| `npm run test:rename` | file rename: name checks, duplicates refused, one transaction, phone layout; file actions icon-only; Activity notes when the wallet was asked |
-| `npm run test:folder-rename` | folder rename: name checks, one transaction, open folder follows, subfolder kept, phone layout |
-| `npm run test:move` | "Move to…" picker for folders and files: greyed-out places, name clashes refused, new destination folder, one transaction, phone layout; grid "Select all"; every transaction carries the app's gas limit with room to spare (0G charges ≥ 80 % of the limit) |
-| `node scripts/test-interrupted-change.mjs` | a change interrupted between its transaction and its upload: asks before closing, finished on the next visit with no new transaction, undone (and given up quickly) in another browser |
-| `node scripts/test-abandoned-listing.mjs` | a listing that never got its data, seen from another device: undone; once past the abandon threshold (shortened to 1 minute), marked abandoned, the user told once, skipped afterwards (Node, ~3 min) |
+| `npm run test:rename` | file rename: name checks, duplicates refused, no wallet prompt, phone layout; file actions icon-only |
+| `npm run test:folder-rename` | folder rename: name checks, no wallet prompt, open folder follows, subfolder kept, phone layout |
+| `npm run test:move` | "Move to…" picker for folders and files: greyed-out places, name clashes refused, new destination folder, no wallet prompt, phone layout; grid "Select all" |
 | `node scripts/test-duplicate-names.mjs` | uploading a name already in the folder: asked first with an editable name per file ("name (1)" suggested; taken, empty, "/" and repeated names refused), Replace (old to trash, one transaction) / Skip / Cancel; restore into a taken name; phone layout |
-| `node scripts/test-hash-workers.mjs` | upload hashing ready before the first upload: workers start with the drive, small files hashed on the page, no start-up wait (spends nothing on storage) |
 | `node scripts/test-open-in-wallet.mjs` | phones with no wallet: links that open the drive in MetaMask, Trust, OKX or Coinbase Wallet's browser, at 390 px; desktop unchanged (spends nothing) |
-| `node scripts/test-walletconnect.mjs` | WalletConnect with a scripted wallet over the real relay: QR code on a laptop, wallet-app links on a phone (390 px), recovery setup and an upload approved in the wallet, reconnect after reload (laptop and phone) with the wallet app in the background, no reads sent to the wallet though it lists them (as MetaMask does), a wallet that approves another chain first (like MetaMask), a declined connection shown on the start page, no link back to the app (it opened a new tab), WalletConnect stuck (relay silent): an error within 20 s, `?debug=wc` log, "Start a new connection" clears its saved data, same drive from a browser wallet, disconnect ends the session, no analytics (needs `VITE_WALLETCONNECT_PROJECT_ID`; spends a little) |
+| `node scripts/test-walletconnect.mjs` | WalletConnect with a scripted wallet over the real relay: QR code on a laptop, wallet-app links on a phone (390 px), drive setup (3 signatures and the deposit) approved in the wallet, reconnect after reload (laptop and phone) with the wallet app in the background, no reads sent to the wallet though it lists them (as MetaMask does), a wallet that approves another chain first (like MetaMask), a declined connection shown on the start page, no link back to the app (it opened a new tab), WalletConnect stuck (relay silent): an error within 20 s, `?debug=wc` log, "Start a new connection" clears its saved data, same drive from a browser wallet, disconnect ends the session, no analytics (needs `VITE_WALLETCONNECT_PROJECT_ID`; spends a little) |
 | `node scripts/test-file-icons.mjs` | file-type icons: extension and type → family, the extension strip fits, a colour per family (offline, spends nothing) |
 | `node scripts/test-model-error.mjs` | smart search models that fail to load say why on the page and in Activity (memory / storage / download / WebAssembly), not only in a tooltip |
 | `uv run --with onnx==1.17.0 --with numpy python scripts/models/prune-text-model.py ORIG OUT` | trim the search text model to English + Chinese tokens (see docs/decisions.md) |
 | `node scripts/models/check-pruned-model.mjs DIR` | the trimmed model gives the same tokens and embeddings for English and Chinese text as the full one |
 | `[NETWORK=mainnet] node scripts/models/upload-model-to-0g.mjs DIR` | upload the trimmed model to 0G Storage; prints the pins for `web/src/ai/modelOn0g.ts` |
 | `node scripts/test-merkle.mjs` | our upload hashing against the SDK's: roots, submissions, segment proofs and encrypted bytes, 23 sizes plain and encrypted (offline, spends nothing) |
-| `[SMART=1] [KIND=jpg\|pdf] node scripts/time-upload-browser.mjs [url] [MB list] [stored MB]` | upload timing in a real browser: file pick → wallet request per size (with Activity's breakdown and main-thread blocking), and approval → stored |
-| `node scripts/time-wallet-prompt.mjs` | Time from a drive action to its wallet prompt, request by request (testnet, throwaway wallet) |
-| `node scripts/time-wallet-prompt-browser.mjs [url]` | The same in a real browser: click → the wallet's `eth_sendTransaction`, with every page and wallet request in between |
 | `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
 | `npm run test:ai-memory` | the AI engine’s memory reservation stays at 1 GB, and models load in a tab that has no room for 4 GB |
 | `npm run test:pdf-preview` | PDF preview on phones: pages drawn and released as you scroll; desktop keeps the browser’s viewer |
-| `npm run test:bg-index` | background indexing: files without search entries indexed on the device, saved with the next approved change or Save |
+| `npm run test:bg-index` | background indexing: files without search entries indexed on the device, saved with the next change or Save |
 | `npm run test:html-preview` | HTML preview: the page shown sandboxed (no scripts, nothing loaded from the internet), or its source |
 | `node scripts/test-ai-loading.mjs` | AI model loading: off on phones (asks before turning on), text model first, photo models on the first photo |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
@@ -105,6 +97,8 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:v2-vectors` | the V2 relayer client's data hash and signed statements against the V2 SDK's published test vectors (offline) |
 | `npm run test:v2-relayer [MiB]` | proof of concept: upload (dropped connections, skewed clock), dedup, find the root by listing, resumed download and delete through the V2 testnet relayer, from WebKit at phone size and Chromium (first run deposits 0.05 testnet 0G) |
 | `npm run test:v2-drive` | the drive on V2: DriveStore with the V2 backend against the testnet relayer — folders, uploads, rename, move, trash, a restart, two devices at once, a wrong drive key, superseded versions deleted (deposits 0.05 testnet 0G into a fresh storage account, deletes its files at the end) |
+| `npm run test:v2-account` | a wallet's V2 drive found from the wallet alone: setup (recovery and binding signatures, one deposit), a new device unlocking by signature or password, a password change, the sharing key looked up by someone else, an impostor card skipped, a shared file read with no account, a purged file deleted (a fresh wallet funded with 1 testnet 0G for gas, refunded; deposits 2 × 0.02 0G) |
+| `npm run test:v2-app [url]` | the app on V2 in Chromium: create the drive (3 signatures, 1 deposit), a folder and uploads with no wallet prompt, preview, a share link read with no account, a recovery password, a deposit, a second device restoring with one signature, the drive opened read-only by password with no wallet, delete forever, and the setup and storage UI at 390 px (a fresh wallet funded with 2 testnet 0G for gas, refunded; the drive's files deleted at the end) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
 | `node scripts/gen-test-wallet.mjs` | create a throwaway test wallet in `.env` |
 

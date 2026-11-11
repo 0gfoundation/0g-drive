@@ -2,10 +2,10 @@
 // and a scripted wallet in Node that pairs through WalletConnect's real
 // relay, as a phone wallet would). A FRESH funded wallet; spends a little:
 //   desktop: "Get started with a phone wallet" → QR code; the wallet pairs
-//   with the code's link and the drive opens; recovery setup (2 signatures,
-//   1 tx) and an upload (1 tx) are approved in the wallet, with an "approve
-//   on your phone" note while it waits; no WalletConnect analytics and no
-//   reads through WalletConnect's RPC
+//   with the code's link; creating the drive (3 signatures, 1 deposit
+//   transaction) is approved in the wallet, with an "approve on your phone"
+//   note while it waits; an upload then needs no approval (0G Storage V2);
+//   no WalletConnect analytics and no reads through WalletConnect's RPC
 //   a reload reconnects the session without a prompt
 //   the same account in a browser wallet restores the same drive (the
 //   signatures over WalletConnect match the extension's)
@@ -28,6 +28,7 @@
 //   new connection" clears the saved data and pairs from scratch
 //
 //   node scripts/test-walletconnect.mjs [http://localhost:5173]
+// The drive's files are deleted at the end and the wallet refunded.
 // The page must be built with VITE_WALLETCONNECT_PROJECT_ID; the scripted
 // wallet uses the same project ID (WALLETCONNECT_PROJECT_ID, else
 // web/.env.local).
@@ -37,7 +38,7 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SignClient } from '@walletconnect/sign-client'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -194,6 +195,7 @@ async function pairingLink(page) {
 }
 
 let desktop
+let masterKeyHex = null
 try {
   // ── desktop, no extension ──
   desktop = await open()
@@ -218,24 +220,23 @@ try {
   await page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 120_000 })
   check('the app gives the wallet no link back (it would open a new tab, away from the user’s)',
     proposers.length === 1 && !proposers[0].redirect, JSON.stringify(proposers[0].redirect ?? null))
+  // the drive's setup: recovery + share key, the wallet link, the first deposit
+  holdNext = 3000
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  const bar = await page.locator('.wc-approve').textContent({ timeout: 10_000 }).catch(() => null)
+  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   check('the wallet approves; the dialog closes and the drive is created',
     (await page.locator('.wc-dialog').count()) === 0 && (await page.locator('.address').getAttribute('title')) === wallet.address)
-
-  holdNext = 3000
-  await page.getByRole('button', { name: 'Set up recovery' }).click({ timeout: 120_000 })
-  const bar = await page.locator('.wc-approve').textContent({ timeout: 10_000 }).catch(() => null)
-  await page.locator('.sec-row[data-row=share-key] .sec-ok').waitFor({ timeout: 5 * 60_000 })
-  check('recovery setup over WalletConnect: 2 signatures, 1 transaction',
-    prompts.sign === 2 && prompts.tx === 1, JSON.stringify(prompts))
+  check('drive setup over WalletConnect: 3 signatures, 1 transaction (the deposit)',
+    prompts.sign === 3 && prompts.tx === 1, JSON.stringify(prompts))
   check('while the wallet has a request: "Approve on your phone, in Test Wallet", no app link on a desktop',
     bar === 'Approve on your phone, in Test Wallet.' && (await page.locator('.wc-approve').count()) === 0, JSON.stringify(bar))
 
   const NAME = `wc-${Date.now()}.txt`
   await page.setInputFiles('.dropzone input[type=file]', [{ name: NAME, mimeType: 'text/plain', buffer: Buffer.from('sent through WalletConnect') }])
   await page.locator('table .fname-btn', { hasText: NAME }).waitFor({ timeout: 10 * 60_000 })
-  check('an upload approved over WalletConnect', prompts.tx === 2, JSON.stringify(prompts))
+  check('an upload needs nothing from the wallet', prompts.tx === 1 && prompts.sign === 3, JSON.stringify(prompts))
 
   const wcHosts = [...new Set(requests.filter((u) => /walletconnect\.(org|com)|reown\.com/.test(u)).map((u) => new URL(u).host))]
   check('WalletConnect traffic is the relay only: no analytics (pulse), no reads through its RPC',
@@ -246,7 +247,7 @@ try {
   const reconnected = await page.locator('table .fname-btn', { hasText: NAME }).waitFor({ timeout: 60_000 }).then(() => true, () => false)
   asleep = false
   check('after a reload the session reconnects by itself, with the wallet app in the background (it answers nothing)',
-    reconnected && (await page.locator('.wc-dialog').count()) === 0 && prompts.sign === 2 && slept.length === 0, JSON.stringify({ prompts, slept }))
+    reconnected && (await page.locator('.wc-dialog').count()) === 0 && prompts.sign === 3 && slept.length === 0, JSON.stringify({ prompts, slept }))
   check('reads (balances, gas, receipts…) go to our RPC even though the wallet lists them, as MetaMask does',
     reads.length === 0, JSON.stringify([...new Set(reads)]))
 
@@ -445,6 +446,14 @@ try {
 } finally {
   await browser.close()
   for (const s of wc.session.getAll()) await wc.disconnect({ topic: s.topic, reason: { code: 6000, message: 'test done' } }).catch(() => {})
+  if (masterKeyHex) {
+    // stop paying for the test drive
+    const account = deriveStorageKey(hexToBytes(masterKeyHex))
+    const relayer = new RelayerClient(V2_TESTNET)
+    const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+    for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+    step(`deleted the drive's ${files.length} files`)
+  }
   await refund(wallet, funder.address)
 }
 const passed = results.filter((r) => r.ok).length

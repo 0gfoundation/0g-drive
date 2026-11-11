@@ -199,16 +199,6 @@ function trackUnstored(): () => void {
   }
 }
 
-export function unstoredWrites(): number {
-  return unstored
-}
-
-/** Call `fn` with the count whenever it changes; returns an unsubscribe. */
-export function onUnstoredWritesChange(fn: (count: number) => void): () => void {
-  unstoredListeners.add(fn)
-  return () => unstoredListeners.delete(fn)
-}
-
 /**
  * App-wide limit on segment requests in flight (maxInFlight). The RPC
  * timeout (30 s) counts time spent queued behind the browser's connections,
@@ -928,50 +918,6 @@ export async function uploadBatch(
   }
 }
 
-/**
- * Finish writes whose transaction landed but whose data never left the
- * device (the page closed in between): send each saved blob's segments to
- * its existing log entry (no transaction, no fee), unless the nodes
- * already hold it. `bytes` are exactly what was stored (see
- * BatchOpts.beforeSend). Returns which are now on the nodes.
- */
-export async function resumeWrites(
-  writes: { root: string; bytes: Uint8Array }[],
-  network: NetworkConfig,
-  signer: ethers.Signer
-): Promise<boolean[]> {
-  const indexer = new SessionIndexer(network.indexerRpc)
-  const guard = noTxSigner(signer)
-  const results: boolean[] = []
-  const stored = trackUnstored()
-  try {
-    for (const w of writes) {
-      try {
-        const payload = new MemData(w.bytes)
-        const [tree, err] = await payload.merkleTree()
-        if (err !== null || tree?.rootHash()?.toLowerCase() !== w.root.toLowerCase()) throw new Error('saved bytes do not match')
-        if (await isSealed(indexer, w.root)) {
-          results.push(true)
-          continue
-        }
-        await waitVisible(indexer, w.root)
-        const [, upErr] = await indexer.upload(payload, network.rpcUrl, guard as unknown as SdkSigner, {
-          skipTx: true,
-          skipIfFinalized: false, // see ensureFinality: one node's view isn't enough
-          finalityRequired: false,
-        })
-        if (upErr !== null) throw upErr
-        results.push(true)
-      } catch {
-        results.push(false)
-      }
-    }
-  } finally {
-    stored()
-  }
-  return results
-}
-
 /** Every node holding a segment of `root` reports it finalized. */
 async function isSealed(indexer: Indexer, root: string): Promise<boolean> {
   const { trusted } = await indexer.getShardedNodes()
@@ -996,16 +942,6 @@ export async function uploadData(
   opts: UploadOpts = {}
 ): Promise<UploadResult> {
   return uploadAbstract(new MemData(data), network, signer, opts)
-}
-
-/** Upload a browser File object. */
-export async function uploadBrowserFile(
-  file: File,
-  network: NetworkConfig,
-  signer: ethers.Signer,
-  opts: UploadOpts = {}
-): Promise<UploadResult> {
-  return uploadAbstract(new ZgBlob(file), network, signer, opts)
 }
 
 /** Poll zgs_getFileInfo across nodes holding the file. */

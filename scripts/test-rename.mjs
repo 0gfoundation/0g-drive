@@ -4,7 +4,7 @@
 //   the name without its extension is pre-selected
 //   a name already in the folder (any case), "/" and an empty name are refused
 //   changing the extension shows a warning
-//   the rename takes ONE transaction and survives a reload
+//   the rename prompts the wallet for nothing and survives a reload
 //   phone width: the dialog and the row fit the screen
 // On-device AI is switched off, so no model download.
 //
@@ -15,7 +15,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -35,7 +35,7 @@ const check = (name, ok, detail = '') => {
 
 const wallet = ethers.Wallet.createRandom().connect(provider)
 const funder = new ethers.Wallet(funderKey, provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.5') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 step(`fresh wallet ${wallet.address} funded`)
 
 const browser = await chromium.launch()
@@ -44,9 +44,8 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 900 
 const page = await context.newPage()
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 let txs = 0
-const walletCalls = [] // method names, in order
+let signs = 0
 await page.exposeFunction('__eth', async (method, params) => {
-  walletCalls.push(method)
   try {
     switch (method) {
       case 'eth_requestAccounts':
@@ -60,6 +59,7 @@ await page.exposeFunction('__eth', async (method, params) => {
       case 'wallet_addEthereumChain':
         return { ok: null }
       case 'personal_sign': {
+        signs++
         const [data] = params
         return { ok: await wallet.signMessage(ethers.isHexString(data) ? ethers.getBytes(data) : data) }
       }
@@ -94,6 +94,17 @@ await context.addInitScript(() => {
     removeListener() {},
   }
 })
+
+/** Delete every file of the drive's storage account (rent stops), with its key from the page. */
+async function deleteDriveFiles() {
+  const hex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address).catch(() => null)
+  if (!hex) return
+  const account = deriveStorageKey(hexToBytes(hex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
 
 const names = () => page.$$eval('table .fname-btn', (els) => els.map((e) => e.textContent.trim()).sort())
 const row = (name) => page.locator('table tr', { has: page.locator('.fname-btn', { hasText: name }) })
@@ -165,22 +176,14 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 })
 
   await input.fill('meeting notes.txt')
-  const before = txs
-  const callsBefore = walletCalls.length
+  const before = { txs, signs }
   await submit.click()
   await page.locator('.activity li', { hasText: 'Renamed notes.txt → meeting notes.txt' }).waitFor({ timeout: 10 * 60_000 })
   await dialog.waitFor({ state: 'detached' })
   await row('meeting notes.txt').waitFor({ timeout: 2 * 60_000 })
-  const asked = (await page.locator('.activity li', { hasText: 'Asked your wallet to approve' }).first().textContent()) ?? ''
-  const askedSecs = Number(/approve, ([\d.]+) s after your click/.exec(asked)?.[1] ?? NaN)
-  check('Activity says when the wallet was asked (under 3 s after the click), with its steps',
-    askedSecs >= 0 && askedSecs < 3 && /after your click \(chain check [\d.]+ s/.test(asked), asked.trim())
-  const renameCalls = walletCalls.slice(callsBefore)
-  check('the wallet is woken (a read-only call) before the transaction reaches it',
-    renameCalls.indexOf('eth_blockNumber') >= 0 && renameCalls.indexOf('eth_blockNumber') < renameCalls.indexOf('eth_sendTransaction'),
-    renameCalls.join(', '))
-  check('rename takes one transaction; the list shows the new name',
-    txs - before === 1 && JSON.stringify(await names()) === JSON.stringify(['meeting notes.txt', LONG, 'todo.txt']), `${txs - before} tx, ${JSON.stringify(await names())}`)
+  check('rename prompts the wallet for nothing; the list shows the new name',
+    txs === before.txs && signs === before.signs && JSON.stringify(await names()) === JSON.stringify(['meeting notes.txt', LONG, 'todo.txt']),
+    `${txs - before.txs} tx, ${signs - before.signs} signatures, ${JSON.stringify(await names())}`)
 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.waitForTimeout(300)
@@ -198,7 +201,7 @@ try {
 
   await page.reload() // reconnects by itself
   await row('meeting notes.txt').waitFor({ timeout: 5 * 60_000 })
-  check('after reload, the new name comes back from the chain', JSON.stringify(await names()) === JSON.stringify(['meeting notes.txt', LONG, 'todo.txt']), JSON.stringify(await names()))
+  check('after reload, the new name comes back from 0G Storage', JSON.stringify(await names()) === JSON.stringify(['meeting notes.txt', LONG, 'todo.txt']), JSON.stringify(await names()))
 
   await row('meeting notes.txt').locator('.fname-btn').click()
   await page.locator('.preview-text').waitFor({ timeout: 5 * 60_000 })
@@ -208,6 +211,7 @@ try {
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {
+  await deleteDriveFiles()
   await browser.close()
 }
 

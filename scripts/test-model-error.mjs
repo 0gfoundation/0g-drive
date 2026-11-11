@@ -1,6 +1,7 @@
 // Why the search models didn't load, readable on any device (headless
 // Chromium + dev server; a FRESH wallet funded from .env's test wallet only
-// creates the drive). Phones show no tooltips, and a user in MetaMask's
+// creates the V2 drive: its setup deposit is the one transaction; the
+// drive's files are deleted and the wallet refunded at the end). Phones show no tooltips, and a user in MetaMask's
 // in-app browser saw only "Models failed to load":
 //   the reason is mapped to words a user can act on (memory, storage,
 //   download, WebAssembly), the raw reason kept after it
@@ -14,7 +15,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -31,14 +32,22 @@ const check = (name, ok, detail = '') => {
 }
 const wallet = ethers.Wallet.createRandom().connect(provider)
 const funder = new ethers.Wallet(funderKey, provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.3') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 step(`fresh wallet ${wallet.address} funded`)
 
 const browser = await chromium.launch()
+
+/** Stop paying for the test drive: delete every file of its storage account. */
+async function deleteDriveFiles(masterKeyHex) {
+  if (!masterKeyHex) return
+  const account = deriveStorageKey(hexToBytes(masterKeyHex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
 const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
 const page = await context.newPage()
-let approve = false
-let promptAt = null
 await page.exposeFunction('__eth', async (method, params) => {
   try {
     switch (method) {
@@ -57,10 +66,9 @@ await page.exposeFunction('__eth', async (method, params) => {
         return { ok: await wallet.signMessage(ethers.isHexString(data) ? ethers.getBytes(data) : data) }
       }
       case 'eth_sendTransaction': {
-        promptAt = performance.now()
-        if (!approve) return { err: 'user rejected transaction' }
+        // the drive's setup deposit: changes after it ask the wallet nothing
         const [tx] = params
-        const sent = await wallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value ? BigInt(tx.value) : 0n })
+        const sent = await wallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value ? BigInt(tx.value) : 0n, gasLimit: tx.gas ? BigInt(tx.gas) : undefined })
         return { ok: sent.hash }
       }
       default:
@@ -88,6 +96,7 @@ await context.addInitScript(() => {
 // the models can't be downloaded: every route to them fails
 await context.route(/huggingface\.co|hf\.co|cdn\.jsdelivr\.net|\/_models\/|xethub|cdn-lfs/, (r) => r.abort())
 
+let masterKeyHex = null
 try {
   // the mapping, from the page's own module (dev server only)
   if (/localhost/.test(base)) {
@@ -111,8 +120,10 @@ try {
 
   await page.goto(base)
   await connectExtension(page)
+  // setup: 3 signatures and the storage deposit (the one transaction this test approves)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   const line = page.locator('.sec-item', { hasText: 'Models failed to load' })
   await line.waitFor({ timeout: 4 * 60_000 })
   const text = await line.textContent()
@@ -123,6 +134,7 @@ try {
   check('run completed', false, err.message.split('\n')[0])
 } finally {
   await browser.close()
+  await deleteDriveFiles(masterKeyHex)
 }
 const passed = results.filter((r) => r.ok).length
 console.log(`\n${passed}/${results.length} checks passed`)

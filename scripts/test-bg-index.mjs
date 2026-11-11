@@ -1,10 +1,10 @@
 // Background indexing, in headless Chromium against the dev server or a
 // deployment. Files uploaded with smart search off (in two folders) are
 // found and indexed on this device once it's on, with no wallet prompt;
-// search finds them before anything is saved; the next approved change (an
-// upload in one folder) saves the other folder's entries in the same single
-// transaction; they're in the drive (found again with this device's store
-// cleared); the sidebar's Save saves the rest with one approval; a file
+// search finds them before anything is saved; the next change (an upload
+// in one folder) saves the other folder's entries with it, no prompt;
+// they're in the drive (found again with this device's store cleared); the
+// sidebar's Save saves the rest, no prompt; a file
 // whose content can't be read shows as "indexed by name only"; the status
 // fits a 390 px phone.
 // Makes a drive on a FRESH key funded from .env's test wallet, refunded at
@@ -15,7 +15,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -34,9 +34,10 @@ const check = (name, ok, detail = '') => {
 }
 
 const wallet = ethers.Wallet.createRandom().connect(provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.5') })).wait()
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('1') })).wait()
 step(`fresh wallet ${wallet.address}`)
 let txs = 0
+let signs = 0
 
 const browser = await chromium.launch()
 const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
@@ -59,6 +60,7 @@ await page.exposeFunction('__eth', async (method, params) => {
       case 'wallet_addEthereumChain':
         return { ok: null }
       case 'personal_sign': {
+        signs++
         const [data] = params
         return { ok: await wallet.signMessage(ethers.isHexString(data) ? ethers.getBytes(data) : data) }
       }
@@ -94,6 +96,17 @@ await context.addInitScript(() => {
     removeListener() {},
   }
 })
+
+/** Delete every file of the drive's storage account (rent stops), with its key from the page. */
+async function deleteDriveFiles(pg = page, address = wallet.address) {
+  const hex = await pg.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), address).catch(() => null)
+  if (!hex) return
+  const account = deriveStorageKey(hexToBytes(hex))
+  const relayer = new RelayerClient(V2_TESTNET)
+  const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+  for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  step(`deleted the drive's ${files.length} files`)
+}
 
 const treeRow = (name) => page.locator('.sidebar .tree-row', { has: page.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) })
 const fileRow = (name) => page.locator('table tr', { has: page.locator('.fname-btn', { hasText: name }) })
@@ -144,18 +157,19 @@ try {
   step('uploaded Recipes/carbonara.md and lease.txt with smart search off')
 
   // ---- discovery + indexing on this device, no prompts
-  const before = txs
+  const before = { txs, signs }
   await toggle.check()
   const s1 = await waitStatus(/2 indexed on this device/)
   check('turned on, both files are found (two folders) and indexed on this device', /2 indexed on this device/.test(s1) && !/to index/.test(s1), JSON.stringify(s1))
-  check('indexing asked the wallet nothing', txs === before, `${txs - before} transactions`)
+  check('indexing asked the wallet nothing', txs === before.txs && signs === before.signs, `${txs - before.txs} transactions, ${signs - before.signs} signatures`)
   check('search finds them before anything is saved', (await topHit('pasta recipe')) === 'carbonara.md' && (await topHit('rental agreement')) === 'lease.txt')
 
-  // ---- the next approved change carries them (one transaction)
-  const beforeUpload = txs
+  // ---- the next change carries them (no prompt)
+  const beforeUpload = { txs, signs }
   await upload([['todo.txt', 'Buy groceries and call the plumber.']])
   const s2 = await waitStatus(/^(?![\s\S]*indexed on this device)/, 60_000)
-  check('an upload in My drive saves both entries (Recipes too) in its one transaction', txs - beforeUpload === 1 && !/indexed on this device/.test(s2), `${txs - beforeUpload} transactions; status ${JSON.stringify(s2)}`)
+  check('an upload in My drive saves both entries (Recipes too) with it, no wallet prompt',
+    txs === beforeUpload.txs && signs === beforeUpload.signs && !/indexed on this device/.test(s2), `${txs - beforeUpload.txs} transactions; status ${JSON.stringify(s2)}`)
   await reloadWithoutDeviceEntries()
   const s3 = (await status()) ?? ''
   check('they are in the drive: with this device’s store cleared nothing is left to index', !/to index|indexed on this device/.test(s3), JSON.stringify(s3))
@@ -181,10 +195,10 @@ try {
   })
   check('phone (390 px): the status and Save fit', fit.right <= 390 && fit.saveRight <= 390 && fit.saveW > 0 && fit.scroll <= 390, JSON.stringify(fit))
 
-  const beforeSave = txs
+  const beforeSave = { txs, signs }
   await page.locator('.sidebar .search-index button', { hasText: 'Save' }).click()
   const s5 = await waitStatus(/^(?![\s\S]*indexed on this device)/, 5 * 60_000)
-  check('Save saves them with one approval', txs - beforeSave === 1 && !/indexed on this device/.test(s5), `${txs - beforeSave} transactions; status ${JSON.stringify(s5)}`)
+  check('Save saves them with no wallet prompt', txs === beforeSave.txs && signs === beforeSave.signs && !/indexed on this device/.test(s5), `${txs - beforeSave.txs} transactions; status ${JSON.stringify(s5)}`)
   await page.setViewportSize({ width: 1280, height: 900 })
   await reloadWithoutDeviceEntries()
   check('…and they are in the drive', (await topHit('budget meeting')) === 'budget.txt' && !/to index/.test((await status()) ?? ''))
@@ -193,6 +207,7 @@ try {
   failed++
   console.log(`${at()} ERROR ${e.message.split('\n')[0]}`)
 } finally {
+  await deleteDriveFiles()
   await browser.close()
   await refund(wallet, funder.address)
 }

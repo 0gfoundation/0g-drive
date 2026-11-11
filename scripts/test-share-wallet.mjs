@@ -1,13 +1,14 @@
 // "Encrypted to recipient" with the derived sharing key, in the browser
 // (headless Chromium + dev server), with injected wallets backed by FRESH
 // keys funded from .env's test wallet:
-//   recipient sets up security (2 signatures, 1 tx) → share key published
+//   recipient creates a drive (3 signatures, 1 deposit) → its card on 0G
+//   Storage V2 carries the derived share key
 //   sender uploads a file and creates an encrypted link (0 prompts)
 //   recipient opens the link in a fresh browser → 1 signature, 0 tx,
 //   file decrypts; reopening on that device → 0 signatures
 //   another wallet opening the link is refused
-// plus, in Node: adding the share key to a pre-existing backup keeps its
-// recovery password.
+//   sharing to an address with no drive is refused
+// Both drives' files are deleted at the end and the wallets refunded.
 //
 //   node scripts/test-share-wallet.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
@@ -18,13 +19,13 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   getNetworkConfig,
-  getProfile,
-  deriveRecoveryKey,
-  RECOVERY_SIGN_MESSAGE,
-  publishDriveKeyBackup,
-  enableShareKey,
-  restoreDriveKeyByPassword,
+  findDrive,
+  RelayerClient,
+  V2_TESTNET,
+  deriveStorageKey,
+  hexToBytes,
 } from '../core/dist/index.js'
+import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -45,11 +46,14 @@ const check = (name, ok, detail = '') => {
 const funder = new ethers.Wallet(funderKey, provider)
 const sender = ethers.Wallet.createRandom().connect(provider)
 const recipient = ethers.Wallet.createRandom().connect(provider)
-const legacy = ethers.Wallet.createRandom().connect(provider)
-for (const w of [sender, recipient, legacy]) {
-  await (await funder.sendTransaction({ to: w.address, value: ethers.parseEther('0.5') })).wait()
+// never funded, never has a drive
+const nobody = ethers.Wallet.createRandom()
+for (const w of [sender, recipient]) {
+  await (await funder.sendTransaction({ to: w.address, value: ethers.parseEther('1') })).wait()
 }
-step(`sender ${sender.address}, recipient ${recipient.address}, legacy ${legacy.address} funded`)
+step(`sender ${sender.address}, recipient ${recipient.address} funded`)
+/** drive keys created, for the cleanup */
+const driveKeys = []
 
 // ── injected wallet per browser context ──
 const browser = await chromium.launch()
@@ -111,31 +115,31 @@ async function openAs(wallet, label) {
   return { context, page, prompts }
 }
 
-async function createDrive(page) {
+async function createDrive(page, wallet) {
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  driveKeys.push(await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address))
 }
 
 const CONTENT = 'Quarterly numbers — for the recipient only. ' + Date.now()
 
 try {
-  // ── recipient: set up security → derived share key published ──
+  // ── recipient: create a drive → its card carries the derived share key ──
   const R = await openAs(recipient, 'recipient')
-  await createDrive(R.page)
-  await R.page.getByRole('button', { name: 'Set up recovery' }).click({ timeout: 120_000 })
+  await createDrive(R.page, recipient)
   await R.page.locator('.sec-row[data-row=share-key] .sec-ok').waitFor({ timeout: 5 * 60_000 })
-  check('recipient setup: 2 signatures (stability check), 1 tx', R.prompts.sign === 2 && R.prompts.tx === 1, JSON.stringify(R.prompts))
-  const profile = await getProfile(recipient.address, network)
+  check('recipient setup: 3 signatures (stability check, binding), 1 deposit tx', R.prompts.sign === 3 && R.prompts.tx === 1, JSON.stringify(R.prompts))
+  const shareKey = (await findDrive(V2_TESTNET, new RelayerClient(V2_TESTNET), recipient.address))?.card.shareKey
   check('published key is the derived sharing key, not the wallet key',
-    profile?.kind === 'share' && profile.pubKey !== ethers.SigningKey.computePublicKey(recipient.signingKey.publicKey, true),
-    JSON.stringify(profile))
+    typeof shareKey === 'string' && shareKey !== ethers.SigningKey.computePublicKey(recipient.signingKey.publicKey, true),
+    String(shareKey))
   await R.context.close()
 
   // ── sender: upload, then share encrypted to the recipient ──
   const S = await openAs(sender, 'sender')
-  await createDrive(S.page)
+  await createDrive(S.page, sender)
   await S.page.setInputFiles('.dropzone input[type=file]', [
     { name: 'q3.txt', mimeType: 'text/plain', buffer: Buffer.from(CONTENT) },
   ])
@@ -154,7 +158,13 @@ try {
     S.prompts.tx === before.tx && S.prompts.sign === before.sign && warn === 0,
     `${((Date.now() - t) / 1000).toFixed(1)} s`)
   const payload = JSON.parse(Buffer.from(link.split('#e=')[1], 'base64url').toString())
-  check('link is marked as wrapped to the derived key', payload.d === 1 && payload.p === profile?.pubKey)
+  check('link is marked as wrapped to the derived key, and names a V2 file', payload.d === 1 && payload.p === shareKey && payload.q.length === 0 && /^0x[0-9a-f]{64}$/.test(payload.r[0]))
+
+  // ── sharing to an address with no drive ──
+  await S.page.fill('input[placeholder="recipient address 0x…"]', nobody.address)
+  await S.page.getByRole('button', { name: 'Wrap & create link' }).click()
+  const noDrive = await S.page.locator('.modal .error-text').textContent({ timeout: 2 * 60_000 })
+  check('sharing to an address with no drive is refused', /has no 0GDrive yet/.test(noDrive), JSON.stringify(noDrive))
   await S.context.close()
 
   // ── recipient opens the link in a fresh browser ──
@@ -162,8 +172,10 @@ try {
   const openAndDownload = async (page) => {
     await page.goto(link)
     const button = page.getByRole('button', { name: 'Unlock with wallet & download' })
-    const [download] = await Promise.all([page.waitForEvent('download', { timeout: 5 * 60_000 }), button.click()])
-    return readFileSync(await download.path(), 'utf8')
+    const downloaded = page.waitForEvent('download', { timeout: 5 * 60_000 })
+    // a build with WalletConnect asks which wallet first: the browser one
+    await connectExtension(page, button)
+    return readFileSync(await (await downloaded).path(), 'utf8')
   }
   let got = await openAndDownload(R2.page)
   check('recipient decrypts the file', got === CONTENT, JSON.stringify(got.slice(0, 30)))
@@ -175,21 +187,11 @@ try {
   // ── someone else opening the link ──
   const X = await openAs(sender, 'other')
   await X.page.goto(link)
-  await X.page.getByRole('button', { name: 'Unlock with wallet & download' }).click()
+  await connectExtension(X.page, X.page.getByRole('button', { name: 'Unlock with wallet & download' }))
   const err = await X.page.locator('.error-text').textContent({ timeout: 60_000 })
   check('another wallet is refused (before signing)', /was shared with/.test(err) && X.prompts.sign === 0, JSON.stringify(err))
   await X.context.close()
 
-  // ── Node: legacy backup (password, no share key) → add the share key ──
-  const masterKey = crypto.getRandomValues(new Uint8Array(32))
-  const recoveryKey = deriveRecoveryKey(await legacy.signMessage(RECOVERY_SIGN_MESSAGE))
-  await publishDriveKeyBackup(network, legacy, legacy.address, masterKey, recoveryKey, { password: 'hunter2 hunter2' })
-  check('legacy backup has no share key', (await getProfile(legacy.address, network)) === null)
-  await enableShareKey(network, legacy, legacy.address, masterKey)
-  const upgraded = await getProfile(legacy.address, network)
-  check('enableShareKey publishes the derived key', upgraded?.kind === 'share')
-  const byPw = await restoreDriveKeyByPassword(legacy.address, network, 'hunter2 hunter2')
-  check('…and keeps the recovery password', byPw !== null && Buffer.from(byPw.masterKey).equals(Buffer.from(masterKey)))
 } catch (err) {
   check('run completed', false, err.message.split('\n')[0])
 } finally {
@@ -198,4 +200,12 @@ try {
   console.log(`${pass}/${results.length} checks passed`)
   process.exitCode = pass === results.length && errors.length === 0 ? 0 : 1
   await browser.close()
+  // stop paying for the test drives
+  const relayer = new RelayerClient(V2_TESTNET)
+  for (const keyHex of driveKeys.filter(Boolean)) {
+    const account = deriveStorageKey(hexToBytes(keyHex))
+    const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+    for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+  }
+  for (const w of [sender, recipient]) await refund(w, funder.address)
 }
