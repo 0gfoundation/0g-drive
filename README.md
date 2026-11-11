@@ -102,6 +102,8 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `node scripts/test-ai-loading.mjs` | AI model loading: off on phones (asks before turning on), text model first, photo models on the first photo |
 | `npm run test:assistant` | assistant in the browser: isolation, real questions, privacy, phone layout (needs `ZG_ROUTER_API_KEY` in `.env`; about 0.5 0G) |
 | `npm run test:assistant-key` | the assistant's API key survives a browser restart in WebKit (iPhone) and Chromium; a refused question doesn't forget it (Router mocked; no cost) |
+| `npm run test:v2-vectors` | the V2 relayer client's data hash and signed statements against the V2 SDK's published test vectors (offline) |
+| `npm run test:v2-relayer [MiB]` | proof of concept: upload (dropped connections, skewed clock), dedup, find the root by listing, resumed download and delete through the V2 testnet relayer, from WebKit at phone size and Chromium (first run deposits 0.05 testnet 0G) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
 | `node scripts/gen-test-wallet.mjs` | create a throwaway test wallet in `.env` |
 
