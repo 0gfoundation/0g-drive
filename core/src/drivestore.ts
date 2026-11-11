@@ -1,29 +1,17 @@
-import { ethers } from 'ethers'
+import type { ethers } from 'ethers'
 import type { NetworkConfig } from './config.js'
-import {
-  uploadData,
-  uploadBatch,
-  downloadFile,
-  decryptDownloaded,
-  resumeWrites,
-  storagePrice,
-  wakeWallet,
-  NotUploadedError,
-  type BatchItem,
-} from './storage.js'
-import { timed } from './timing.js'
 import type { FileMeta, SearchEntry } from './types.js'
-import { rpcProvider, scanUploadsCached, type EventCache, type UploadEvent } from './events.js'
 import {
   ROOT_ID,
   TRASH_PATH,
   folderTag,
   indexTag,
-  findManifestEvents,
   type DriveIndex,
   type FolderManifest,
 } from './manifest.js'
 import { FolderTree } from './tree.js'
+import type { DriveBackend, ManifestWrite } from './backend.js'
+import { V1Backend, type V1BackendOpts } from './v1backend.js'
 
 export interface DriveState {
   /** Every folder's path (not the root), parents before children. */
@@ -47,21 +35,10 @@ interface LoadedIndex {
   version: number
 }
 
-export interface DriveStoreOpts {
-  onProgress?: (msg: string) => void
-  /** Block finality on manifest uploads too (default true, mirrors file uploads). */
-  finalityRequired?: boolean
-  /**
-   * Optional persistence hook for incremental event scanning. Without it,
-   * every refresh rescans the wallet's full upload history from block 0
-   * (minutes at current chain heights). With it, only new blocks are
-   * scanned and events are merged with the cached list.
-   */
-  eventCache?: EventCache
-  /** Keeps changes on this device until their data is stored (see DriveDevice). */
-  device?: DriveDevice
-  /** How old a listing with no data must be to be abandoned (default 30 minutes; tests shorten it). */
-  abandonedAfterMs?: number
+/** The V1 backend's options (used when no `backend` is given), and the drive's own. */
+export interface DriveStoreOpts extends V1BackendOpts {
+  /** Where the drive's data lives (default: 0G Storage V1, built from the other options). */
+  backend?: DriveBackend
   /**
    * Search entries made on this device and not saved yet, by file id. Any
    * folder listing written gets them for its files that have none; other
@@ -82,42 +59,6 @@ export interface PendingSearchEntry {
 
 /** At most this many folders' listings ride along with one change to save search entries. */
 const SEARCH_SAVE_FOLDERS = 20
-
-/** One listing of a change, kept on the device until its data is stored. */
-export interface PendingWrite {
-  root: string
-  /** exactly what is stored: the encrypted listing */
-  bytes: Uint8Array
-  /** the writes of one change (one transaction) share an id */
-  change: string
-  /** stage 1 is stored only once all of stage 0 is (writeManifests' first/then) */
-  stage: 0 | 1
-  order: number
-  savedAt: number
-}
-
-/**
- * This device's memory of the drive's writes. A change's listings are saved
- * before the wallet is asked and dropped once stored, so if the page closes
- * between the transaction and the upload, the next visit finishes the
- * upload (no new transaction or fee). Listings that never got their data
- * and can't be finished here (another device, cleared site data) are
- * marked abandoned, so loads skip them instead of retrying every node.
- */
-export interface DriveDevice {
-  savePending(writes: PendingWrite[]): Promise<void>
-  pending(): Promise<PendingWrite[]>
-  removePending(change: string): Promise<void>
-  isAbandoned(rootHash: string): boolean
-  markAbandoned(rootHash: string): void
-}
-
-/** a listing with no data this long after its transaction was abandoned */
-const ABANDONED_AFTER_MS = 30 * 60_000
-/** a newer one is retried after this, in case its upload was still running */
-const MISSING_RETRY_MS = 2 * 60_000
-/** a saved change whose transaction never appeared was never sent */
-const NEVER_SENT_AFTER_MS = 30 * 60_000
 
 /** Parallel folder-manifest downloads when a drive loads. */
 const LOAD_CONCURRENCY = 6
@@ -170,207 +111,47 @@ export function uniqueName(name: string, taken: Set<string>): string {
 const emptyFolder = (key: string): FolderManifest => ({ path: key, files: [], updatedAt: 0, version: 0 })
 
 /**
- * Serverless drive metadata on 0G: encrypted manifest files, discovered via
- * on-chain Submit events. See docs/decisions.md D3.
+ * Serverless drive metadata: encrypted manifest files, stored and found by
+ * a DriveBackend (V1: tagged uploads found via on-chain Submit events, see
+ * docs/decisions.md D3).
  *
- * All mutations upload a new manifest version (immutable history, latest
- * block wins) — one per touched folder, plus the index when the folder
- * tree changes; one transaction in all where batchSubmit is on.
+ * All mutations store a new manifest version — one per touched folder,
+ * plus the index when the folder tree changes; one change in all.
  *
  * The public API takes folder paths; the index's tree maps each path to
- * the folder's permanent id, which is what its manifest is tagged with.
+ * the folder's permanent id, which is what its manifest is keyed by.
  */
 export class DriveStore {
-  private events: UploadEvent[] = []
-  private scannedToBlock = 0
-  /**
-   * Manifest JSON by the root hash of its stored (encrypted) bytes. A root
-   * names one immutable upload, so an entry never goes stale; which root
-   * is current still comes from the event scan. Saves re-downloading the
-   * index and folders before every action's wallet prompt.
-   */
-  private manifests = new Map<string, string>()
-  /** listings found with no data on the nodes, by root: when */
-  private missing = new Map<string, number>()
-  /** changes being stored by this page, or finished from this device's copy */
-  private finishing = new Set<string>()
+  readonly backend: DriveBackend
 
   constructor(
-    private network: NetworkConfig,
-    private signer: ethers.Signer,
+    network: NetworkConfig,
+    signer: ethers.Signer,
     /** Drive master key (32 bytes) — manifests are encrypted with it. */
-    private masterKey: Uint8Array,
+    masterKey: Uint8Array,
     private opts: DriveStoreOpts = {}
-  ) {}
-
-  private progress(msg: string): void {
-    this.opts.onProgress?.(msg)
+  ) {
+    this.backend = opts.backend ?? new V1Backend(network, signer, masterKey, opts)
   }
 
-  /** (Re)scan the wallet's upload events from the chain — incrementally
-   *  when an eventCache is configured. */
-  async refreshEvents(): Promise<UploadEvent[]> {
-    // this action's fee: a fresh price, in the same request as the scan
-    if (this.network.batchSubmit) storagePrice(this.network, 0).catch(() => undefined)
-    wakeWallet(this.signer)
-    const address = await this.signer.getAddress()
-    const { events, scannedToBlock } = await timed(
-      'chain',
-      scanUploadsCached(address, this.network, this.opts.eventCache)
-    )
-    this.events = events
-    this.scannedToBlock = scannedToBlock
-    return events
+  /** Bring the backend's view of the drive up to date. */
+  refresh(): Promise<void> {
+    return this.backend.refresh()
   }
 
-  // ─── Manifest I/O ───────────────────────────────────────────────────
-
-  private async uploadManifest(
-    bytes: Uint8Array,
-    tag: string
-  ): Promise<{ rootHash: string; txHash: string }> {
-    const result = await uploadData(bytes, this.network, this.signer, {
-      encryption: { type: 'aes256', key: this.masterKey },
-      tags: tag,
-      finalityRequired: this.opts.finalityRequired ?? true,
-      onProgress: (msg) => this.progress(msg),
-    })
-    return { rootHash: result.rootHash, txHash: result.txHash }
-  }
-
-  /**
-   * Download + decrypt the latest readable manifest among the candidate
-   * events (highest block first), parsing it as JSON. Older versions are
-   * the fallback when a newer manifest was pruned before sealing — and a
-   * candidate that decrypts to non-JSON (e.g. written under a different
-   * drive key; AES-CTR decryption never fails loudly) is skipped the same
-   * way.
-   */
-  private async downloadManifest<T>(
-    candidates: UploadEvent[]
-  ): Promise<T | null> {
-    const sorted = [...candidates].sort((a, b) => b.blockNumber - a.blockNumber)
-    const skipped: string[] = []
-    for (const event of sorted) {
-      const root = event.rootHash.toLowerCase()
-      const cached = this.manifests.get(root)
-      if (cached !== undefined) return JSON.parse(cached) as T
-      const missingAt = this.missing.get(root)
-      if (this.opts.device?.isAbandoned(root) || (missingAt !== undefined && Date.now() - missingAt < MISSING_RETRY_MS)) {
-        skipped.push(`block ${event.blockNumber} txSeq ${event.txSeq}: never uploaded`)
-        continue
-      }
-      try {
-        const { data, decrypted } = await timed('listings', downloadFile(
-          [event.rootHash],
-          this.network,
-          {
-            decryption: { symmetricKey: this.masterKey },
-            // by-txSeq fallback — manifests are single-segment, the exact
-            // class of file whose root-hash index decays on the nodes
-            txSeqs: [event.txSeq],
-            onProgress: () => undefined, // quiet for metadata reads
-          }
-        ))
-        if (!decrypted) {
-          throw new Error(
-            'Manifest decryption failed — wrong drive key for this account'
-          )
-        }
-        const text = new TextDecoder().decode(data)
-        const parsed = JSON.parse(text) as T
-        this.manifests.set(event.rootHash.toLowerCase(), text)
-        if (skipped.length) {
-          console.warn(
-            `[drive] newest manifest version(s) unreadable, using block ${event.blockNumber}: ${skipped.join('; ')}`
-          )
-        }
-        return parsed
-      } catch (err) {
-        if (
-          err instanceof Error &&
-          err.message.includes('decryption failed')
-        ) {
-          throw err // wrong key fails for every candidate — stop
-        }
-        if (err instanceof NotUploadedError) await this.noteNeverUploaded(event)
-        skipped.push(`block ${event.blockNumber} txSeq ${event.txSeq}: ${(err as Error).message}`)
-        // this version is unreadable (pruned / not yet stored / non-JSON) —
-        // try older
-      }
-    }
-    return null
-  }
-
-  /**
-   * A listing whose transaction is on chain but whose data never reached
-   * the nodes. Skipped for a while in case its upload is still running;
-   * once its transaction is old, for good, telling the user the change it
-   * belonged to was undone.
-   */
-  private async noteNeverUploaded(event: UploadEvent): Promise<void> {
-    const root = event.rootHash.toLowerCase()
-    this.missing.set(root, Date.now())
-    const block = await rpcProvider(this.network).getBlock(event.blockNumber).catch(() => null)
-    if (!block || Date.now() - block.timestamp * 1000 < (this.opts.abandonedAfterMs ?? ABANDONED_AFTER_MS)) return
-    this.opts.device?.markAbandoned(root)
-    this.progress(
-      `Interrupted change: a change made ${new Date(block.timestamp * 1000).toLocaleString()} never finished ` +
-        `uploading (the page closed before its data was sent), so it was undone. Do it again if you still want it.`
-    )
-  }
-
-  /**
-   * Changes this device saved but didn't finish storing: if their
-   * transaction is on chain, show them as done now (their listings are
-   * here) and send their data in the background, with no new transaction.
-   */
-  private async finishInterrupted(): Promise<void> {
-    const device = this.opts.device
-    if (!device) return
-    const writes = await device.pending().catch(() => [] as PendingWrite[])
-    const onChain = new Set(this.events.map((e) => e.rootHash.toLowerCase()))
-    const changes = new Map<string, PendingWrite[]>()
-    for (const w of writes) changes.set(w.change, [...(changes.get(w.change) ?? []), w])
-    for (const [change, ws] of changes) {
-      if (this.finishing.has(change)) continue
-      ws.sort((a, b) => a.order - b.order)
-      // one transaction: all of its listings landed, or none did
-      if (!ws.every((w) => onChain.has(w.root.toLowerCase()))) {
-        if (Date.now() - ws[0].savedAt > NEVER_SENT_AFTER_MS) await device.removePending(change).catch(() => undefined)
-        continue
-      }
-      for (const w of ws) {
-        const { data, decrypted } = decryptDownloaded(w.bytes, { symmetricKey: this.masterKey })
-        if (decrypted) this.manifests.set(w.root.toLowerCase(), new TextDecoder().decode(data))
-      }
-      this.finishing.add(change)
-      void this.finishChange(change, ws).finally(() => this.finishing.delete(change))
-    }
-  }
-
-  private async finishChange(change: string, ws: PendingWrite[]): Promise<void> {
-    this.progress('Interrupted change: sending the data of your last change (no new transaction or fee)…')
-    const stage0 = ws.filter((w) => w.stage === 0)
-    const ok0 = (await resumeWrites(stage0, this.network, this.signer)).every(Boolean)
-    const ok1 = ok0 && (await resumeWrites(ws.filter((w) => w.stage === 1), this.network, this.signer)).every(Boolean)
-    if (ok1) {
-      await this.opts.device?.removePending(change).catch(() => undefined)
-      this.progress('Interrupted change: finished — it is stored now.')
-    } else {
-      this.progress('Interrupted change: could not send its data yet; will try again on your next visit.')
-    }
+  private async readManifest<T>(key: string): Promise<T | null> {
+    const text = await this.backend.readManifest(key)
+    return text === null ? null : (JSON.parse(text) as T)
   }
 
   private async loadIndex(): Promise<LoadedIndex> {
-    const candidates = manifestCandidates(this.events, 'index')
-    const index = candidates.length > 0 ? await this.downloadManifest<DriveIndex>(candidates) : null
+    const index = await this.readManifest<DriveIndex>(indexTag())
     if (!index) return { tree: new FolderTree(), version: 0 }
     return { tree: FolderTree.fromIndex(index), version: index.version }
   }
 
   /** The index write for `index` as it stands (v2), as a batch item. */
-  private indexItem(index: LoadedIndex): BatchItem {
+  private indexItem(index: LoadedIndex): ManifestWrite {
     const stored: DriveIndex = { v: 2, folders: index.tree.nodes, updatedAt: Date.now(), version: index.version + 1 }
     return this.manifestItem(stored, indexTag())
   }
@@ -383,37 +164,16 @@ export class DriveStore {
   }
 
   private async loadFolder(key: string): Promise<FolderManifest | null> {
-    const candidates = manifestCandidates(this.events, 'folder', key)
-    if (candidates.length === 0) return null
-    const folder = await this.downloadManifest<FolderManifest>(candidates)
-    if (folder) this.backfillTxInfo(folder.files)
+    const folder = await this.readManifest<FolderManifest>(folderTag(key))
+    if (folder) this.backend.fixRecords(folder.files)
     return folder
-  }
-
-  /**
-   * Records written in the same batch transaction as their files can't
-   * know their txSeqs yet (assigned on mining). Fill them in from the
-   * wallet's Submit events, which carry root → txSeq for every upload.
-   */
-  private backfillTxInfo(files: FileMeta[]): void {
-    let byRoot: Map<string, UploadEvent> | null = null
-    for (const f of files) {
-      if (f.txSeqs?.length === f.rootHashes.length && f.txHashes.length === f.rootHashes.length) continue
-      byRoot ??= new Map(this.events.map((e) => [e.rootHash.toLowerCase(), e]))
-      const evs = f.rootHashes.map((r) => byRoot!.get(r.toLowerCase()))
-      if (evs.every((e) => e !== undefined)) {
-        f.txSeqs = evs.map((e) => e!.txSeq)
-        f.txHashes = evs.map((e) => e!.txHash)
-      }
-    }
   }
 
   // ─── Public API ─────────────────────────────────────────────────────
 
   /** Load the whole drive state from the chain (fresh scan). */
   async loadDrive(): Promise<DriveState> {
-    await this.refreshEvents()
-    await this.finishInterrupted()
+    await this.backend.refresh(true)
     const { tree } = await this.loadIndex()
     const paths = tree.paths()
     // folders are independent downloads: fetch them a few at a time
@@ -477,9 +237,9 @@ export class DriveStore {
    * that name was added from another device meanwhile — gets "name (1).ext",
    * and `metas` are updated to the names stored.
    */
-  async prepareFileRecords(folderPath: string, metas: FileMeta[], replace: string[] = []): Promise<BatchItem[]> {
+  async prepareFileRecords(folderPath: string, metas: FileMeta[], replace: string[] = []): Promise<ManifestWrite[]> {
     const path = normalizePath(folderPath)
-    await this.refreshEvents()
+    await this.refresh()
     const index = await this.loadIndex()
     const { id, created } = index.tree.ensure(path)
     const folder = (created ? null : await this.loadFolder(id)) ?? emptyFolder(id)
@@ -496,7 +256,7 @@ export class DriveStore {
     }
     folder.updatedAt = Date.now()
     folder.version += 1
-    const out: BatchItem[] = created ? [this.indexItem(index)] : []
+    const out: ManifestWrite[] = created ? [this.indexItem(index)] : []
     if (replaced.length > 0) {
       const trash = await this.trashWith(replaced.map((rec) => ({ ...rec, originalPath: path, originalFolder: id })))
       out.push(this.manifestItem(trash, folderTag(TRASH_PATH)))
@@ -526,7 +286,7 @@ export class DriveStore {
     toTrash = true
   ): Promise<void> {
     if (ids.length === 0) return
-    await this.refreshEvents()
+    await this.refresh()
     let path: string
     let key: string
     if (folderPath === TRASH_PATH) {
@@ -545,7 +305,7 @@ export class DriveStore {
     folder.files = folder.files.filter((f) => !ids.includes(f.id))
     folder.updatedAt = Date.now()
     folder.version += 1
-    const first: BatchItem[] = []
+    const first: ManifestWrite[] = []
     if (toTrash) {
       const trash = await this.trashWith(removed.map((rec) => ({ ...rec, originalPath: path, originalFolder: key })))
       first.push(this.manifestItem(trash, folderTag(TRASH_PATH)))
@@ -574,7 +334,7 @@ export class DriveStore {
     const name = newName.trim()
     const problem = fileNameProblem(name)
     if (problem) throw new Error(problem)
-    await this.refreshEvents()
+    await this.refresh()
 
     const key = this.folderId(await this.loadIndex(), path)
     const folder = await this.loadFolder(key)
@@ -601,7 +361,7 @@ export class DriveStore {
       const problem = folderNameProblem(name)
       if (problem) throw new Error(problem)
     }
-    await this.refreshEvents()
+    await this.refresh()
     const index = await this.loadIndex()
     if (index.tree.ensure(path).created) await this.writeIndex(index)
   }
@@ -610,7 +370,7 @@ export class DriveStore {
   async removeFolder(folderPath: string): Promise<void> {
     const path = normalizePath(folderPath)
     if (path === '') throw new Error('The drive root cannot be removed')
-    await this.refreshEvents()
+    await this.refresh()
     const index = await this.loadIndex()
     const id = index.tree.idOf(path)
     if (id === null) return
@@ -636,7 +396,7 @@ export class DriveStore {
   async trashFolder(folderPath: string): Promise<void> {
     const path = normalizePath(folderPath)
     if (path === '') throw new Error('The drive root cannot be deleted')
-    await this.refreshEvents()
+    await this.refresh()
 
     const index = await this.loadIndex()
     const id = this.folderId(index, path)
@@ -650,7 +410,7 @@ export class DriveStore {
       }
     }
 
-    const first: BatchItem[] = []
+    const first: ManifestWrite[] = []
     if (records.length > 0) {
       first.push(this.manifestItem(await this.trashWith(records), folderTag(TRASH_PATH)))
     }
@@ -674,7 +434,7 @@ export class DriveStore {
     const name = newName.trim()
     const problem = folderNameProblem(name)
     if (problem) throw new Error(problem)
-    await this.refreshEvents()
+    await this.refresh()
 
     const index = await this.loadIndex()
     const id = this.folderId(index, path)
@@ -699,7 +459,7 @@ export class DriveStore {
     const path = normalizePath(folderPath)
     const to = normalizePath(toParentPath)
     if (path === '') throw new Error('The drive root cannot be moved')
-    await this.refreshEvents()
+    await this.refresh()
 
     const index = await this.loadIndex()
     const id = this.folderId(index, path)
@@ -733,7 +493,7 @@ export class DriveStore {
    */
   async restoreRecords(ids: string[], targetPath?: string): Promise<Renamed[]> {
     if (ids.length === 0) return []
-    await this.refreshEvents()
+    await this.refresh()
 
     const trash = await this.loadFolder(TRASH_PATH)
     if (trash === null) return []
@@ -760,7 +520,7 @@ export class DriveStore {
 
     // a re-created folder's index entry first: a failure after it leaves
     // the files in trash and an empty folder, never listed nowhere
-    const first: BatchItem[] = treeChanged ? [this.indexItem(index)] : []
+    const first: ManifestWrite[] = treeChanged ? [this.indexItem(index)] : []
     const renamed: Renamed[] = []
     for (const [dest, records] of byFolder) {
       const folder = (await this.loadFolder(dest)) ?? emptyFolder(dest)
@@ -814,14 +574,14 @@ export class DriveStore {
       byDest.set(to, [...(byDest.get(to) ?? []), m.id])
     }
     if (byDest.size === 0) return
-    await this.refreshEvents()
+    await this.refresh()
 
     const index = await this.loadIndex()
     const fromId = this.folderId(index, from)
     const source = await this.loadFolder(fromId)
     if (source === null) return
     let treeChanged = false
-    const writes: BatchItem[] = []
+    const writes: ManifestWrite[] = []
     const moved = new Set<string>()
     for (const [to, ids] of byDest) {
       const records = source.files.filter((f) => ids.includes(f.id))
@@ -861,13 +621,10 @@ export class DriveStore {
 
   // ─── Multi-manifest writes ──────────────────────────────────────────
 
-  private manifestItem(value: unknown, tag: string): BatchItem {
+  private manifestItem(value: unknown, key: string): ManifestWrite {
     if (Array.isArray((value as FolderManifest).files)) this.fillSearch((value as FolderManifest).files)
-    return {
-      data: new TextEncoder().encode(JSON.stringify(value)),
-      encryption: { type: 'aes256', key: this.masterKey },
-      tags: tag,
-    }
+    // a snapshot: callers go on changing their copy
+    return { key, value: JSON.parse(JSON.stringify(value)) }
   }
 
   /** Give `files` that have no search entry this device's pending one; how many got one. */
@@ -888,19 +645,19 @@ export class DriveStore {
   /**
    * Listings that save this device's pending search entries, for folders
    * other than those `alongside` already writes (which get theirs anyway),
-   * as batch items to send in the same transaction. Up to
+   * as listings to store in the same change. Up to
    * SEARCH_SAVE_FOLDERS folders; [] when nothing is pending. Reads the
-   * events as last scanned (callers refresh them first).
+   * backend's view as last refreshed (callers refresh it first).
    */
-  async searchSaveItems(alongside: BatchItem[] = [], max = SEARCH_SAVE_FOLDERS): Promise<BatchItem[]> {
+  async searchSaveItems(alongside: ManifestWrite[] = [], max = SEARCH_SAVE_FOLDERS): Promise<ManifestWrite[]> {
     const pending = this.opts.pendingSearch?.()
     if (!pending?.size) return []
-    const written = new Set(alongside.map((i) => i.tags))
+    const written = new Set(alongside.map((i) => i.key))
     const index = await this.loadIndex()
     const ids = [...new Set([...pending.values()].map((p) => p.folder))]
       .filter((id) => (id === ROOT_ID || index.tree.has(id)) && !written.has(folderTag(id)))
       .slice(0, max)
-    const out: BatchItem[] = []
+    const out: ManifestWrite[] = []
     for (const id of ids) {
       const folder = await this.loadFolder(id)
       if (!folder) continue
@@ -915,7 +672,7 @@ export class DriveStore {
 
   /** Save this device's pending search entries now: one transaction (where batchSubmit is on). */
   async saveSearchEntries(): Promise<number> {
-    await this.refreshEvents()
+    await this.refresh()
     const items = await this.searchSaveItems([], Number.POSITIVE_INFINITY)
     if (items.length > 0) await this.writeManifests([], items, '')
     return items.length
@@ -932,87 +689,22 @@ export class DriveStore {
   }
 
   /**
-   * Write several manifests: in ONE transaction where batchSubmit is on,
-   * else one transaction each. Either way `first` is stored before `then`,
-   * and `then` only if all of `first` stored (and sealed, under strict
-   * finality). Callers put what must not be lost in `first`, so a failure
+   * Write several manifests as one change (see DriveBackend.writeManifests):
+   * `first` is stored before `then`, and `then` only if all of `first`
+   * stored. Callers put what must not be lost in `first`, so a failure
    * part-way duplicates a record rather than dropping it. `partial` is the
-   * error when `first` stored but `then` didn't.
+   * error when `first` stored but `then` didn't. This device's pending
+   * search entries of other folders ride along.
    */
-  private async writeManifests(first: BatchItem[], then: BatchItem[], partial: string): Promise<void> {
-    const all = [...first, ...then]
-    if (all.length === 0) return
-    // what was stored is known: the next action reads it back from here
-    const remember = (item: BatchItem, rootHash: string) =>
-      this.manifests.set(rootHash.toLowerCase(), new TextDecoder().decode(item.data as Uint8Array))
-    if (!this.network.batchSubmit) {
-      for (let i = 0; i < all.length; i++) {
-        try {
-          const { rootHash } = await this.uploadManifest(all[i].data as Uint8Array, all[i].tags ?? '0x')
-          remember(all[i], rootHash)
-        } catch (err) {
-          if (i < first.length || first.length === 0) throw err
-          throw new Error(`${partial} (${(err as Error).message})`)
-        }
-      }
-      return
-    }
-    // a single manifest goes this way too: unlike the SDK's own upload, it
-    // asks no storage node anything before the wallet prompt
-    const primary = first.length > 0 ? first : then
-    // pending search entries of other folders ride along; if they don't
-    // store, they stay pending (never this change's error)
-    const bonus = await this.searchSaveItems(all).catch(() => [])
-    const required = first.length > 0 ? then.length : 0
-    const extras = [...(first.length > 0 ? then : []), ...bonus]
-    // kept on this device until stored (see DriveDevice)
-    const device = this.opts.device
-    const change = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-    let sent = false
-    let res: Awaited<ReturnType<typeof uploadBatch>>
-    this.finishing.add(change) // a reload meanwhile must not "finish" it too
-    try {
-      res = await uploadBatch(primary, this.network, this.signer, {
-        finalize: extras.length > 0 ? async () => extras : undefined,
-        beforeSend: device
-          ? (writes) =>
-              device
-                .savePending(
-                  writes.map((w, i) => ({
-                    ...w,
-                    change,
-                    stage: i < primary.length ? 0 : 1,
-                    order: i,
-                    savedAt: Date.now(),
-                  }))
-                )
-                .catch(() => undefined) // best effort: never blocks the change
-          : undefined,
-        onSent: () => (sent = true),
-        finalityRequired: this.opts.finalityRequired ?? true,
-        onProgress: (msg) => this.progress(msg),
-      })
-      if ([...res.items, ...res.extras].every((r) => r.ok)) await device?.removePending(change).catch(() => undefined)
-    } catch (err) {
-      // not sent (e.g. rejected in the wallet): nothing to finish later
-      if (!sent) await device?.removePending(change).catch(() => undefined)
-      throw err
-    } finally {
-      this.finishing.delete(change)
-    }
-    res.items.forEach((r, i) => r.ok && remember(primary[i], r.result.rootHash))
-    res.extras.forEach((r, i) => r.ok && remember(extras[i], r.result.rootHash))
-    for (const r of res.items) {
-      if (!r.ok) throw new Error(`nothing was changed: a listing could not be stored (${r.error})`)
-    }
-    for (const r of res.extras.slice(0, required)) {
-      if (!r.ok) throw new Error(`${partial} (${r.error})`)
-    }
+  private async writeManifests(first: ManifestWrite[], then: ManifestWrite[], partial: string): Promise<void> {
+    if (first.length + then.length === 0) return
+    const extras = await this.searchSaveItems([...first, ...then]).catch(() => [])
+    await this.backend.writeManifests(first, then, extras, partial)
   }
 
   /** Permanently drop a record from trash (metadata only; blobs persist). */
   async purgeFromTrash(id: string): Promise<void> {
-    await this.refreshEvents()
+    await this.refresh()
     const trash = await this.loadFolder(TRASH_PATH)
     if (trash === null || !trash.files.some((f) => f.id === id)) return
     trash.files = trash.files.filter((f) => f.id !== id)
@@ -1020,14 +712,6 @@ export class DriveStore {
     trash.version += 1
     await this.writeManifests([], [this.manifestItem(trash, folderTag(TRASH_PATH))], '')
   }
-}
-
-function manifestCandidates(
-  events: UploadEvent[],
-  purpose: 'index' | 'folder',
-  folderPath?: string
-): UploadEvent[] {
-  return findManifestEvents(events, purpose, folderPath)
 }
 
 /** The id of the folder a trashed record came from. Records trashed before

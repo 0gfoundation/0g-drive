@@ -3,7 +3,7 @@ import {
   bytesToHex,
   createMasterKey,
   decryptDownloaded,
-  downloadFile,
+  downloadRecord,
   generateFileKey,
   getMasterKeyHex,
   getNetworkConfig,
@@ -13,7 +13,6 @@ import {
   importMasterKey,
   unwrapFileKey,
   uploadBrowserFile,
-  uploadBatch,
   wrapFileKey,
   wrapFileKeyToPubKey,
   buildShareLink,
@@ -40,6 +39,7 @@ import {
   folderNameProblem,
   type DriveState,
   type FileMeta,
+  type DownloadOpts,
   type SharePayload,
   type EncryptedSharePayload,
   type EventCache,
@@ -1188,7 +1188,6 @@ export default function App() {
       }
 
       let metas: FileMeta[] = []
-      let recordCount = 0
       const ids = files.map(() => 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10))
       const timeout = (ms: number) => new Promise<undefined>((r) => setTimeout(() => r(undefined), ms))
       // Search entries: a one-time model download may still be running —
@@ -1226,10 +1225,8 @@ export default function App() {
       }
 
       try {
-        const res = await uploadBatch(
+        const res = await store.backend.uploadFiles(
           files.map((file, i) => ({ data: file, encryption: { type: 'aes256' as const, key: prep[i].fileKey } })),
-          NETWORK,
-          wallet.signer,
           {
             segmentHasher: hashInWorkers,
             onItemProgress: (i, phase, f) =>
@@ -1237,7 +1234,7 @@ export default function App() {
                 percent: Math.min(99, Math.round(f * 100)),
                 message: phase === 'hashing' ? 'hashing & encrypting…' : 'storing segments…',
               }),
-            finalize: async (roots) => {
+            finalize: async (refs) => {
               // entries not ready within the time box are left out — the
               // background indexing (SmartSearch.tsx) picks them up later
               const searches = await timed('indexing', awaitSearches())
@@ -1248,17 +1245,15 @@ export default function App() {
                 mime: prep[i].mime,
                 uploadedAt: Date.now(),
                 encryption: 'aes256',
-                rootHashes: [roots[i]],
-                txHashes: [], // filled from chain events on load
+                ...refs[i], // V1: txHashes and txSeqs filled from chain events on load
                 wrappedKey: prep[i].wrappedKey,
                 network: 'testnet:turbo',
                 ...(prep[i].thumb ? { thumb: prep[i].thumb } : {}),
                 ...(searches[i] ? { search: searches[i] } : {}),
               }))
               const records = await store.prepareFileRecords(path, metas, replace)
-              recordCount = records.length
               // this device's unsaved search entries of other folders ride along (optional)
-              return [...records, ...(await store.searchSaveItems(records).catch(() => []))]
+              return { records, extras: await store.searchSaveItems(records).catch(() => []) }
             },
             onProgress: (msg) => {
               if (msg.startsWith('Waiting for wallet approval')) {
@@ -1290,12 +1285,11 @@ export default function App() {
           }
         )
 
-        const okIdx = res.items.map((r, i) => (r.ok ? i : -1)).filter((i) => i >= 0)
-        res.items.forEach((r, i) => {
+        const okIdx = res.files.map((r, i) => (r.ok ? i : -1)).filter((i) => i >= 0)
+        res.files.forEach((r, i) => {
           if (!r.ok) log(`${files[i].name} failed: ${r.error}`)
         })
-        const manifestOk = recordCount > 0 && res.extras.slice(0, recordCount).every((r) => r.ok)
-        if (manifestOk) {
+        if (res.recordsStored) {
           setAll({ state: 'done', message: 'in your drive ✓' }, (i) => okIdx.includes(i))
           log(`${n} file${n === 1 ? '' : 's'} stored and registered with 1 wallet approval.`)
         } else if (okIdx.length > 0) {
@@ -1303,8 +1297,8 @@ export default function App() {
           // the stored files with a normal manifest write
           setAll({ state: 'registering', message: 'registering — check your wallet', percent: undefined }, (i) => okIdx.includes(i))
           const stored = okIdx.map((i) => {
-            const r = res.items[i]
-            return r.ok ? { ...metas[i], txHashes: r.result.txHashes, txSeqs: r.result.txSeqs } : metas[i]
+            const r = res.files[i]
+            return r.ok ? { ...metas[i], ...r.ref } : metas[i]
           })
           await store.putFileRecords(path, stored, replace)
           setAll({ state: 'done', message: 'in your drive ✓' }, (i) => okIdx.includes(i))
@@ -1548,6 +1542,13 @@ export default function App() {
     [masterKeyHex, log]
   )
 
+  /** A drive file's bytes, from the drive's backend (V1 when no drive is open yet: reads need no wallet). */
+  const readFile = useCallback(
+    (meta: FileMeta, opts?: DownloadOpts) =>
+      storeRef.current ? storeRef.current.backend.download(meta, opts) : downloadRecord(NETWORK, meta, opts),
+    []
+  )
+
   /** Download + decrypt a file into memory (preview, thumbnails, indexing).
    *  Single-fragment files are cached on this device as stored (encrypted)
    *  and decrypted after every read — see fileCache.ts. */
@@ -1557,22 +1558,21 @@ export default function App() {
       if (meta.encryption !== 'none' && !fileKey) throw new Error('cannot unwrap the file key')
       if (meta.rootHashes.length === 1 && meta.size <= FILE_CACHE_MAX_BYTES) {
         const raw = await cachedOrDownload(fileCacheKey(meta.rootHashes), async () =>
-          (await downloadFile(meta.rootHashes, NETWORK, { txSeqs: meta.txSeqs, onProgress })).data
+          (await readFile(meta, { onProgress })).data
         )
         if (!fileKey) return raw
         const { data, decrypted } = decryptDownloaded(raw, { symmetricKey: fileKey })
         if (!decrypted) throw new Error('decryption failed (wrong key?)')
         return data
       }
-      const { data, decrypted } = await downloadFile(meta.rootHashes, NETWORK, {
+      const { data, decrypted } = await readFile(meta, {
         decryption: fileKey ? { symmetricKey: fileKey } : undefined,
-        txSeqs: meta.txSeqs,
         onProgress,
       })
       if (fileKey && !decrypted) throw new Error('decryption failed (wrong key?)')
       return data
     },
-    [fileKeyFor]
+    [fileKeyFor, readFile]
   )
 
   const download = useCallback(
@@ -1587,12 +1587,11 @@ export default function App() {
           const handle = await window.showSaveFilePicker({ suggestedName: meta.name })
           const writable = await handle.createWritable()
           let chain = Promise.resolve()
-          await downloadFile(meta.rootHashes, NETWORK, {
+          await readFile(meta, {
             decryption:
               meta.encryption === 'none'
                 ? undefined
                 : { symmetricKey: fileKey! },
-            txSeqs: meta.txSeqs,
             onProgress: (msg, pct) => log(`${meta.name}: ${msg}`, pct),
             onPlainChunk: (chunk) => {
               chain = chain.then(() => writable.write(chunk))
@@ -1602,12 +1601,11 @@ export default function App() {
           await writable.close()
           log(`${meta.name} streamed to disk.`)
         } else {
-          const { data, decrypted } = await downloadFile(meta.rootHashes, NETWORK, {
+          const { data, decrypted } = await readFile(meta, {
             decryption:
               meta.encryption === 'none'
                 ? undefined
                 : { symmetricKey: fileKey! },
-            txSeqs: meta.txSeqs,
             onProgress: (msg, pct) => log(`${meta.name}: ${msg}`, pct),
           })
           if (meta.encryption !== 'none' && !decrypted) {
@@ -1622,7 +1620,7 @@ export default function App() {
         setBusy(null)
       }
     },
-    [wallet, fileKeyFor, log]
+    [wallet, fileKeyFor, log, readFile]
   )
 
   // ─── Sharing ────────────────────────────────────────────────────────
