@@ -229,6 +229,15 @@ HTML files previewed as their source text only: rendering one from a blob: URL w
 
 Verified: `npm run test:html-preview` (fresh funded drive; a page with scripts, a remote image and stylesheet, a refresh, a form and a link: renders with its own style and inline image, no script runs, the remote loads are blocked in the browser, the policy leads the head, opaque origin, link and form go nowhere, Source exact, 390 px).
 
+### D17 — Storage backends: one seam for V1 and V2 (2026-11-11)
+0G Storage V2 (testnet, through its relayer: `core/src/v2relayer.ts`, PR #53) stores files differently from V1: no transaction per change, no tags, a per-address balance that pays rent, and a listing of an address's files instead of Submit events. To run the drive on either, its logic now talks to a **`DriveBackend`** (`core/src/backend.ts`) instead of to V1 directly:
+- **Listings** (the index, one per folder, the trash) are stored and read by key, as JSON: `readManifest(key)` answers the latest readable version, `writeManifests(first, then, extras, partial)` stores new versions as one change (`first` before `then`; `extras` optional). The backend encrypts them with the drive key and decides how "latest" is found (V1: tagged Submit events; V2, planned: a root listing uploaded last, found as the account's newest file).
+- **Files**: `uploadFiles(files, {finalize})` uploads files and, in the same change, the listings that record them; `download(record)` reads one; `fixRecords` fills a backend's own fields on records read back (V1: txSeqs).
+- **`V1Backend`** (`core/src/v1backend.ts`) is the old code, moved: event scanning, the version fallbacks, interrupted changes kept on the device (`DriveDevice`), one transaction per change. `DriveStore` keeps folders, trash, names and search entries, and takes a `backend` option (V1 by default, so nothing else changes).
+- Not behind the seam yet: the recovery backup, the sharing profile and share links (V1 tags and root hashes), and fees (the wallet pays per transaction on V1; V2 needs a funded storage account). They move with the V2 backend.
+
+Verified: no behavior change. On V1 (local build, 2026-11-11) all eleven drive suites pass: drive, batch-upload, abandoned-listing, interrupted-change, rename, folder-rename, move, duplicate-names, bg-index, browser-e2e, file-cache.
+
 ## Verification (M1, 2026-10-24)
 Full roundtrip proven on testnet: 256 KB random payload → ECIES-encrypted to wallet pubkey → on-chain submit (fee via Flow contract) → segment upload → finality → download (file-relative segment indices, shard-affinity routing) → decrypt → byte-exact match. Cost: ~0.0012 0G per 256 KB roundtrip (gas + storage fee).
 
