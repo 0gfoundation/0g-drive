@@ -131,13 +131,23 @@ function merkleRoot(leaves: Uint8Array[]): Uint8Array {
 }
 
 /**
+ * Bytes to upload: a Blob, or anything that reads ranges of itself (e.g. a
+ * file encrypted as it is read, so a big one is never held in memory).
+ */
+export interface ByteSource {
+  size: number
+  slice(from: number, to: number): Blob | Promise<Uint8Array>
+}
+
+/**
  * A Blob's V2 data hash (64 hex digits, no 0x) and its chunk hashes:
  * leaf = SHA-256(0x00 ‖ chunk), an RFC 6962 tree over the leaves, and
  * dataHash = SHA-256(0x02 ‖ u64be(chunkSize) ‖ u64be(size) ‖ root).
  */
-export async function hashBlob(blob: Blob, chunkSize: number): Promise<{ dataHash: string; leaves: Uint8Array[] }> {
+export async function hashBlob(blob: ByteSource, chunkSize: number): Promise<{ dataHash: string; leaves: Uint8Array[] }> {
   const leaves: Uint8Array[] = []
-  for (let at = 0; at < blob.size; at += chunkSize) leaves.push(await digest(Uint8Array.of(0), blob.slice(at, at + chunkSize)))
+  for (let at = 0; at < blob.size; at += chunkSize)
+    leaves.push(await digest(Uint8Array.of(0), (await blob.slice(at, Math.min(at + chunkSize, blob.size))) as BlobPart))
   const sizes = new DataView(new ArrayBuffer(16))
   sizes.setBigUint64(0, BigInt(chunkSize))
   sizes.setBigUint64(8, BigInt(blob.size))
@@ -255,8 +265,8 @@ export class RelayerClient {
     return { signedAt, headers: { 'X-0G-Signature': sig.slice(0, 130) + v.toString(16).padStart(2, '0'), 'X-0G-Signed-At': String(signedAt) } }
   }
 
-  /** Store a Blob for the signer's account. Resumes what an earlier, interrupted upload of the same bytes stored. */
-  async upload(signer: StatementSigner, blob: Blob, opts: RelayerUploadOptions = {}): Promise<RelayerUploadResult> {
+  /** Store bytes for the signer's account. Resumes what an earlier, interrupted upload of the same bytes stored. */
+  async upload(signer: StatementSigner, blob: ByteSource, opts: RelayerUploadOptions = {}): Promise<RelayerUploadResult> {
     const info = await this.info()
     if (blob.size > info.maxFileSize) throw new Error(`${blob.size} bytes is over the relayer's ${info.maxFileSize}-byte file limit`)
     const { dataHash, leaves } = await hashBlob(blob, info.chunkSize)
@@ -317,10 +327,11 @@ export class RelayerClient {
         for (let part = queue.shift(); part && !stale; part = queue.shift()) {
           try {
             result.partRequests++
+            const body = (await blob.slice(part[0] * info.chunkSize, Math.min(part[1] * info.chunkSize, blob.size))) as BodyInit
             const answer = await signedCall((h) =>
               this.call<{ stored: Range[]; moved: Moved }>('PUT', `/v1/uploads/${begun.fileId}/chunks/${part![0]}`, {
                 headers: { ...h, 'X-0G-Capability': begun.capability!, 'Content-Type': 'application/octet-stream' },
-                body: blob.slice(part![0] * info.chunkSize, Math.min(part![1] * info.chunkSize, blob.size)),
+                body,
               })
             )
             moved.push(...answer.moved)
@@ -419,6 +430,19 @@ export class RelayerClient {
     }
   }
 
+  /** A file's first `n` bytes (fewer when it is shorter). */
+  head(dataHash: string, n: number): Promise<Uint8Array> {
+    return this.retrying(async () => {
+      const res = await fetch(`${this.net.relayer}/v1/files/${dataHash}`, { headers: { Range: `bytes=0-${n - 1}` } })
+      this.noteDate(res)
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new RelayerError(res.status, body, Number(res.headers.get('retry-after') ?? 0) * 1000)
+      }
+      return new Uint8Array(await res.arrayBuffer()).slice(0, n)
+    })
+  }
+
   /** An account's available files, newest first. */
   list(account: string, opts: { limit?: number; before?: string } = {}) {
     const q = new URLSearchParams({ limit: String(opts.limit ?? 100), ...(opts.before ? { before: opts.before } : {}) })
@@ -440,8 +464,13 @@ export class RelayerClient {
       try {
         return await send()
       } catch (e) {
-        // expired (our clock), or signed before the upload on the layout's clock: noteDate corrected it
-        if (e instanceof RelayerError && (e.reason === 'AUTHORIZATION_EXPIRED' || e.reason === 'AUTHORIZATION_MISMATCH')) return send()
+        // expired (our clock: noteDate corrected it), or signed before the
+        // upload on the relayer's clock (a file deleted the second it was
+        // stored): sign again a moment later
+        if (e instanceof RelayerError && (e.reason === 'AUTHORIZATION_EXPIRED' || e.reason === 'AUTHORIZATION_MISMATCH')) {
+          if (e.reason === 'AUTHORIZATION_MISMATCH') await sleep(2000)
+          return send()
+        }
         throw e
       }
     })

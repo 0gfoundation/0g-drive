@@ -104,6 +104,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:assistant-key` | the assistant's API key survives a browser restart in WebKit (iPhone) and Chromium; a refused question doesn't forget it (Router mocked; no cost) |
 | `npm run test:v2-vectors` | the V2 relayer client's data hash and signed statements against the V2 SDK's published test vectors (offline) |
 | `npm run test:v2-relayer [MiB]` | proof of concept: upload (dropped connections, skewed clock), dedup, find the root by listing, resumed download and delete through the V2 testnet relayer, from WebKit at phone size and Chromium (first run deposits 0.05 testnet 0G) |
+| `npm run test:v2-drive` | the drive on V2: DriveStore with the V2 backend against the testnet relayer — folders, uploads, rename, move, trash, a restart, two devices at once, a wrong drive key, superseded versions deleted (deposits 0.05 testnet 0G into a fresh storage account, deletes its files at the end) |
 | `npm run knowledge` | rebuild the assistant's knowledge bundle (guide, docs, source, docs.0g.ai, 0G repos at the commits in `scripts/knowledge-sources.json`; add `-- --update` to move to their latest) |
 | `node scripts/gen-test-wallet.mjs` | create a throwaway test wallet in `.env` |
 
