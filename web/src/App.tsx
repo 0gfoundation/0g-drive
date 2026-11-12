@@ -65,6 +65,7 @@ import {
   setupDriveWithPassword,
   withPassword,
   UnstableSignatureError,
+  DepositError,
 } from './v2drive'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
 import { FileIcon } from './fileIcons'
@@ -1025,8 +1026,7 @@ export default function App() {
         refreshBalance(hexToBytes(masterKeyHex))
         return true
       } catch (err) {
-        const msg = (err as Error).message
-        log(/user (rejected|denied)|ACTION_REJECTED/i.test(msg) ? 'Deposit rejected in wallet.' : `Deposit failed: ${msg}`)
+        log(err instanceof DepositError ? (err as Error).message : `Deposit failed: ${(err as Error).message}`)
         return false
       } finally {
         setDepositBusy(null)
