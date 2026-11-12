@@ -17,7 +17,7 @@ import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getNetworkConfig } from '../core/dist/index.js'
+import { getNetworkConfig, RelayerClient, V2_TESTNET, deriveStorageKey, hexToBytes } from '../core/dist/index.js'
 import { refund } from './lib/refund.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
@@ -40,7 +40,8 @@ const check = (name, ok, detail = '') => {
 
 const funder = new ethers.Wallet(funderKey, provider)
 const wallet = ethers.Wallet.createRandom().connect(provider)
-await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.05') })).wait()
+// the drive's first storage deposit (0.1 0G) and gas; what's left is refunded at the end
+await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther(process.env.V2_FUNDING ?? '2') })).wait()
 step(`wallet ${wallet.address} funded`)
 
 const browser = await chromium.launch()
@@ -139,11 +140,15 @@ async function ask(frame, question) {
 }
 
 const FILE_NAME = 'divorce-settlement-draft.txt'
+/** the desktop page, and the drive key (for deleting the drive's files at the end) */
+let drivePage = null
+let driveKeyHex = null
 
 try {
   // ── desktop: drive with a file in it ──
   const D = await open({ width: 1280, height: 900 }, 'desktop')
   const page = D.page
+  drivePage = page
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
@@ -153,6 +158,7 @@ try {
   ])
   await page.locator('table .fname-btn', { hasText: FILE_NAME }).waitFor({ timeout: 8 * 60_000 })
   step('drive created, file uploaded')
+  driveKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   const driveStorage = await page.evaluate(() => Object.fromEntries(Object.entries(localStorage)))
   const secrets = Object.values(driveStorage).filter((v) => /^(0x)?[0-9a-f]{64}$/i.test(v))
 
@@ -229,9 +235,10 @@ try {
   // ── Q2: the user's own setup ──
   r = await ask(frame, 'Is my drive backed up? Check my setup.')
   check(
-    "own-setup answer uses drive_status (recovery is off here) and says it isn't set up",
-    !r.error && r.steps.some((s) => /drive’s status/.test(s)) && /(not|isn’t|isn't).{0,40}(set up|backed|enabled|on\b)|\bset up\b/i.test(r.answer),
-    r.answer.slice(0, 160).replace(/\s+/g, ' ')
+    "own-setup answer uses drive_status, says recovery is on and the recovery password isn't set, and doesn't say on-chain",
+    !r.error && r.steps.some((s) => /drive’s status/.test(s)) && /recovery\b[^.]{0,60}\bon\b/i.test(r.answer) &&
+      /password[^.]{0,60}(not|isn’t|isn't)\b[^.]{0,20}set|(not|no)\b[^.]{0,30}(recovery )?password/i.test(r.answer) && !/on-chain|on chain/i.test(r.answer),
+    r.answer.replace(/\s+/g, ' ')
   )
 
   // ── Q3: where is it → highlight in the drive ──
@@ -316,8 +323,19 @@ try {
   await M.context.close()
 } catch (err) {
   check('run completed', false, err.message.split('\n')[0])
+  const activity = await drivePage?.$$eval('.activity li', (els) => els.slice(0, 10).map((e) => e.textContent)).catch(() => [])
+  console.log('activity:\n  ' + (activity ?? []).join('\n  '))
 } finally {
   if (errors.length) console.log('page errors:\n  ' + errors.join('\n  '))
+  // the drive's files: delete them (rent stops)
+  const hex = driveKeyHex ?? (await drivePage?.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address).catch(() => null))
+  if (hex) {
+    const account = deriveStorageKey(hexToBytes(hex))
+    const relayer = new RelayerClient(V2_TESTNET)
+    const files = (await relayer.list(account.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+    for (const f of files) await relayer.delete(account, f.dataHash).catch(() => undefined)
+    step(`deleted the drive's ${files.length} files`)
+  }
   const pass = results.filter((r) => r.ok).length
   console.log(`${pass}/${results.length} checks passed`)
   process.exitCode = pass === results.length && errors.length === 0 ? 0 : 1

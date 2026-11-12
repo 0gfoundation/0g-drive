@@ -10,30 +10,30 @@ You get the usual drive features: folders, drag-and-drop upload, preview, downlo
 
 ### Your files are only yours
 - **No company in the middle.** Files live on 0G's decentralized storage network, not on a provider's servers. There is no account to suspend, no subscription that locks your data, and no operator who can delete or read it.
-- **Your wallet is your login.** There is no sign-up and no password database. Only your wallet can change your drive.
-- **No backend.** The app rebuilds your whole drive from public chain data plus your keys, so it keeps working even if this website disappears. Any copy of the app can open your drive. The only server-side piece is a stateless relay that passes already-encrypted pieces to storage nodes, because browsers require HTTPS and the nodes speak plain HTTP.
-- **Recovery you control.** Your drive key is backed up on-chain and locked to your wallet. An optional recovery password opens the drive (read-only) if you lose the wallet. Nobody, including us, can reset it or open it for you.
+- **Your wallet is your login.** There is no sign-up and no password database. Your wallet sets up your drive and funds its storage; after that, using the drive needs no wallet prompt.
+- **No backend.** The app finds and rebuilds your whole drive from public data (your wallet's storage deposits on chain, your drive's files on 0G Storage) plus your keys, so it keeps working even if this website disappears. Any copy of the app can open your drive. Files go through 0G Storage V2's public relayer, which only ever sees ciphertext.
+- **Recovery you control.** Your drive key is kept with your drive on 0G Storage, locked to your wallet. An optional recovery password opens the drive (read-only) if you lose the wallet. Nobody, including us, can reset it or open it for you.
 
 ### Encrypted everywhere outside your device
 - **Every file is encrypted in your browser** with its own AES-256 key before it is uploaded. Storage nodes and the chain only ever hold ciphertext.
 - **Names and structure are encrypted too.** File names, folder names, the folder tree, trash and search indexes are stored as encrypted listing files, not as readable metadata.
 - **Sharing doesn't break this.** A secret link carries a single file's key in the part of the URL that browsers never send to a server. An "encrypted to recipient" link can be opened only by the recipient's wallet. Creating a link sends nothing on-chain.
-- **What is public:** that your wallet uploaded data, and when and how much. File contents, names and folder layout are not public.
+- **What is public:** that your wallet funded a storage account, and when and how much that account stores. File contents, names and folder layout are not public.
 
 ### AI that helps without seeing what it shouldn't
 - **On-device AI works on your plaintext, locally.** Smart search (by meaning, in any language, including photo content) and "Suggest organization" run inside your browser. Your files and queries never leave your device.
-- **The cloud assistant is walled off from your files.** The help assistant uses a stronger remote model (GLM-5.3 in a secure enclave via 0G Private Computer). It runs in a sandboxed frame on a separate origin. It cannot read your files, file names, keys or wallet address. It sees only on/off facts such as "recovery is set up", and it can point at controls on the page but never click them.
+- **The cloud assistant is walled off from your files.** The help assistant uses a stronger remote model (GLM-5.3 in a secure enclave via 0G Private Computer). It runs in a sandboxed frame on a separate origin. It cannot read your files, file names, keys or wallet address. It sees only on/off facts such as "recovery is on", and it can point at controls on the page but never click them.
 - **You pay for the assistant directly**, with your own 0G Private Computer API key (a few US cents per question). No middleman stores your questions.
 
 ## Features
 
 | Area | What you can do |
 |---|---|
-| Files | Drag-and-drop upload (many files, one wallet approval), folders, rename and move files and folders, list/grid view with photo, video and SVG thumbnails, trash and restore, sync across devices |
+| Files | Drag-and-drop upload with no wallet prompt, folders, rename and move files and folders, list/grid view with photo, video and SVG thumbnails, trash and restore, sync across devices |
 | Preview | Images, PDF, text and code, audio and video, decrypted in the browser |
 | Sharing | Secret links for anyone; wallet-locked links for a specific recipient |
-| Security | On-chain key backup, recovery password, offline key file, share key for receiving locked links |
-| Reliability | Uploads count as stored only once storage nodes confirm every piece, with automatic repair of missing pieces |
+| Security | Key backup locked to your wallet (or to a password, for wallets whose signatures change), recovery password, offline key file, share key for receiving locked links |
+| Storage | A storage balance you top up from your wallet pays rent for your files; delete forever stops it. Every change appears all at once or not at all |
 | AI | On-device semantic search and organization; isolated help assistant that cites its sources |
 | Mobile | Every screen adapts to phone width |
 
@@ -41,11 +41,11 @@ See the [user guide](docs/user-guide.md) for how each feature works and what it 
 
 ## Status
 
-Version 0.1, running on the **0G Galileo testnet**. Storage, folders, sharing, recovery, on-device AI and the assistant are built and covered by end-to-end tests on testnet. Mainnet support, storage renewal (0G stores data for about one year per payment) and app packaging are next. See the roadmap in [`docs/decisions.md`](docs/decisions.md).
+Version 0.1, running on the **0G Galileo testnet** with **0G Storage V2**. Storage, folders, sharing, recovery, on-device AI and the assistant are built and covered by end-to-end tests on testnet. Drives from before V2 don't open in this version. Mainnet support and app packaging are next. See the roadmap in [`docs/decisions.md`](docs/decisions.md).
 
 ## Project layout
 
-- `core/`: shared TypeScript library. Covers uploads and downloads (progress, bounded finality, auto-repair), encryption, drive-key custody and recovery, sharing, on-chain event scanning, and manifest-based drive metadata (`DriveStore`).
+- `core/`: shared TypeScript library. Covers the 0G Storage V2 relayer client (signed uploads, resumable parts and downloads, deposits), the V2 drive backend (listings and roots), the account card (finding a drive from a wallet), encryption, drive-key custody and recovery, sharing, and the drive metadata model (`DriveStore`). It keeps V1 storage download for the on-device AI model.
 - `web/`: the drive app (React + Vite).
 - `assistant/`: the help assistant, served from its own origin and embedded as an isolated iframe (see D9 in `docs/decisions.md`).
 - `docs/`: [user guide](docs/user-guide.md), [architecture decisions](docs/decisions.md), [deployment](docs/deploy.md) and [0G Storage API study](docs/0g-storage-api-study.md).
@@ -119,11 +119,11 @@ Maintainers: environments, releases and settings for the hosted app are in [docs
 
 ## How it works
 
-- **Storage.** Files are stored on 0G Storage as content-addressed, Merkle-rooted blobs. Each upload pays an on-chain storage fee through the Flow contract. Core enforces strict finality itself (a 15-minute bounded wait, plus auto-repair of missing segments) instead of trusting the SDK's unbounded loop.
-- **Keys.** Each file has a random AES-256 key, locked under your drive key. The drive key is backed up on-chain, locked under a key derived from a fixed wallet signature, and optionally also under your password (PBKDF2, 600k rounds). Share keys are derived from the same signature.
-- **Metadata.** Folders, file records, trash and search indexes live in small encrypted JSON manifests uploaded as tagged 0G files.
-- **Discovery is serverless.** The Flow contract's `Submit` events carry the sender, file root and tags. A fresh client finds the newest manifests from a public RPC, downloads them and decrypts them.
-- **Cost on testnet.** About 0.001 0G per MB uploaded. Each metadata change is one small transaction (about 0.0001–0.0015 0G).
+- **Storage.** Files are stored on 0G Storage V2 through its relayer. Each drive has its own storage account, derived from the drive key, which signs uploads and deletes in the browser (EIP-712) and pays rent from a balance in the PaymentVault contract that your wallet tops up.
+- **Keys.** Each file has a random AES-256 key, locked under your drive key. The drive key is locked under a key derived from a fixed wallet signature, and optionally also under your password (PBKDF2, 600k rounds); both locked copies sit in the drive's public card. Share keys are derived from the same signature.
+- **Metadata.** Folders, file records, trash and search indexes live in small encrypted listing files. A root file names the current listings; each change stores new listings and then a new root, so it appears all at once.
+- **Discovery is serverless.** The PaymentVault's deposit events name the storage accounts a wallet funded; an account's newest root carries a card signed by the wallet, which identifies the drive and holds the locked drive key.
+- **Cost on testnet.** Setup is a 0.1 0G first deposit plus its network fee (about 0.1 0G). Storage rent is about 38.9 0G per TB per month, paid from the storage balance; changes cost no transaction.
 
 See [`docs/decisions.md`](docs/decisions.md) for the full architecture and roadmap.
 
