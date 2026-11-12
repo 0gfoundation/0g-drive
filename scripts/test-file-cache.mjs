@@ -1,8 +1,10 @@
 // Encrypted on-device file cache: upload a PNG to a FRESH funded wallet,
 // preview it after a reload (downloads it from the V2 relayer), reload and
 // preview again (must be 0 downloads of it), and check the saved copy is
-// ciphertext, not PNG. The drive's files are deleted and the wallet
-// refunded at the end.
+// ciphertext, not PNG. While the upload runs, where it is is logged each
+// minute; a failed one stops the test at once, with the queue, activity,
+// the relayer's upload calls and failed requests. The drive's files are
+// deleted and the wallet refunded at the end.
 //   node scripts/test-file-cache.mjs
 import { chromium } from 'playwright'
 import { connectExtension } from './lib/connect.mjs'
@@ -115,6 +117,20 @@ page.on('requestfinished', (req) => {
 page.on('requestfailed', (req) => {
   net.push({ at: Date.now() - t0, url: req.url(), failed: req.failure()?.errorText })
 })
+// the relayer's upload calls (begin, parts, complete) with their status, to show where an upload stalls
+const relayerCalls = []
+page.on('response', (res) => {
+  const u = new URL(res.url())
+  if (u.origin !== new URL(V2_TESTNET.relayer).origin || !u.pathname.startsWith('/v1/uploads')) return
+  relayerCalls.push(`${((Date.now() - t0) / 1000).toFixed(0)}s ${res.request().method()} ${u.pathname.replace(/[0-9a-f]{16,}/g, (h) => h.slice(0, 8) + '…')} → ${res.status()}`)
+  if (relayerCalls.length > 30) relayerCalls.shift()
+})
+/** What the page shows of the upload, and the relayer calls behind it: logged while waiting and on failure. */
+async function uploadState() {
+  const queue = await page.$$eval('.queue-item', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim())).catch(() => [])
+  const activity = await page.$$eval('.activity li', (els) => els.slice(0, 8).map((e) => e.textContent)).catch(() => [])
+  return { queue, activity }
+}
 
 /** Delete every file of the drive's storage account (rent stops), with its key from the page. */
 async function deleteDriveFiles(pg = page, address = wallet.address) {
@@ -163,7 +179,20 @@ try {
   })
   const png = Buffer.from(b64, 'base64')
   await page.setInputFiles('.dropzone input[type=file]', [{ name: 'scan.png', mimeType: 'image/png', buffer: png }])
-  await page.locator('table .fname-btn', { hasText: 'scan.png' }).waitFor({ timeout: 10 * 60_000 })
+  // up to 10 minutes, saying every minute where the upload is; a failed upload (✗) stops at once
+  const listed = page.locator('table .fname-btn', { hasText: 'scan.png' })
+  const failedItem = page.locator('.queue-item', { hasText: '✗' })
+  for (let minute = 1; ; minute++) {
+    const outcome = await Promise.race([
+      listed.waitFor({ timeout: 60_000 }).then(() => 'listed', () => 'waiting'),
+      failedItem.waitFor({ timeout: 60_000 }).then(() => 'failed', () => 'waiting'),
+    ])
+    if (outcome === 'listed') break
+    const { queue } = await uploadState()
+    if (outcome === 'failed') throw new Error(`the upload failed: ${queue.join(' | ')}`)
+    step(`still uploading after ${minute} min: ${queue.join(' | ') || '(queue empty)'}; last relayer call: ${relayerCalls.at(-1) ?? 'none'}`)
+    if (minute === 10) throw new Error('scan.png not in the folder after 10 minutes')
+  }
   // the record's data hash, as the list shows it (title of the hash cell)
   fileHash = (await page.locator('table tr', { has: page.locator('.fname-btn', { hasText: 'scan.png' }) }).locator('span[title^="0x"]').first().getAttribute('title')).replace(/^0x/, '').toLowerCase()
   step(`uploaded scan.png (${(png.length / 1e6).toFixed(1)} MB), data hash ${fileHash.slice(0, 10)}…`)
@@ -188,6 +217,13 @@ try {
   if (!ok) process.exitCode = 1
 } catch (e) {
   console.log('ERROR', e.message)
+  const { queue, activity } = await uploadState()
+  console.log(`queue:\n  ${queue.join('\n  ') || '(empty)'}`)
+  console.log(`activity:\n  ${activity.join('\n  ') || '(empty)'}`)
+  console.log(`relayer upload calls (last ${relayerCalls.length}):\n  ${relayerCalls.join('\n  ') || '(none)'}`)
+  const failed = net.filter((r) => r.failed)
+  if (failed.length) console.log(`failed requests:\n  ${failed.slice(-10).map((r) => `${(r.at / 1000).toFixed(0)}s ${r.url.slice(0, 120)} (${r.failed})`).join('\n  ')}`)
+  console.log(`console tail:\n  ${consoleTail.slice(-15).join('\n  ')}`)
   process.exitCode = 1
 } finally {
   if (errors.length) console.log(errors)
