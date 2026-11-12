@@ -58,6 +58,8 @@ const PREFIX_BYTES = ROOT_MAGIC.length + 4
 const MAX_CARD_BYTES = 64 * 1024
 /** listings uploaded at once */
 const LISTING_CONCURRENCY = 3
+/** files whose first bytes are read at once, looking for the newest root's card */
+const CARD_LOOKAHEAD = 8
 /** bytes encrypted at a time on reads of an EncryptedSource */
 const ENC_PIECE = 4 * 1024 * 1024
 
@@ -88,23 +90,24 @@ function parseCard(bytes: Uint8Array): unknown {
 
 /**
  * The card stored with an account's newest root (public: no key needed),
- * or null when the account has no root. Checks at most `maxFiles` files.
+ * or null when the account has no root. Pages through the whole listing:
+ * a root buried under files whose change never stored is still found.
  */
-export async function readAccountCard(relayer: RelayerClient, account: string, maxFiles = 500): Promise<unknown> {
+export async function readAccountCard(relayer: RelayerClient, account: string): Promise<unknown> {
   let before: string | undefined
-  for (let seen = 0; seen < maxFiles; ) {
+  for (;;) {
     const page = await relayer.list(account, { limit: 100, before })
-    for (const f of page.files) {
-      if (++seen > maxFiles) return null
-      if (f.fileSize < PREFIX_BYTES) continue
-      const n = cardLength(await relayer.head(strip0x(f.dataHash), PREFIX_BYTES))
-      if (n === null) continue
-      return parseCard((await relayer.head(strip0x(f.dataHash), PREFIX_BYTES + n)).subarray(PREFIX_BYTES))
+    // the newest file with the magic, looking at a few files of the page at a time
+    const files = page.files.filter((f) => f.fileSize >= PREFIX_BYTES)
+    for (let i = 0; i < files.length; i += CARD_LOOKAHEAD) {
+      const batch = files.slice(i, i + CARD_LOOKAHEAD)
+      const lengths = await Promise.all(batch.map(async (f) => cardLength(await relayer.head(strip0x(f.dataHash), PREFIX_BYTES))))
+      const at = lengths.findIndex((n) => n !== null)
+      if (at >= 0) return parseCard((await relayer.head(strip0x(batch[at].dataHash), PREFIX_BYTES + lengths[at]!)).subarray(PREFIX_BYTES))
     }
     if (!page.next || page.files.length === 0) return null
     before = page.next
   }
-  return null
 }
 
 /**

@@ -3,8 +3,9 @@
 // root with the card), a new device finding the drive by the wallet's
 // deposits and unlocking it by signature or password, a password change,
 // someone else reading the sharing key, an impostor card in an account the
-// wallet also funded, a shared file read with no account, and a purged
-// file deleted. Every file of the test accounts is deleted at the end.
+// wallet also funded, the drive found from its key alone (no deposit scan),
+// the card found under 510 newer files, a shared file read with no account,
+// and a purged file deleted. Every file of the test accounts is deleted at the end.
 // Usage: npm run test:v2-account  (reads PRIVATE_KEY from env or .env)
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
@@ -22,6 +23,8 @@ import {
   bindingMessage,
   makeCard,
   findDrive,
+  findDriveByKey,
+  readAccountCard,
   fundedAccounts,
   unlockCardBySignature,
   unlockCardByPassword,
@@ -146,6 +149,13 @@ try {
   const notFooled = await findDrive(V2_TESTNET, new RelayerClient(V2_TESTNET), user.address)
   check('an impostor card is skipped (not signed by the wallet)', notFooled?.account === account.address.toLowerCase() && notFooled.card.shareKey === shareKey.pubKey, notFooled?.account)
 
+  // ── from the key on a device, without the deposit scan ──
+  const byKey = await findDriveByKey(V2_TESTNET, relayer, user.address, masterKey)
+  const byFakeKey = await findDriveByKey(V2_TESTNET, relayer, user.address, fakeKey)
+  const byOtherWallet = await findDriveByKey(V2_TESTNET, relayer, attacker.address, masterKey)
+  check('found from the drive key alone; not from a key whose card the wallet didn\'t sign, nor for another wallet',
+    byKey?.account === account.address.toLowerCase() && byKey.card.binding === binding && byFakeKey === null && byOtherWallet === null)
+
   // ── purge: the file itself is deleted ──
   await store.removeFileRecord('Docs', 'f1')
   await store.purgeFromTrash('f1')
@@ -154,13 +164,36 @@ try {
   check('a purged file is deleted (rent stops)', !listed.includes(ref.rootHashes[0].slice(2)), `${listed.length} files left`)
   const drive = await store.loadDrive()
   check('and gone from the drive', (drive.trash?.files ?? []).length === 0 && (drive.folders.get('Docs')?.files ?? []).length === 0)
+
+  // ── a root buried under files whose change never stored: the card is still found ──
+  const BURY = 510
+  let made = 0
+  // the relayer takes at most 5 upload begins a second from one address: start 4 a second
+  let nextStart = Date.now()
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (made < BURY) {
+      const i = made++
+      const wait = nextStart - Date.now()
+      nextStart = Math.max(nextStart, Date.now()) + 250
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+      await relayer.upload(account, new Blob([`orphan ${i} ${Math.random()}`]))
+    }
+  }))
+  const listedNow = (await relayer.list(account.address, { limit: 100 })).files
+  const t0b = Date.now()
+  const buried = await readAccountCard(relayer, account.address)
+  check(`the card is found under ${BURY} newer files (no limit)`, buried?.binding === binding && listedNow.length === 100,
+    `${((Date.now() - t0b) / 1000).toFixed(1)} s`)
 } catch (err) {
   failed++
   console.log(`${stamp()} ERROR ${err.stack ?? err}`)
 } finally {
   for (const acct of accounts) {
-    const files = (await relayer.list(acct.address, { limit: 100 }).catch(() => ({ files: [] }))).files
-    for (const f of files) await relayer.delete(acct, f.dataHash).catch(() => undefined)
+    for (let page = 0; page < 20; page++) {
+      const files = (await relayer.list(acct.address, { limit: 100 }).catch(() => ({ files: [] }))).files
+      if (files.length === 0) break
+      await Promise.all(files.map((f) => relayer.delete(acct, f.dataHash).catch(() => undefined)))
+    }
   }
   console.log(`${stamp()} deleted the test accounts' files`)
   await refund(user, funder.address)

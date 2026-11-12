@@ -2,7 +2,8 @@
 // fresh key funded from .env's test wallet for gas): create the drive
 // (3 signatures, 1 deposit), a folder and uploads with no wallet prompt,
 // preview, a share link read with no account, a recovery password, a
-// deposit, a second device restoring with one signature, the drive opened
+// deposit, a second device restoring with one signature, a device holding
+// the key opening the drive when the deposit scan sees nothing, the drive opened
 // read-only with its password and no wallet, delete forever, and the new
 // setup and storage UI at 390 px. Every file of the drive is deleted at
 // the end and the wallet refunded.
@@ -195,6 +196,47 @@ try {
   await row(d2.page, 'ramen.txt').waitFor({ timeout: 2 * 60_000 })
   check('…and sees the files', true)
   await d2.context.close()
+
+  // ── the deposit scan sees nothing (e.g. the RPC's logs fall short): ──
+  // a device with the key still opens the drive, from its account's root; one without can't
+  const hideDeposits = async (p) => {
+    let hidden = 0
+    await p.route(/evmrpc-testnet\.0g\.ai/, async (route) => {
+      let body = null
+      try {
+        body = route.request().postDataJSON()
+      } catch {}
+      const reqs = Array.isArray(body) ? body : [body]
+      const logIds = new Set(reqs.filter((r) => r?.method === 'eth_getLogs').map((r) => r.id))
+      if (logIds.size === 0) return route.continue()
+      const res = await route.fetch()
+      const json = await res.json()
+      const blank = (r) => (logIds.has(r?.id) ? (hidden++, { ...r, result: [] }) : r)
+      await route.fulfill({ response: res, json: Array.isArray(json) ? json.map(blank) : blank(json) })
+    })
+    return () => hidden
+  }
+  {
+    const withKey = await device()
+    await withKey.context.addInitScript(([a, k]) => localStorage.setItem('0gdrive:masterkey:' + a.toLowerCase(), k), [wallet.address, masterKeyHex])
+    const hiddenWith = await hideDeposits(withKey.page)
+    p0 = { ...prompts }
+    await withKey.page.goto(base)
+    await connectExtension(withKey.page)
+    await withKey.page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).waitFor({ timeout: 3 * 60_000 })
+    check('deposits hidden, key on the device: the drive opens from its key, with no wallet prompt',
+      hiddenWith() > 0 && prompts.sign === p0.sign && prompts.tx === p0.tx && (await withKey.page.getByRole('button', { name: /Finish setup|Create my drive/ }).count()) === 0,
+      JSON.stringify({ hiddenLogQueries: hiddenWith(), sign: prompts.sign - p0.sign }))
+    await withKey.context.close()
+
+    const noKey = await device()
+    const hiddenWithout = await hideDeposits(noKey.page)
+    await noKey.page.goto(base)
+    await connectExtension(noKey.page)
+    await noKey.page.getByRole('button', { name: 'Create my drive' }).waitFor({ timeout: 2 * 60_000 })
+    check('…and with no key on the device, the hidden deposits really hide the drive (the control)', hiddenWithout() > 0, `${hiddenWithout()} log queries hidden`)
+    await noKey.context.close()
+  }
 
   // ── device 3: no wallet, the address and the password ──
   const d3 = await device({ withWallet: false })

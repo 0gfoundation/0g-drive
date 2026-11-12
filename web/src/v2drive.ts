@@ -11,6 +11,7 @@ import {
   deriveStorageKey,
   downloadV2,
   findDrive,
+  findDriveByKey,
   makeCard,
   signBinding,
   signForKeys,
@@ -55,6 +56,11 @@ function depositCacheFor(address: string): DepositCache {
 /** The wallet's drive on V2 (its account and card), or null when it has none. */
 export function lookupDrive(address: string, ownWallet = true) {
   return findDrive(V2, relayer, address, ownWallet ? depositCacheFor(address) : undefined)
+}
+
+/** The wallet's drive from the drive key on this device (no deposit scan), or null. */
+export function lookupDriveByKey(address: string, masterKey: Uint8Array) {
+  return findDriveByKey(V2, relayer, address, masterKey)
 }
 
 /** Does this drive key belong to that drive? */
