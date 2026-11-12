@@ -1170,6 +1170,9 @@ tbody tr:hover {
   border: 0;
   background: #fff;
 }
+.preview-md {
+  background: var(--bg);
+}
 .html-preview .preview-text {
   flex: 1;
   overflow: auto;

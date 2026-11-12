@@ -249,8 +249,10 @@ try {
   check('after reload, Recipes holds pancakes + ramen + carbonara', JSON.stringify(inRecipes) === JSON.stringify(['carbonara.md', 'pancakes.md', 'ramen.txt']), JSON.stringify(inRecipes))
 
   await page.locator('table .fname-btn', { hasText: 'carbonara.md' }).click()
-  await page.locator('.preview-text').waitFor({ timeout: 5 * 60_000 })
-  const text = await page.textContent('.preview-text')
+  // Markdown: shown formatted, in a sandboxed frame (MarkdownPreview.tsx)
+  const mdFrame = page.locator('.preview-modal iframe.preview-md')
+  await mdFrame.waitFor({ timeout: 5 * 60_000 })
+  const text = await (await (await mdFrame.elementHandle()).contentFrame()).evaluate(() => document.body.textContent.trim())
   check('preview downloads + decrypts the moved file', text.startsWith('Spaghetti carbonara'), JSON.stringify(text.slice(0, 40)))
   await page.keyboard.press('Escape')
 

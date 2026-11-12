@@ -3,6 +3,7 @@ import type { FileMeta } from '@0gdrive/core'
 import { getSavedThumb, saveThumb, thumbKey } from './thumbStore'
 import { PdfPages, drawsPdfPages } from './PdfPages'
 import { HtmlPreview } from './HtmlPreview'
+import { MarkdownPreview } from './MarkdownPreview'
 
 // ─── Thumbnails ───────────────────────────────────────────────────────
 //
@@ -336,8 +337,9 @@ const TEXT_EXTS = [
   'sh', 'css', 'sql', 'sol',
 ]
 const HTML_EXTS = ['html', 'htm', 'xhtml']
+const MARKDOWN_EXTS = ['md', 'markdown']
 
-type Kind = 'image' | 'video' | 'audio' | 'pdf' | 'html' | 'text' | 'none'
+type Kind = 'image' | 'video' | 'audio' | 'pdf' | 'html' | 'markdown' | 'text' | 'none'
 
 function previewKind(meta: FileMeta, data?: Uint8Array): Kind {
   const ext = meta.name.split('.').pop()?.toLowerCase() ?? ''
@@ -352,6 +354,7 @@ function previewKind(meta: FileMeta, data?: Uint8Array): Kind {
     return head === '%PDF-' ? 'pdf' : 'none'
   }
   if ((m === 'text/html' || HTML_EXTS.includes(ext)) && meta.size <= TEXT_MAX_BYTES) return 'html'
+  if ((m === 'text/markdown' || MARKDOWN_EXTS.includes(ext)) && meta.size <= TEXT_MAX_BYTES) return 'markdown'
   if ((m.startsWith('text/') || m.includes('json') || TEXT_EXTS.includes(ext)) && meta.size <= TEXT_MAX_BYTES) {
     return 'text'
   }
@@ -409,7 +412,7 @@ export function PreviewModal({
 
   useEffect(() => {
     if (!data) return
-    if (kind === 'text' || kind === 'html') {
+    if (kind === 'text' || kind === 'html' || kind === 'markdown') {
       setText(new TextDecoder('utf-8', { fatal: false }).decode(data))
       return
     }
@@ -447,6 +450,8 @@ export function PreviewModal({
     body = <pre className="preview-text">{text}</pre>
   } else if (kind === 'html' && text !== null) {
     body = <HtmlPreview source={text} name={meta.name} />
+  } else if (kind === 'markdown' && text !== null) {
+    body = <MarkdownPreview source={text} name={meta.name} />
   } else if (kind === 'none' || !url) {
     body = <p className="preview-note">No preview for this file type.</p>
   } else if (kind === 'image') {
