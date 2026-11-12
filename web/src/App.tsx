@@ -58,6 +58,7 @@ import {
   uploadNeed,
   keyMatches,
   lookupDrive,
+  lookupDriveByKey,
   readV2,
   restoreByPassword as unlockByPassword,
   restoreBySignature as unlockBySignature,
@@ -744,10 +745,12 @@ export default function App() {
       setBackupCheckError(null)
       setHasPassword(null)
       try {
-        const found = await lookupDrive(address)
+        const local = getMasterKeyHex(address)
+        // the deposit scan finds the drive from the wallet alone; with the key on this
+        // device, its account's newest root names the drive too (if the scan missed it)
+        const found = (await lookupDrive(address)) ?? (local ? await lookupDriveByKey(address, hexToBytes(local)) : null)
         adoptCard(found?.card ?? null)
         // a key on this device for another drive (e.g. one replaced on another device): restore this one instead
-        const local = getMasterKeyHex(address)
         if (found && local && !keyMatches(hexToBytes(local), found.card)) {
           setMasterKeyHex(null)
           setRestoreError('The drive key on this device belongs to a different drive. Restore this wallet’s drive below.')

@@ -154,6 +154,23 @@ export async function findDrive(
   return null
 }
 
+/**
+ * The wallet's drive from a drive key this device holds, without the
+ * deposit scan: the key's account, the card stored with its newest root,
+ * and the wallet's binding signature on it. For when `findDrive` finds
+ * nothing (the deposit scan failed to see the account) but the key is here.
+ */
+export async function findDriveByKey(
+  net: V2Network,
+  relayer: RelayerClient,
+  wallet: string,
+  masterKey: Uint8Array
+): Promise<{ account: string; card: AccountCard } | null> {
+  const account = deriveStorageKey(masterKey).address.toLowerCase()
+  const card = await readAccountCard(relayer, account)
+  return (await verifyCard(net, card, wallet, account)) ? { account, card: card as AccountCard } : null
+}
+
 /** The master key from a card, and a check that it is this card's drive. */
 function checked(card: AccountCard, masterKey: Uint8Array): Uint8Array {
   if (deriveStorageKey(masterKey).address.toLowerCase() !== card.account) {
