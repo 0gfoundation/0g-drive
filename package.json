@@ -18,6 +18,7 @@
     "check:experiment": "node scripts/experiment-small.mjs --check",
     "test:search": "node scripts/test-search.mjs",
     "test:browser-ai": "node scripts/test-browser-ai.mjs",
+    "test:ai-quality": "npm run build -w core && node scripts/test-search.mjs && node scripts/test-browser-ai.mjs",
     "test:ai-memory": "node scripts/test-ai-memory.mjs",
     "test:pdf-preview": "npm run build -w core && node scripts/test-pdf-preview.mjs",
     "test:bg-index": "npm run build -w core && node scripts/test-bg-index.mjs",

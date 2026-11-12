@@ -86,7 +86,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `node scripts/models/check-pruned-model.mjs DIR` | the trimmed model gives the same tokens and embeddings for English and Chinese text as the full one |
 | `[NETWORK=mainnet] node scripts/models/upload-model-to-0g.mjs DIR` | upload the trimmed model to 0G Storage; prints the pins for `web/src/ai/modelOn0g.ts` |
 | `node scripts/test-merkle.mjs` | our upload hashing against the SDK's: roots, submissions, segment proofs and encrypted bytes, 23 sizes plain and encrypted (offline, spends nothing) |
-| `npm run test:browser-ai` / `test:search` | on-device AI search and organize |
+| `npm run test:ai-quality` | smart search results: `test:search` (Node, the trimmed text model from 0G and CLIP: about 20 English and Chinese queries, move suggestions) then `test:browser-ai` (the app's worker in Chromium, needs the dev server); run it when a change touches `web/src/ai/` or `SmartSearch.tsx` (spends nothing) |
 | `npm run test:ai-memory` | the AI engine’s memory reservation stays at 1 GB, and models load in a tab that has no room for 4 GB |
 | `npm run test:pdf-preview` | PDF preview on phones: pages drawn and released as you scroll; desktop keeps the browser’s viewer |
 | `npm run test:bg-index` | background indexing: files without search entries indexed on the device, saved with the next change or Save |
