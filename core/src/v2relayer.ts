@@ -106,11 +106,48 @@ export function deriveStorageKey(masterKey: Uint8Array): ethers.Wallet {
   return new ethers.Wallet(ethers.hexlify(hkdf(sha256, masterKey, undefined, STORAGEKEY_INFO, 32)))
 }
 
-/** Fund an account's storage balance from a wallet. */
-export async function depositForUser(net: V2Network, payer: ethers.Signer, account: string, amount: bigint) {
+/** how long a sent deposit is waited for before the wait gives up (the transaction may still land) */
+const DEPOSIT_WAIT_MS = 3 * 60_000
+const RECEIPT_POLL_MS = 2000
+
+/**
+ * Fund an account's storage balance from a wallet. Once the transaction
+ * is sent, its receipt is polled from the network's RPC, and a failed
+ * poll is tried again: one RPC error must not report a deposit that went
+ * through as failed.
+ */
+export async function depositForUser(net: V2Network, payer: ethers.Signer, account: string, amount: bigint): Promise<ethers.TransactionReceipt> {
   const vault = new ethers.Contract(net.paymentVault, VAULT_ABI, payer)
-  const tx = await vault.depositForUser(account, { value: amount })
-  return tx.wait()
+  const tx: ethers.TransactionResponse = await vault.depositForUser(account, { value: amount })
+  const provider = new ethers.JsonRpcProvider(net.rpc, net.chainId, { staticNetwork: true })
+  const deadline = Date.now() + DEPOSIT_WAIT_MS
+  let lastError = ''
+  for (;;) {
+    try {
+      const receipt = await provider.getTransactionReceipt(tx.hash)
+      if (receipt) {
+        if (receipt.status === 0) throw new DepositRevertedError(tx.hash)
+        return receipt
+      }
+    } catch (err) {
+      if (err instanceof DepositRevertedError) throw err
+      lastError = (err as Error).message
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `The deposit was sent (${tx.hash}) but couldn’t be confirmed${lastError ? ` (${lastError.slice(0, 120)})` : ''}. ` +
+          'It may still go through: check your storage balance before depositing again.'
+      )
+    }
+    await new Promise((r) => setTimeout(r, RECEIPT_POLL_MS))
+  }
+}
+
+class DepositRevertedError extends Error {
+  constructor(hash: string) {
+    super(`The deposit transaction failed on chain (${hash}); nothing was deposited.`)
+    this.name = 'DepositRevertedError'
+  }
 }
 
 export async function storageBalance(net: V2Network, account: string): Promise<bigint> {
