@@ -6,12 +6,17 @@
 //   node scripts/test-search.mjs [imageDir]
 // Sample photos (cats, tiger, football, street, beach, receipt, invoice) are
 // fetched once from huggingface.co/datasets/Xenova/transformers.js-docs.
+// The text model is the trimmed one users get, fetched once from 0G Storage
+// (web/src/ai/modelOn0g.ts) and checked against its pinned SHA-256; the
+// test fails if the engine falls back to the full model.
 // RAW=1 also prints raw cosines (for recalibrating searchcore.ts CAL).
 import { build } from 'esbuild'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { RawImage } from '@huggingface/transformers'
+import { RawImage, env } from '@huggingface/transformers'
+import { createHash } from 'node:crypto'
+import { downloadFile, getNetworkConfig } from '../core/dist/index.js'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // bundle inside the repo so the external package resolves from node_modules
@@ -29,7 +34,7 @@ for (const f of SAMPLE) {
   writeFileSync(join(imageDir, f), Buffer.from(await res.arrayBuffer()))
 }
 await build({
-  entryPoints: [join(root, 'web/src/ai/engine.ts'), join(root, 'web/src/ai/searchcore.ts')],
+  entryPoints: [join(root, 'web/src/ai/engine.ts'), join(root, 'web/src/ai/searchcore.ts'), join(root, 'web/src/ai/modelOn0g.ts')],
   bundle: true,
   format: 'esm',
   platform: 'node',
@@ -38,6 +43,28 @@ await build({
   external: ['@huggingface/transformers'],
   logLevel: 'error',
 })
+
+// the trimmed text model from 0G, laid out where transformers.js looks for local models
+const { SMALL_TEXT_MODEL, TEXT_MODEL_ON_0G } = await import(pathToFileURL(join(outDir, 'modelOn0g.mjs')))
+const modelsDir = join(outDir, 'models')
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
+for (const [name, file] of Object.entries(TEXT_MODEL_ON_0G.files)) {
+  const dest = join(modelsDir, SMALL_TEXT_MODEL, name)
+  if (existsSync(dest) && sha256(readFileSync(dest)) === file.sha256) continue
+  const { data } = await downloadFile([file.root], getNetworkConfig(TEXT_MODEL_ON_0G.network, 'turbo'), { txSeqs: [file.txSeq] })
+  if (sha256(data) !== file.sha256) throw new Error(`${name} from 0G doesn't match its SHA-256`)
+  mkdirSync(dirname(dest), { recursive: true })
+  writeFileSync(dest, data)
+}
+env.localModelPath = modelsDir + '/'
+env.allowLocalModels = true
+let fellBack = false
+const warn = console.warn
+console.warn = (...args) => {
+  if (/trimmed text model unavailable/.test(String(args[0]))) fellBack = true
+  warn(...args)
+}
+
 const { indexPhoto, indexText, embedQuery } = await import(pathToFileURL(join(outDir, 'engine.mjs')))
 const { rank, CAL } = await import(pathToFileURL(join(outDir, 'searchcore.mjs')))
 
@@ -64,6 +91,11 @@ for (const [name, text] of Object.entries(texts)) {
   items.push({ name, search: await indexText(name, text) })
 }
 console.log(`indexed ${Object.keys(texts).length} texts in ${Date.now() - t} ms (includes model load)`)
+if (fellBack) {
+  console.log('FAIL  the trimmed text model (from 0G) didn\'t load — results would be for the full model')
+  process.exit(1)
+}
+console.log('text model: the trimmed one, from 0G')
 t = Date.now()
 for (const [name, file] of Object.entries(photos)) {
   const img = await RawImage.read(join(imageDir, file))
