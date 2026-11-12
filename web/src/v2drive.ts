@@ -68,9 +68,55 @@ export function backendFor(masterKey: Uint8Array, card?: AccountCard | null) {
 
 export const balanceOf = (masterKey: Uint8Array) => storageBalance(V2, deriveStorageKey(masterKey).address)
 
+/** A deposit the wallet couldn't make or refused, in words (ethers' own message carries the whole transaction). */
+export class DepositError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DepositError'
+  }
+}
+
+const fmt0G = async (wei: bigint) => `${(await import('ethers')).formatEther(wei)} 0G`
+
+async function walletBalance(signer: Parameters<typeof depositForUser>[1]): Promise<bigint | null> {
+  try {
+    return (await signer.provider?.getBalance(await signer.getAddress())) ?? null
+  } catch {
+    return null
+  }
+}
+
+async function tooLittle(signer: Parameters<typeof depositForUser>[1], amount: bigint): Promise<DepositError> {
+  const balance = await walletBalance(signer)
+  return new DepositError(
+    `Your wallet doesn’t have enough 0G for the ${await fmt0G(amount)} deposit and its network fee` +
+      (balance === null ? '' : ` (it has ${await fmt0G(balance)})`) +
+      '. Add 0G to this wallet, then try again.'
+  )
+}
+
+/** Before setup asks for more signatures: a wallet holding less than the deposit can't finish it. */
+async function checkCanDeposit(signer: Parameters<typeof depositForUser>[1], amount: bigint) {
+  const balance = await walletBalance(signer)
+  if (balance !== null && balance < amount) throw await tooLittle(signer, amount)
+}
+
+/** The vault deposit from the wallet (one transaction), its wallet errors in words. */
+async function depositFromWallet(signer: Parameters<typeof depositForUser>[1], account: string, amount: bigint) {
+  try {
+    return await depositForUser(V2, signer, account, amount)
+  } catch (err) {
+    const { isError } = await import('ethers')
+    const msg = String((err as Error)?.message ?? err)
+    if (isError(err, 'INSUFFICIENT_FUNDS') || /insufficient funds/i.test(msg)) throw await tooLittle(signer, amount)
+    if (isError(err, 'ACTION_REJECTED') || /user (rejected|denied)/i.test(msg)) throw new DepositError('The deposit was rejected in your wallet.')
+    throw err
+  }
+}
+
 /** Fund the drive's storage account from the wallet (one transaction). */
 export function deposit(signer: Parameters<typeof depositForUser>[1], masterKey: Uint8Array, amount: bigint) {
-  return depositForUser(V2, signer, deriveStorageKey(masterKey).address, amount)
+  return depositFromWallet(signer, deriveStorageKey(masterKey).address, amount)
 }
 
 type Signer = Parameters<typeof depositForUser>[1] & { signMessage(message: string): Promise<string> }
@@ -92,11 +138,13 @@ export async function setupDrive(
   const account = deriveStorageKey(masterKey).address
   onStep('Waiting for signature (1 of 3)…')
   const { recoveryKey, shareKey } = await signForKeys(signer, address, true)
+  const needsDeposit = (await storageBalance(V2, account)) === 0n
+  if (needsDeposit) await checkCanDeposit(signer, firstDeposit)
   onStep('Waiting for signature (3 of 3)…')
   const binding = await signBinding(signer, address, account)
-  if ((await storageBalance(V2, account)) === 0n) {
+  if (needsDeposit) {
     onStep('Approve the deposit in your wallet…')
-    await depositForUser(V2, signer, account, firstDeposit)
+    await depositFromWallet(signer, account, firstDeposit)
   }
   onStep('Saving your drive…')
   const card = await makeCard({ wallet: address, account, binding, masterKey, recoveryKey, shareKey: shareKey.pubKey })
@@ -121,6 +169,8 @@ export async function setupDriveWithPassword(
   onStep: (step: string) => void
 ): Promise<AccountCard> {
   const account = deriveStorageKey(masterKey).address
+  const needsDeposit = (await storageBalance(V2, account)) === 0n
+  if (needsDeposit) await checkCanDeposit(signer, firstDeposit)
   onStep('Waiting for signature…')
   const binding = await signBinding(signer, address, account)
   const draft = { v: 1, wallet: address.toLowerCase(), account: account.toLowerCase(), binding }
@@ -130,9 +180,9 @@ export async function setupDriveWithPassword(
         'so this wallet couldn’t find its drive again. Your drive was not created. Make one transaction from this wallet first, or use a different wallet.'
     )
   }
-  if ((await storageBalance(V2, account)) === 0n) {
+  if (needsDeposit) {
     onStep('Approve the deposit in your wallet…')
-    await depositForUser(V2, signer, account, firstDeposit)
+    await depositFromWallet(signer, account, firstDeposit)
   }
   onStep('Saving your drive…')
   const card = await makeCard({ wallet: address, account, binding, masterKey, password })

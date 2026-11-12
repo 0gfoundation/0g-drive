@@ -13,6 +13,9 @@
 //   signs the binding and is asked for the deposit; the non-ECDSA one (an
 //   address with no contract: an undeployed smart account) is refused
 //   before the deposit; the offer fits 390 px
+//   a wallet with no 0G → setup says so in words (with its balance) after
+//   the stability check, before the binding signature; a deposit refused
+//   for lack of 0G at the gas estimate says so too
 //
 //   node scripts/test-wallet-picker.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
@@ -35,8 +38,8 @@ const check = (name, ok, detail = '') => {
 
 const ICON = 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#f80"/></svg>').toString('base64')
 
-/** sign: 'ok' (RFC 6979), 'random' (random nonce), 'contract' (not ECDSA) */
-function mockWallet(name, rdns, sign = 'ok') {
+/** sign: 'ok' (RFC 6979), 'random' (random nonce), 'contract' (not ECDSA); balance: what the wallet reports holding (the chain still sees none) */
+function mockWallet(name, rdns, sign = 'ok', balance = null) {
   // two accounts: wallet_requestPermissions stands for the user picking the other one
   const keys = [ethers.Wallet.createRandom(), ethers.Wallet.createRandom()]
   let current = 0
@@ -71,6 +74,8 @@ function mockWallet(name, rdns, sign = 'ok') {
         return String(network.chainId)
       case 'personal_sign':
         return personalSign(params[0])
+      case 'eth_getBalance':
+        return balance === null ? provider.send(method, params) : ethers.toBeHex(balance)
       case 'eth_sendTransaction':
         throw new Error('test wallet has no funds')
       default:
@@ -328,7 +333,8 @@ try {
     ['random', 'a wallet that signs with a random nonce', 2, /different signature when asked to sign the same message twice/],
     ['contract', 'a smart-account (non-ECDSA) signature', 1, /isn’t a standard signature by your address/],
   ]) {
-    const w = mockWallet('Odd Wallet', 'com.example.odd', sign)
+    // it reports holding 1 0G, so setup gets past the balance check to the deposit
+    const w = mockWallet('Odd Wallet', 'com.example.odd', sign, ethers.parseEther('1'))
     const { context, page } = await open([w])
     await page.goto(base)
     await connectExtension(page)
@@ -350,17 +356,33 @@ try {
     await form.locator('input').nth(0).fill('violet anchor tundra lemonade')
     await form.locator('input').nth(1).fill('violet anchor tundra lemonade')
     await form.getByRole('button', { name: 'Create with password' }).click()
-    // the deposit fails on the unfunded key: at the gas estimate (the RPC) or in the wallet
-    const outcome = sign === 'random' ? /insufficient funds|test wallet has no funds/i : /can’t be checked on 0G/
+    // the deposit fails on the unfunded key (at the RPC's gas estimate), in words
+    const outcome = sign === 'random' ? /doesn’t have enough 0G for the 0\.1 0G deposit and its network fee/ : /can’t be checked on 0G/
     const depositTried = () => w.count('eth_estimateGas') + w.count('eth_sendTransaction')
     const err2 = page.getByText(outcome).first()
     await err2.waitFor({ timeout: 60_000 })
     check(sign === 'random'
-      ? `${name}: a recovery password is offered; with it, 1 more signature, then the deposit is asked for`
+      ? `${name}: a recovery password is offered; with it, 1 more signature, then the deposit, refused for lack of 0G in words`
       : `${name}: a recovery password is offered, but an undeployed smart account is refused before the deposit`,
       w.count('personal_sign') === wantSigs + 1 && (sign === 'random' ? depositTried() > 0 : depositTried() === 0) &&
         (await page.getByRole('button', { name: '+ New folder' }).count()) === 0,
       JSON.stringify({ sign: w.count('personal_sign'), deposit: depositTried(), text: (await err2.textContent()).slice(0, 120) }))
+    await context.close()
+  }
+
+  // ── a wallet with no 0G: told so in words, before the third signature ──
+  {
+    const w = mockWallet('Empty Wallet', 'com.example.empty')
+    const { context, page } = await open([w])
+    await page.goto(base)
+    await connectExtension(page)
+    await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
+    const err = page.getByText(/doesn’t have enough 0G for the 0\.1 0G deposit/).first()
+    await err.waitFor({ timeout: 60_000 })
+    const text = await err.textContent()
+    check('a wallet with no 0G: setup says it needs 0G for the deposit (and what it has), after 2 signatures, before any transaction',
+      w.count('personal_sign') === 2 && w.count('eth_sendTransaction') === 0 && /\(it has 0\.0 0G\)/.test(text) && !/transaction=/.test(text),
+      JSON.stringify({ sign: w.count('personal_sign'), tx: w.count('eth_sendTransaction'), text: text.slice(0, 160) }))
     await context.close()
   }
 
