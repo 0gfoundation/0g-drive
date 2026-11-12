@@ -97,10 +97,12 @@ export async function readAccountCard(relayer: RelayerClient, account: string): 
   let before: string | undefined
   for (;;) {
     const page = await relayer.list(account, { limit: 100, before })
-    // the newest file with the magic, looking at a few files of the page at a time
+    // the newest file with the magic: the newest file alone first (the root,
+    // almost always: every change stores it last), then a few at a time
     const files = page.files.filter((f) => f.fileSize >= PREFIX_BYTES)
-    for (let i = 0; i < files.length; i += CARD_LOOKAHEAD) {
-      const batch = files.slice(i, i + CARD_LOOKAHEAD)
+    for (let i = 0; i < files.length; ) {
+      const batch = files.slice(i, i + (before === undefined && i === 0 ? 1 : CARD_LOOKAHEAD))
+      i += batch.length
       const lengths = await Promise.all(batch.map(async (f) => cardLength(await relayer.head(strip0x(f.dataHash), PREFIX_BYTES))))
       const at = lengths.findIndex((n) => n !== null)
       if (at >= 0) return parseCard((await relayer.head(strip0x(batch[at].dataHash), PREFIX_BYTES + lengths[at]!)).subarray(PREFIX_BYTES))
