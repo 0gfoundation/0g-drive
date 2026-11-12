@@ -225,7 +225,7 @@ HTML files previewed as their source text only: rendering one from a blob: URL w
 - The page is an `<iframe sandbox="">` with `srcdoc`: no permissions at all — no scripts, an opaque origin (no access to the app, its storage or cookies), no forms, popups or top navigation.
 - **Nothing loads from the network**: a content policy (`default-src 'none'`; images, media and fonts only as `data:`; inline styles) is put first in the page's head — what Safari enforces — and also set as the iframe's `csp` attribute (Chrome). Otherwise opening a file could tell a tracker (remote image, stylesheet) the viewer's IP and that it was opened.
 - Made inert first with DOMParser (runs and loads nothing): `<script>`, `<noscript>`, `<base>` and refresh `<meta>` removed; links keep their address as a tooltip but lose `href` (a click would load the address inside the frame).
-- Limits: pages that need JavaScript show their static content (running scripts safely would need a separate preview origin); relative images and stylesheets don't resolve; links don't open. Markdown is still shown as text.
+- Limits: pages that need JavaScript show their static content (running scripts safely would need a separate preview origin); relative images and stylesheets don't resolve; links don't open. Markdown: see D20.
 
 Verified: `npm run test:html-preview` (fresh funded drive; a page with scripts, a remote image and stylesheet, a refresh, a form and a link: renders with its own style and inline image, no script runs, the remote loads are blocked in the browser, the policy leads the head, opaque origin, link and form go nowhere, Source exact, 390 px).
 
@@ -296,3 +296,12 @@ Crucially, the first run of this test failed and led us down a diagnostic path w
 6. **AI Phase 1 — on-device search & organize** (D8) and **one-prompt batch uploads** (D7). **✅ built 2026-10-27**. **Help assistant** (D9) ✅ built 2026-10-29. Phase 2 (planned): Ask-your-drive + plan-then-approve actions on 0G Compute (TEE providers), session spending key. Phase 3: per-folder delegation keys + MCP server for external agents.
 
 Reference: API study in `0g-storage-api-study.md`; SDK source clones in `reference/`.
+
+### D20 — Markdown preview: formatted, in the HTML preview's sandbox (user decision, 2026-11-13)
+`.md` / `.markdown` files (or `text/markdown`) showed as raw text. Now the preview shows **Rendered** (default) or **Source** (`web/src/MarkdownPreview.tsx`):
+- Parsed with `marked` (GitHub-flavoured: tables, checklists, fenced code), loaded only when a Markdown file is opened.
+- Shown exactly as D16's HTML preview is: `<iframe sandbox="">`, the same content policy first in the head and as the `csp` attribute, links with no `href`. Markdown may carry raw HTML, so before that: `<script>`, frames, objects, forms, `<link>`, `<meta>`, `<base>` and `<style>` are removed, and every `on…` attribute.
+- An image from the internet becomes its alt text (`[image: …]`) rather than a broken image; `data:` images show. Images stored next to the file in the drive don't resolve (a later step).
+- Styled with the app's dark palette and a readable line length; wide tables and code blocks scroll inside themselves, so the page fits a phone.
+
+Verified: `npm run test:markdown-preview` (fresh funded drive; a `.md` uploaded with no type: each element renders, raw HTML's script and handlers neither run nor remain, the remote image shows as alt text and nothing reaches the internet, opaque origin, policy first, link inert, Source exact, 390 px with the wide table and code block scrolling in place).

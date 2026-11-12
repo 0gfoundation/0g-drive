@@ -23,6 +23,7 @@
     "test:pdf-preview": "npm run build -w core && node scripts/test-pdf-preview.mjs",
     "test:bg-index": "npm run build -w core && node scripts/test-bg-index.mjs",
     "test:html-preview": "npm run build -w core && node scripts/test-html-preview.mjs",
+    "test:markdown-preview": "npm run build -w core && node scripts/test-markdown-preview.mjs",
     "test:e2e": "npm run build -w core && node scripts/test-browser-e2e.mjs",
     "test:wallets": "npm run build -w core && node scripts/test-wallet-picker.mjs",
     "test:svg": "npm run build -w core && node scripts/test-svg-thumbs.mjs",
