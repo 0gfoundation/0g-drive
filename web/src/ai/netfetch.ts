@@ -26,18 +26,19 @@ const MAX_ATTEMPTS = 8
 
 // What a first visit downloads (q8 weights, tokenizers, ONNX Runtime wasm),
 // for a progress denominator that doesn't grow as files start. Sizes are
-// refined from Content-Length; small config files aren't counted.
+// refined from Content-Length; small config files aren't counted. A
+// fallback file isn't planned: it joins the total if its download starts.
 // Grouped by what loads them: 'text' with the warm-up (the runtime comes
 // with the first model); CLIP's halves on first photo use — 'clipImage' to
 // index a photo, 'clipText' for its labels and for photo search.
 export type ModelGroup = 'text' | 'clipImage' | 'clipText'
-const PLANNED: { re: RegExp; size: number; group: ModelGroup }[] = [
+const PLANNED: { re: RegExp; size: number; group: ModelGroup; fallback?: true }[] = [
   // the trimmed text model, from 0G Storage (modelOn0g.ts)
   { re: /0gdrive\/minilm-en-zh\/resolve\/[^/]+\/onnx\/model_quantized\.onnx$/, size: 66_856_734, group: 'text' },
   { re: /0gdrive\/minilm-en-zh\/resolve\/[^/]+\/tokenizer\.json$/, size: 4_087_479, group: 'text' },
   // the full one: the fallback when 0G can't deliver
-  { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/onnx\/model_quantized\.onnx$/, size: 118_308_126, group: 'text' },
-  { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/tokenizer\.json$/, size: 17_082_913, group: 'text' },
+  { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/onnx\/model_quantized\.onnx$/, size: 118_308_126, group: 'text', fallback: true },
+  { re: /paraphrase-multilingual-MiniLM-L12-v2\/resolve\/[^/]+\/tokenizer\.json$/, size: 17_082_913, group: 'text', fallback: true },
   { re: /clip-vit-base-patch32\/resolve\/[^/]+\/onnx\/vision_model_quantized\.onnx$/, size: 89_117_001, group: 'clipImage' },
   { re: /clip-vit-base-patch32\/resolve\/[^/]+\/onnx\/text_model_quantized\.onnx$/, size: 64_504_507, group: 'clipText' },
   { re: /clip-vit-base-patch32\/resolve\/[^/]+\/tokenizer\.json$/, size: 2_224_119, group: 'clipText' },
@@ -123,7 +124,7 @@ export async function planDownloads(cacheKey: string, groups: ModelGroup[]): Pro
     // no Cache Storage (private mode) — assume nothing is cached
   }
   PLANNED.forEach((p, i) => {
-    if (groups.includes(p.group) && !cached.has(i) && !sizes.has(i)) sizes.set(i, p.size)
+    if (groups.includes(p.group) && !p.fallback && !cached.has(i) && !sizes.has(i)) sizes.set(i, p.size)
   })
   post(true)
 }
