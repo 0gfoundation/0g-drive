@@ -2486,7 +2486,7 @@ export default function App() {
                   {q.state === 'uploading' && (q.percent !== undefined ? `${q.percent}%` : 'uploading')}
                   {q.state === 'approving' && '🔐 approve in your wallet'}
                   {q.state === 'sealing' && '⏳ sealing'}
-                  {q.state === 'registering' && '📝 registering — check your wallet'}
+                  {q.state === 'registering' && '📝 saving to your drive'}
                   {q.state === 'done' && `✓ ${q.message ?? 'stored'}`}
                   {q.state === 'error' && `✗ ${q.message ?? 'failed'}`}
                   {q.state === 'queued' && 'queued'}
@@ -2864,7 +2864,7 @@ export default function App() {
                 {anyReplaceable && (
                   <p className="muted small-print">
                     Replace moves the file{items.filter((it) => it.replaceable).length === 1 ? '' : 's'} already here to trash (you
-                    can restore {items.filter((it) => it.replaceable).length === 1 ? 'it' : 'them'}), in the same approval.
+                    can restore {items.filter((it) => it.replaceable).length === 1 ? 'it' : 'them'}), in the same change.
                   </p>
                 )}
                 <div className="modal-actions">

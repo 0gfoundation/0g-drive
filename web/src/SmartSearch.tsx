@@ -228,7 +228,7 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
     const n = pendingSearch().size
     setSaving(true)
     setBusy('Saving the search index…')
-    log(`Saving the search index for ${n} file${n === 1 ? '' : 's'} — approve 1 transaction…`)
+    log(`Saving the search index for ${n} file${n === 1 ? '' : 's'}…`)
     try {
       await store.saveSearchEntries()
       await reloadDrive()
@@ -272,7 +272,7 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
       const store = storeRef.current
       if (!store || chosen.length === 0) return
       setBusy('Moving files…')
-      log(`Moving ${chosen.length} file${chosen.length === 1 ? '' : 's'} — approve in your wallet…`)
+      log(`Moving ${chosen.length} file${chosen.length === 1 ? '' : 's'}…`)
       try {
         await store.moveRecords(currentPath, chosen.map((c) => ({ id: c.item.id, to: c.to })))
         await reloadDrive()
