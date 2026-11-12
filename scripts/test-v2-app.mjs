@@ -167,8 +167,11 @@ try {
   check('a folder and 2 uploads with no wallet prompt', prompts.tx === p0.tx && prompts.sign === p0.sign, `${prompts.tx - p0.tx} tx, ${prompts.sign - p0.sign} signatures`)
 
   await row(page, 'pancakes.md').locator('.fname-btn').click()
-  await page.locator('.preview-text').waitFor({ timeout: 2 * 60_000 })
-  check('preview downloads and decrypts', (await page.textContent('.preview-text')).startsWith('Fluffy pancakes'))
+  // Markdown: shown formatted, in a sandboxed frame (MarkdownPreview.tsx)
+  const mdFrame = page.locator('.preview-modal iframe.preview-md')
+  await mdFrame.waitFor({ timeout: 2 * 60_000 })
+  const previewed = await (await (await mdFrame.elementHandle()).contentFrame()).evaluate(() => document.body.textContent.trim())
+  check('preview downloads and decrypts', previewed.startsWith('Fluffy pancakes'), JSON.stringify(previewed.slice(0, 40)))
   await page.keyboard.press('Escape')
 
   // a share link, opened with nothing but the link
