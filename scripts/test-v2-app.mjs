@@ -1,9 +1,10 @@
 // The app on 0G Storage V2, in headless Chromium with an injected wallet (a
 // fresh key funded from .env's test wallet for gas): create the drive
-// (3 signatures, 1 deposit), a folder and uploads with no wallet prompt,
-// preview, a share link read with no account, a recovery password, a
-// deposit, a second device restoring with one signature, a device holding
-// the key opening the drive when the deposit scan sees nothing, the drive opened
+// (3 signatures, 1 deposit, through an RPC error on the deposit's
+// receipt), a folder and uploads with no wallet prompt, preview, a share
+// link read with no account, a recovery password, a deposit, a second
+// device restoring with one signature, a device holding the key opening
+// the drive when the deposit scan sees nothing, the drive opened
 // read-only with its password and no wallet, delete forever, and the new
 // setup and storage UI at 390 px. Every file of the drive is deleted at
 // the end and the wallet refunded.
@@ -129,11 +130,26 @@ let page
 try {
   // ── device 1: create the drive ──
   ;({ page } = await device())
+  // the RPC fails the page's first receipt query (as it did on staging): setup must not report failure
+  let receiptErrors = 0
+  await page.route(/evmrpc-testnet\.0g\.ai/, async (route) => {
+    let body = null
+    try {
+      body = route.request().postDataJSON()
+    } catch {}
+    const reqs = Array.isArray(body) ? body : [body]
+    const receipt = reqs.find((r) => r?.method === 'eth_getTransactionReceipt')
+    if (!receipt || receiptErrors > 0) return route.continue()
+    receiptErrors++
+    const error = (r) => ({ jsonrpc: '2.0', id: r.id, error: { code: -32000, message: 'could not coalesce error' } })
+    await route.fulfill({ json: Array.isArray(body) ? reqs.map(error) : error(receipt) })
+  })
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
   check('drive created: 3 signatures, 1 deposit transaction', prompts.sign === 3 && prompts.tx === 1, `${prompts.sign} signatures, ${prompts.tx} tx`)
+  check('…though the RPC failed a receipt query on the way', receiptErrors === 1)
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   await page.waitForFunction(() => /[0-9]/.test(document.querySelector('.sec-row[data-row="storage"] .sec-status')?.textContent ?? ''), null, { timeout: 60_000 })
   const firstBalance = await balanceOf(page)
