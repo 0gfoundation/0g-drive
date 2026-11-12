@@ -47,7 +47,7 @@ export class UnstableSignatureError extends Error {
         : 'Your wallet’s signature isn’t a standard signature by your address') +
         (setup
           ? ', so it couldn’t restore your drive on another device. Your drive was not created. ' +
-            'Create it with a different wallet (a browser extension such as MetaMask or Rabby, or a hardware wallet).'
+            'Set it up with a recovery password instead, or use a different wallet (a browser extension such as MetaMask or Rabby, or a hardware wallet).'
           : ', so it can’t unlock your drive backup or sharing key. Use the wallet you set the drive up with.')
     )
     this.name = 'UnstableSignatureError'

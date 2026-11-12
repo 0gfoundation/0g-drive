@@ -62,7 +62,9 @@ import {
   restoreByPassword as unlockByPassword,
   restoreBySignature as unlockBySignature,
   setupDrive,
+  setupDriveWithPassword,
   withPassword,
+  UnstableSignatureError,
 } from './v2drive'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
 import { FileIcon } from './fileIcons'
@@ -592,6 +594,12 @@ export default function App() {
   const [pw1, setPw1] = useState('')
   const [pw2, setPw2] = useState('')
   const [pwError, setPwError] = useState<string | null>(null)
+  /** the wallet whose signatures changed at setup: offered a password-only drive */
+  const [unstableFor, setUnstableFor] = useState<string | null>(null)
+  const [setupPw1, setSetupPw1] = useState('')
+  const [setupPw2, setSetupPw2] = useState('')
+  /** a password-only drive just set up: export its key file */
+  const [keyFileNudge, setKeyFileNudge] = useState(false)
   /** drive opened with its recovery password, without the wallet: no writes */
   const [readOnly, setReadOnly] = useState(false)
   const readOnlyRef = useRef(false)
@@ -882,12 +890,49 @@ export default function App() {
       adoptCard(c)
       log(`Drive created: recovery, share key and a ${FIRST_DEPOSIT} 0G storage deposit (3 signatures, 1 transaction).`)
     } catch (err) {
+      if (err instanceof UnstableSignatureError) setUnstableFor(wallet.address)
       setRestoreError((err as Error).message)
       log(`Drive setup failed: ${(err as Error).message}`)
     } finally {
       setRestoreBusy(null)
     }
   }, [wallet, log, adoptCard])
+
+  /**
+   * For a wallet whose signatures change: the drive with its key locked to a
+   * password only (D19): 1 signature and the first deposit, no share key.
+   */
+  const createDriveWithPassword = useCallback(async () => {
+    if (!wallet) return
+    if (setupPw1.length < MIN_PASSWORD) {
+      setRestoreError(`Use at least ${MIN_PASSWORD} characters — a few unrelated words is easiest to remember.`)
+      return
+    }
+    if (setupPw1 !== setupPw2) {
+      setRestoreError('The two passwords don’t match.')
+      return
+    }
+    setRestoreBusy('Waiting for signature…')
+    setRestoreError(null)
+    try {
+      if (!getMasterKeyHex(wallet.address)) createMasterKey(wallet.address)
+      const keyHex = getMasterKeyHex(wallet.address)!
+      const { parseEther } = await import('ethers')
+      const c = await setupDriveWithPassword(wallet.signer, wallet.address, hexToBytes(keyHex), setupPw1, parseEther(FIRST_DEPOSIT), setRestoreBusy)
+      setMasterKeyHex(keyHex)
+      adoptCard(c)
+      setUnstableFor(null)
+      setSetupPw1('')
+      setSetupPw2('')
+      setKeyFileNudge(true)
+      log(`Drive created with a recovery password and a ${FIRST_DEPOSIT} 0G storage deposit (1 signature, 1 transaction).`)
+    } catch (err) {
+      setRestoreError((err as Error).message)
+      log(`Drive setup failed: ${(err as Error).message}`)
+    } finally {
+      setRestoreBusy(null)
+    }
+  }, [wallet, setupPw1, setupPw2, log, adoptCard])
 
   const restoreBySignature = useCallback(async () => {
     if (!wallet || !card) return
@@ -1052,6 +1097,7 @@ export default function App() {
     a.download = `0gdrive-key-${wallet?.address.slice(0, 10)}.txt`
     a.click()
     URL.revokeObjectURL(url)
+    setKeyFileNudge(false)
   }, [masterKeyHex, wallet])
 
   // ─── Upload queue ───────────────────────────────────────────────────
@@ -1444,9 +1490,13 @@ export default function App() {
           throw new Error('enter a valid recipient address')
         }
         setShareBusy('Looking up recipient share key…')
-        const shareKey = (await lookupDrive(recipient, false))?.card.shareKey
-        if (!shareKey) {
+        const found = await lookupDrive(recipient, false)
+        if (!found) {
           throw new Error('this address has no 0GDrive yet (the recipient needs to open 0GDrive and create one)')
+        }
+        const shareKey = found.card.shareKey
+        if (!shareKey) {
+          throw new Error('this address’s drive was set up with a recovery password only, so it can’t receive files by address: send a share link instead')
         }
         setShareBusy('Wrapping key…')
         const wrapped = await wrapFileKeyToPubKey(shareKey, fileKey)
@@ -1993,6 +2043,43 @@ export default function App() {
               <strong>Looking for your drive…</strong> (checking this wallet’s storage
               deposits on 0G)
             </div>
+          ) : hasBackup && card && !card.wrappedUnderSignature ? (
+            <div>
+              <strong>This wallet has a drive on 0G, locked with a recovery password.</strong> Enter
+              it to open the drive on this device, or import its key file.
+              <form
+                className="banner-actions"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void restoreByPassword()
+                }}
+              >
+                <input
+                  className="key-input"
+                  placeholder="recovery password"
+                  type="password"
+                  value={restorePassword}
+                  onChange={(e) => setRestorePassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+                <button className="btn primary" type="submit" disabled={restoreBusy !== null || !restorePassword.trim()}>
+                  {restoreBusy ?? 'Restore my drive'}
+                </button>
+              </form>
+              {restoreError && <p className="error-text">⚠ {restoreError}</p>}
+              <details>
+                <summary className="muted">advanced: import a key file</summary>
+                <div className="banner-actions">
+                  <input
+                    className="key-input"
+                    placeholder="paste 0x… backup key"
+                    value={keyImport}
+                    onChange={(e) => setKeyImport(e.target.value)}
+                  />
+                  <button className="btn" onClick={importKey}>Import</button>
+                </div>
+              </details>
+            </div>
           ) : hasBackup ? (
             <div>
               <strong>This wallet has a drive on 0G.</strong> Restore it on this device with one
@@ -2060,8 +2147,55 @@ export default function App() {
                 )}
               </div>
               {restoreError && <p className="error-text">⚠ {restoreError}</p>}
+              {unstableFor === wallet.address && (
+                <form
+                  className="password-setup"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    void createDriveWithPassword()
+                  }}
+                >
+                  <strong>Set up with a recovery password instead.</strong> Your drive key is locked
+                  with this password and kept with your drive on 0G: it’s how you open the drive on
+                  another device (or with its key file). Nobody can reset it. Setup asks for 1 signature
+                  (linking your wallet to your drive) and the {FIRST_DEPOSIT} 0G deposit. Others can’t
+                  send you files by your address; share links still work.
+                  <div className="banner-actions">
+                    <input
+                      className="key-input"
+                      type="password"
+                      placeholder={`recovery password (at least ${MIN_PASSWORD} characters)`}
+                      value={setupPw1}
+                      onChange={(e) => setSetupPw1(e.target.value)}
+                      autoComplete="new-password"
+                    />
+                    <input
+                      className="key-input"
+                      type="password"
+                      placeholder="type it again"
+                      value={setupPw2}
+                      onChange={(e) => setSetupPw2(e.target.value)}
+                      autoComplete="new-password"
+                    />
+                    <button className="btn primary" type="submit" disabled={restoreBusy !== null || !setupPw1 || !setupPw2}>
+                      {restoreBusy ?? 'Create with password'}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           )}
+        </div>
+      )}
+
+      {wallet && !readOnly && masterKeyHex && card && keyFileNudge && (
+        <div className="banner key">
+          <strong>Your drive is ready.</strong> It opens on another device only with its recovery
+          password or its key file: export the key file and keep it somewhere safe.
+          <div className="banner-actions">
+            <button className="btn primary" onClick={downloadKeyBackup}>Export key file</button>
+            <button className="btn" onClick={() => setKeyFileNudge(false)}>Later</button>
+          </div>
         </div>
       )}
 
@@ -2140,8 +2274,14 @@ export default function App() {
                         <SecRow
                           id="recovery"
                           label="Recovery"
-                          hint="Your drive key, locked to a wallet signature and kept with your drive on 0G"
-                          status={card?.wrappedUnderSignature ? <SecOk>On</SecOk> : <SecOff>Off</SecOff>}
+                          hint={
+                            card && !card.wrappedUnderSignature && card.wrappedUnderPassword
+                              ? 'Your drive key, locked to your recovery password and kept with your drive on 0G'
+                              : 'Your drive key, locked to a wallet signature and kept with your drive on 0G'
+                          }
+                          status={
+                            card?.wrappedUnderSignature ? <SecOk>On</SecOk> : card?.wrappedUnderPassword ? <SecOk>Password only</SecOk> : <SecOff>Off</SecOff>
+                          }
                         />
                         <SecRow
                           id="password"
@@ -2620,6 +2760,7 @@ export default function App() {
               The locked backup is public, so anyone can try to guess the password: use a long one —
               several unrelated words. Nobody can reset it for you.
               {hasPassword && ' The new password replaces the current one, which stops working.'}
+              {card && !card.wrappedUnderSignature && ' This drive has no wallet-signature recovery: the password (or the key file) is the only way to open it on another device.'}
             </p>
             <input
               className="key-input wide"

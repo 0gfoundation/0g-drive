@@ -9,6 +9,10 @@
 //   signatures, before the deposit (no transaction), and no drive opens
 //   a wallet that returns a non-ECDSA (smart-account) signature → refused
 //   after 1 signature
+//   both are offered a recovery-password setup: the random-nonce wallet
+//   signs the binding and is asked for the deposit; the non-ECDSA one (an
+//   address with no contract: an undeployed smart account) is refused
+//   before the deposit; the offer fits 390 px
 //
 //   node scripts/test-wallet-picker.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
@@ -338,6 +342,42 @@ try {
         (await page.getByRole('button', { name: '+ New folder' }).count()) === 0 &&
         (await page.getByRole('button', { name: /Create my drive|Finish setup/ }).count()) === 1,
       JSON.stringify({ sign: w.count('personal_sign'), tx: w.count('eth_sendTransaction'), text: text.slice(0, 120) }))
+
+    // the password-only setup it offers: 1 more signature (the binding), then the deposit;
+    // a non-ECDSA signature from an address with no contract can't be checked, so no deposit
+    const form = page.locator('form.password-setup')
+    await form.waitFor({ timeout: 10_000 })
+    await form.locator('input').nth(0).fill('violet anchor tundra lemonade')
+    await form.locator('input').nth(1).fill('violet anchor tundra lemonade')
+    await form.getByRole('button', { name: 'Create with password' }).click()
+    // the deposit fails on the unfunded key: at the gas estimate (the RPC) or in the wallet
+    const outcome = sign === 'random' ? /insufficient funds|test wallet has no funds/i : /can’t be checked on 0G/
+    const depositTried = () => w.count('eth_estimateGas') + w.count('eth_sendTransaction')
+    const err2 = page.getByText(outcome).first()
+    await err2.waitFor({ timeout: 60_000 })
+    check(sign === 'random'
+      ? `${name}: a recovery password is offered; with it, 1 more signature, then the deposit is asked for`
+      : `${name}: a recovery password is offered, but an undeployed smart account is refused before the deposit`,
+      w.count('personal_sign') === wantSigs + 1 && (sign === 'random' ? depositTried() > 0 : depositTried() === 0) &&
+        (await page.getByRole('button', { name: '+ New folder' }).count()) === 0,
+      JSON.stringify({ sign: w.count('personal_sign'), deposit: depositTried(), text: (await err2.textContent()).slice(0, 120) }))
+    await context.close()
+  }
+
+  // ── phone: the password-only setup offer fits 390 px ──
+  {
+    const w = mockWallet('Odd Wallet', 'com.example.odd', 'random')
+    const { context, page } = await open([w], { viewport: { width: 390, height: 844 } })
+    await page.goto(base)
+    await connectExtension(page)
+    await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
+    await page.locator('form.password-setup').waitFor({ timeout: 60_000 })
+    const m = await page.evaluate(() => {
+      const parts = [...document.querySelectorAll('form.password-setup input, form.password-setup button')].map((e) => e.getBoundingClientRect())
+      return { right: Math.max(...parts.map((r) => r.right)), left: Math.min(...parts.map((r) => r.left)), minHeight: Math.min(...parts.map((r) => r.height)), scroll: document.scrollingElement.scrollWidth, width: window.innerWidth }
+    })
+    check('phone: the recovery-password setup fits 390 px, no horizontal scroll',
+      m.left >= 0 && m.right <= m.width && m.scroll <= m.width, JSON.stringify(m))
     await context.close()
   }
 } catch (e) {
