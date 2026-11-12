@@ -17,6 +17,7 @@ import {
   storageBalance,
   unlockCardByPassword,
   unlockCardBySignature,
+  verifyCard,
   type AccountCard,
   type DepositCache,
   type DownloadOpts,
@@ -99,6 +100,42 @@ export async function setupDrive(
   }
   onStep('Saving your drive…')
   const card = await makeCard({ wallet: address, account, binding, masterKey, recoveryKey, shareKey: shareKey.pubKey })
+  await backendFor(masterKey, card).saveCard(card)
+  return card
+}
+
+/**
+ * Set up a drive whose key is recoverable only by password (and key file):
+ * for wallets whose signatures change from one signing to the next, which
+ * can't hold a signature-locked key. One signature (the link from the
+ * wallet to the storage account, checked the way finding the drive checks
+ * it: a smart account not yet deployed is refused here, before the
+ * deposit), then the first deposit and the first root. No share key.
+ */
+export async function setupDriveWithPassword(
+  signer: Signer,
+  address: string,
+  masterKey: Uint8Array,
+  password: string,
+  firstDeposit: bigint,
+  onStep: (step: string) => void
+): Promise<AccountCard> {
+  const account = deriveStorageKey(masterKey).address
+  onStep('Waiting for signature…')
+  const binding = await signBinding(signer, address, account)
+  const draft = { v: 1, wallet: address.toLowerCase(), account: account.toLowerCase(), binding }
+  if (!(await verifyCard(V2, draft, address, account))) {
+    throw new Error(
+      'Your wallet’s signature can’t be checked on 0G (a smart account that isn’t deployed yet can’t sign for it), ' +
+        'so this wallet couldn’t find its drive again. Your drive was not created. Make one transaction from this wallet first, or use a different wallet.'
+    )
+  }
+  if ((await storageBalance(V2, account)) === 0n) {
+    onStep('Approve the deposit in your wallet…')
+    await depositForUser(V2, signer, account, firstDeposit)
+  }
+  onStep('Saving your drive…')
+  const card = await makeCard({ wallet: address, account, binding, masterKey, password })
   await backendFor(masterKey, card).saveCard(card)
   return card
 }

@@ -40,6 +40,7 @@
     "test:v2-drive": "npm run build -w core && node scripts/test-v2-drive.mjs",
     "test:v2-account": "npm run build -w core && node scripts/test-v2-account.mjs",
     "test:v2-app": "npm run build -w core && node scripts/test-v2-app.mjs",
+    "test:password-only": "npm run build -w core && node scripts/test-password-only.mjs",
     "test:rename": "npm run build -w core && node scripts/test-rename.mjs",
     "test:folder-rename": "npm run build -w core && node scripts/test-folder-rename.mjs",
     "test:move": "npm run build -w core && node scripts/test-move.mjs"
