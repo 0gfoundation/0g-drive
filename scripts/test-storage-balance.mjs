@@ -6,8 +6,13 @@
 // the test answers the vault's getUserBalance reads itself where needed:
 //   - after the deposit, the first 3 reads return the old balance (a
 //     lagging backend): the balance must still update, without a reload;
+//     the same for the wallet's 0G in the header;
+//   - 0G sent to the wallet from elsewhere shows on coming back to the tab,
+//     and a spend outside the app shows by itself (read every 30 s);
 //   - a wide balance (12.345 0G) must stay on one line, desktop and 390 px.
-// Also: Storage is its own sidebar section, above Security.
+// Also: Storage is its own sidebar section, above Security; and setup
+// finishes when the relayer, not yet seeing the first deposit, refuses the
+// first saves ("have 0 wei").
 //
 //   node scripts/test-storage-balance.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
@@ -77,6 +82,8 @@ await page.exposeFunction('__eth', async (method, params) => {
           // the next balance reads answer as a backend behind the deposit would
           staleLeft = 3
           staleValue = lastBalance
+          walletStaleLeft = 3
+          walletStaleValue = '0x' + (await provider.getBalance(wallet.address)).toString(16)
           armStale = false
         }
         const sent = await wallet.sendTransaction({
@@ -87,6 +94,14 @@ await page.exposeFunction('__eth', async (method, params) => {
         })
         return { ok: sent.hash }
       }
+      case 'eth_getBalance':
+        // the wallet's own 0G, through the wallet: stale too right after the deposit
+        if (walletStaleLeft > 0 && params?.[0]?.toLowerCase() === wallet.address.toLowerCase()) {
+          walletStaleLeft--
+          walletStaleServed++
+          return { ok: walletStaleValue }
+        }
+        return { ok: await provider.send(method, params ?? []) }
       default:
         return { ok: await provider.send(method, params ?? []) }
     }
@@ -108,6 +123,9 @@ await context.addInitScript(() => {
 
 // ── the vault's balance reads, as the page makes them ──
 const BALANCE_SELECTOR = ethers.id('getUserBalance(address)').slice(0, 10)
+let walletStaleLeft = 0
+let walletStaleValue = null
+let walletStaleServed = 0
 let armStale = false
 let staleLeft = 0
 let staleValue = null
@@ -145,6 +163,37 @@ await context.route(
   }
 )
 
+/** Until the header shows the wallet's 0G on chain (4 decimals), or the timeout; returns both. */
+async function headerMatchesChain(timeout = 60_000) {
+  const end = Date.now() + timeout
+  for (;;) {
+    const chain = Number(Number(ethers.formatEther(await provider.getBalance(wallet.address))).toFixed(4))
+    const shown = await walletShown()
+    if (Math.abs(shown - chain) < 0.00015 || Date.now() > end) return { shown, chain }
+    await page.waitForTimeout(2000)
+  }
+}
+
+/** The wallet's 0G in the header. */
+const walletShown = async () => Number(((await page.locator('header .balance').textContent()) ?? '').replace(/^[^0-9]*/, '').replace(/\s*0G\s*$/, ''))
+// ── the relayer, as it answers right after the first deposit when its view of
+// the chain is still from before it (seen on staging): the first saves refused ──
+let refuseUploads = 0
+let refused = 0
+await context.route(
+  (url) => url.href === V2_TESTNET.relayer + '/v1/uploads',
+  async (route) => {
+    if (route.request().method() !== 'POST' || refuseUploads <= 0) return route.continue()
+    refuseUploads--
+    refused++
+    return route.fulfill({
+      status: 402,
+      headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 'PAYER_SHORTFALL', message: "insufficient balance: have 0 wei, need 5588352000 wei to cover this file's 616 bytes" }),
+    })
+  }
+)
+
 const status = () => page.locator('.sec-row[data-row="storage"] .sec-status')
 const amount = async () => Number(((await status().textContent()) ?? '').replace(/\s*0G\s*$/, '').replace(/[^0-9.]/g, ''))
 /** The storage row's layout: the amount on one line, every cell inside the sidebar. */
@@ -175,9 +224,17 @@ try {
   await page.evaluate(() => localStorage.setItem('0gdrive:smart-search', 'off'))
   await page.reload()
   await connectExtension(page)
-  // setup: 3 signatures and the storage deposit (one transaction)
+  // setup: 3 signatures and the storage deposit (one transaction); the relayer
+  // refuses the first 2 saves as one that hasn't seen the deposit yet
+  refuseUploads = 2
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  const setupLog = await page.locator('.activity, .log').allTextContents().catch(() => [])
+  check(
+    'setup finishes though the relayer first refuses the save (“have 0 wei”) twice',
+    refused === 2 && !setupLog.join(' ').includes('Drive setup failed'),
+    `${refused} refusals served`
+  )
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   await page.waitForFunction(() => /[0-9]/.test(document.querySelector('.sec-row[data-row="storage"] .sec-status')?.textContent ?? ''), null, { timeout: 60_000 })
 
@@ -194,7 +251,10 @@ try {
 
   // a deposit while the RPC lags: the balance still updates, with no reload
   page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? '0.05' : undefined))
+  const setupShown = await headerMatchesChain()
+  check('after setup the header shows the wallet’s 0G after the setup deposit', Math.abs(setupShown.shown - setupShown.chain) < 0.00015 && setupShown.shown < 0.9, JSON.stringify(setupShown))
   const before = await amount()
+  const walletBefore = await walletShown()
   armStale = true
   await page.locator('.sec-row[data-row="storage"] button').click()
   await page.locator('.sec-row[data-row="storage"] button', { hasText: 'Updating…' }).waitFor({ timeout: 3 * 60_000 })
@@ -210,6 +270,36 @@ try {
   )
   await page.locator('.sec-row[data-row="storage"] button', { hasText: /^Deposit$/ }).waitFor({ timeout: 30_000 })
   check('the button is back to “Deposit”', true)
+  const afterDeposit = await headerMatchesChain()
+  const walletAfter = afterDeposit.shown
+  check(
+    'the wallet balance in the header shows the deposit too (after stale reads), without a reload',
+    walletAfter < walletBefore - 0.049 && Math.abs(walletAfter - afterDeposit.chain) < 0.00015 && walletStaleServed >= 1,
+    `${walletBefore} → ${walletAfter} 0G (chain ${afterDeposit.chain}), ${walletStaleServed} stale reads served`
+  )
+  walletStaleLeft = 0
+
+  // 0G arriving from elsewhere (e.g. the faucet in another tab): shown on coming back to the tab
+  await (await funder.sendTransaction({ to: wallet.address, value: ethers.parseEther('0.02') })).wait()
+  const sentAt = Date.now()
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  const received = await headerMatchesChain(20_000)
+  check(
+    'back on the tab: the header shows 0G sent from elsewhere',
+    received.shown > walletAfter + 0.019 && Math.abs(received.shown - received.chain) < 0.00015,
+    `${walletAfter} → ${received.shown} 0G (chain ${received.chain}) in ${Math.round((Date.now() - sentAt) / 1000)} s`
+  )
+
+  // spending outside the drive: shown by the periodic read (every 30 s), no interaction
+  const beforeSpend = await walletShown()
+  const spentAt = Date.now()
+  await (await wallet.sendTransaction({ to: funder.address, value: ethers.parseEther('0.03') })).wait()
+  const spent = await headerMatchesChain(75_000)
+  check(
+    'a spend outside the app shows in the header by itself',
+    spent.shown < beforeSpend - 0.029 && Math.abs(spent.shown - spent.chain) < 0.00015,
+    `${beforeSpend} → ${spent.shown} 0G (chain ${spent.chain}) after ${Math.round((Date.now() - spentAt) / 1000)} s`
+  )
 
   // a wide balance on one line: desktop sidebar, then a phone's drawer
   fakeBalance = '0x' + (12345n * 10n ** 15n).toString(16).padStart(64, '0')

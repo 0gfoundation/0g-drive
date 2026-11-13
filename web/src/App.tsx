@@ -139,6 +139,8 @@ function fmtDate(ts: number): string {
 /** A storage balance (wei) for display: 4 significant digits. */
 /** How long a deposit may take to show in the balance before we stop reading it. */
 const DEPOSIT_SHOW_MS = 60_000
+/** How often the wallet and storage balances are read again while the tab is shown. */
+const BALANCE_POLL_MS = 30_000
 
 function fmtBalance(wei: bigint): string {
   const n = Number(wei) / 1e18
@@ -727,6 +729,25 @@ export default function App() {
   }, [])
 
   /**
+   * The wallet's 0G in the header, read again. With `before`, read until it
+   * differs (after a transaction: the RPC may still answer from before it),
+   * for up to DEPOSIT_SHOW_MS.
+   */
+  const refreshWalletBalance = useCallback(async (signer: WalletState['signer'], before?: string) => {
+    const deadline = Date.now() + DEPOSIT_SHOW_MS
+    const { formatEther } = await import('ethers')
+    for (;;) {
+      const now = await signer.provider
+        .getBalance(await signer.getAddress())
+        .then(formatEther)
+        .catch(() => null)
+      if (now !== null) setWallet((w) => (w && w.signer === signer ? { ...w, balance: now } : w))
+      if ((now !== null && (before === undefined || now !== before)) || Date.now() > deadline) return
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+  }, [])
+
+  /**
    * After a deposit: read the balance until it shows the deposit. The public
    * RPC is load-balanced, and a backend still behind the deposit's block
    * answers with the old balance.
@@ -879,6 +900,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet?.address, masterKeyHex, card])
 
+  // Both balances read again every BALANCE_POLL_MS while this tab is shown
+  // (the wallet may spend outside the drive; rent lowers the storage
+  // balance), and on coming back to it (e.g. from the faucet).
+  const walletSigner = wallet?.signer
+  useEffect(() => {
+    const signer = walletSigner
+    if (!signer || readOnly) return
+    const read = () => {
+      if (document.visibilityState !== 'visible') return
+      void refreshWalletBalance(signer)
+      if (masterKeyHex) refreshBalance(hexToBytes(masterKeyHex))
+    }
+    const timer = setInterval(read, BALANCE_POLL_MS)
+    document.addEventListener('visibilitychange', read)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', read)
+    }
+  }, [walletSigner, readOnly, masterKeyHex, refreshWalletBalance, refreshBalance])
+
   useEffect(() => {
     const offChain = onChainChanged(() => window.location.reload())
     // another account in the wallet: start over in it (a fresh page is the
@@ -914,6 +955,7 @@ export default function App() {
       setMasterKeyHex(keyHex)
       adoptCard(c)
       log(`Drive created: recovery, share key and a ${FIRST_DEPOSIT} 0G storage deposit (3 signatures, 1 transaction).`)
+      void refreshWalletBalance(wallet.signer, wallet.balance)
     } catch (err) {
       if (err instanceof UnstableSignatureError) setUnstableFor(wallet.address)
       setRestoreError((err as Error).message)
@@ -921,7 +963,7 @@ export default function App() {
     } finally {
       setRestoreBusy(null)
     }
-  }, [wallet, log, adoptCard])
+  }, [wallet, log, adoptCard, refreshWalletBalance])
 
   /**
    * For a wallet whose signatures change: the drive with its key locked to a
@@ -951,13 +993,14 @@ export default function App() {
       setSetupPw2('')
       setKeyFileNudge(true)
       log(`Drive created with a recovery password and a ${FIRST_DEPOSIT} 0G storage deposit (1 signature, 1 transaction).`)
+      void refreshWalletBalance(wallet.signer, wallet.balance)
     } catch (err) {
       setRestoreError((err as Error).message)
       log(`Drive setup failed: ${(err as Error).message}`)
     } finally {
       setRestoreBusy(null)
     }
-  }, [wallet, setupPw1, setupPw2, log, adoptCard])
+  }, [wallet, setupPw1, setupPw2, log, adoptCard, refreshWalletBalance])
 
   const restoreBySignature = useCallback(async () => {
     if (!wallet || !card) return
@@ -1050,7 +1093,7 @@ export default function App() {
         await deposit(wallet.signer, masterKey, wei)
         log(`Deposited ${amount} 0G to your storage balance.`)
         setDepositBusy('Updating…')
-        await awaitDeposit(masterKey, before)
+        await Promise.all([awaitDeposit(masterKey, before), refreshWalletBalance(wallet.signer, wallet.balance)])
         return true
       } catch (err) {
         log(err instanceof DepositError ? (err as Error).message : `Deposit failed: ${(err as Error).message}`)
@@ -1059,7 +1102,7 @@ export default function App() {
         setDepositBusy(null)
       }
     },
-    [wallet, masterKeyHex, log, awaitDeposit]
+    [wallet, masterKeyHex, log, awaitDeposit, refreshWalletBalance]
   )
 
   /** Open someone's drive read-only from its address + recovery password (lost wallet). */
