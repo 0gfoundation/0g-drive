@@ -76,7 +76,7 @@ Every file gets its own random key; the file is encrypted with it before upload,
 - Moving a file to the trash keeps it (and its rent); only **Delete forever** removes it from 0G. Anyone who downloaded the encrypted file before, or holds a link with its key, may still have a copy.
 - **A change is all or nothing.** Each change (an upload's listing, a rename, a move…) becomes visible in one step, when its new drive *root* is saved; until then nothing has changed. If the page closes before that, the change simply didn't happen: do it again. Two devices changing the drive at the same moment are merged.
 - **⟳ Sync** reloads the drive from 0G Storage — useful after using the drive on another device.
-- **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails. Other files show an icon for their type (PDF, document, spreadsheet, presentation, text, code, archive, audio, video, ebook, design, font, app); in the grid it also shows the extension, e.g. “PPTX”.
+- **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails, and PDFs their first page (with a “PDF” badge in the grid). Other files show an icon for their type (PDF, document, spreadsheet, presentation, text, code, archive, audio, video, ebook, design, font, app); in the grid it also shows the extension, e.g. “PPTX”.
 
 ## Preview and download
 

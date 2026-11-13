@@ -2368,3 +2368,15 @@ tbody tr:hover {
   justify-content: center;
   text-decoration: none;
 }
+/* PDF thumbnails: the page from its top, and a badge on grid tiles */
+.thumb-page {
+  object-position: top;
+  background: #fff;
+}
+.tile-badge-pdf {
+  width: auto;
+  padding: 0 7px;
+  background: #ef4444;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
