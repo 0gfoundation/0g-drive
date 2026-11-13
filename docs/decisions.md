@@ -325,3 +325,12 @@ Reported by the user after a deposit: the balance didn't update, "0G" wrapped on
 - **Setup right after the first deposit**: the relayer checks the balance through its own view of the chain, which can still be from before the deposit; the first save was then refused ("insufficient balance: have 0 wei", 402) and setup failed (seen twice in one staging run, `walletconnect` and `browser-e2e`). Now a shortfall on that first save is tried again every 3 s for up to 90 s ("Waiting for 0G Storage to see your deposit…"), in both setups.
 
 Verified: `npm run test:storage-balance` (fresh funded drive, 11 checks: setup finishes while the test refuses the first 2 saves as that relayer would; the section order; the header after setup; a deposit while the test answers the first 3 balance reads, storage and wallet, with the old balance, as a lagging backend would: "Updating…", then both new balances without a reload; 0G sent to the wallet shows on coming back to the tab; a spend outside the app shows by itself within 30 s; a forced 12.345 0G balance on one line at desktop and 390 px).
+
+### D23 — Foldable sidebar sections (user decision, 2026-11-13)
+Storage, Security and On-device AI fold from their headings (`SideSection` in `web/src/App.tsx`); Folders and Trash don't (navigation, not settings).
+- **The heading is the button** (`aria-expanded`, `aria-controls`), with a chevron; all open at first; the folded set is kept in this browser (`localStorage` `0gdrive:folded-sections`).
+- **Folded, the heading keeps a summary**, so nothing needing attention is hidden: the storage balance (greyed when low), what Security lacks in its rows' words ("Password not set", "Recovery off", "Share key not published") or "All set", and On-device AI's state (On / Off / Loading… / Names only).
+- **The body stays in the page, hidden**, so the assistant's targets still resolve; its targets name their section, and pointing at one unfolds that section first.
+
+Verified: `npm run test:foldable-sections` (fresh funded drive, 7 checks: all open at first with button headings; folded bodies hidden with the three summaries; still folded after a reload; a stand-in page on the assistant's address sends the assistant's "show" for the Password row: Security alone unfolds and the row pulses; Enter unfolds; 390 px drawer).
+

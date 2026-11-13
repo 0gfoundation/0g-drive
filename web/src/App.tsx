@@ -226,6 +226,52 @@ function SecRow({
   )
 }
 
+const FOLDED_KEY = '0gdrive:folded-sections'
+
+/** The sidebar sections folded on this device (all open at first). */
+function loadFolded(): Set<string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(FOLDED_KEY) ?? '[]')
+    return new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/**
+ * A sidebar section whose heading folds it. Folded, the heading carries a
+ * one-line summary (the balance, what's missing), so nothing that needs
+ * attention is hidden; the body stays in the page, hidden.
+ */
+function SideSection({
+  id,
+  title,
+  summary,
+  folded,
+  onToggle,
+  children,
+}: {
+  id: string
+  title: string
+  summary?: React.ReactNode
+  folded: boolean
+  onToggle: (id: string) => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className={`sidebar-sec${folded ? ' folded' : ''}`} data-guide={id}>
+      <button className="sec-heading sec-fold" aria-expanded={!folded} aria-controls={`sec-body-${id}`} onClick={() => onToggle(id)}>
+        <svg className="sec-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+        <span className="sec-title">{title}</span>
+        {folded && summary ? <span className="sec-summary">{summary}</span> : null}
+      </button>
+      <div className="sec-body" id={`sec-body-${id}`} hidden={folded}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 const SecOff = ({ children }: { children: React.ReactNode }) => <span className="sec-off">{children}</span>
 
 function SecOk({ children }: { children: React.ReactNode }) {
@@ -632,6 +678,22 @@ export default function App() {
   /** the storage account's balance (wei), once read */
   const [balance, setBalance] = useState<bigint | null>(null)
   const [depositBusy, setDepositBusy] = useState<string | null>(null)
+  const [folded, setFolded] = useState<Set<string>>(loadFolded)
+  const setSectionFolded = useCallback((id: string, fold: boolean) => {
+    setFolded((prev) => {
+      if (prev.has(id) === fold) return prev
+      const next = new Set(prev)
+      if (fold) next.add(id)
+      else next.delete(id)
+      try {
+        localStorage.setItem(FOLDED_KEY, JSON.stringify([...next]))
+      } catch {
+        // storage blocked: folding lasts this visit
+      }
+      return next
+    })
+  }, [])
+  const toggleSection = useCallback((id: string) => setSectionFolded(id, !folded.has(id)), [folded, setSectionFolded])
   const [shareFor, setShareFor] = useState<FileMeta | null>(null)
   const [renameFor, setRenameFor] = useState<RenameTarget | null>(null)
   /** an upload whose names are taken, waiting for Replace / Keep both / Skip / Cancel */
@@ -1837,9 +1899,16 @@ export default function App() {
     // the storage balance pays for the drive; the wallet only for deposits
     lowBalance: !!wallet && !readOnly && balance !== null && balance < 10n ** 16n,
   })
+  // what the Security section still lacks, for its folded heading (the rows' own words)
+  const securityGaps: string[] = []
+  if (card && !card.wrappedUnderSignature && !card.wrappedUnderPassword) securityGaps.push('Recovery off')
+  if (hasPassword === false) securityGaps.push('Password not set')
+  if (card?.wrappedUnderSignature && !card.shareKey) securityGaps.push('Share key not published')
+
   const showForAssistant = (target: string) =>
-    highlight(target, (sidebar) => {
+    highlight(target, (sidebar, section) => {
       if (target === 'lost-wallet') setLostOpen(true)
+      if (section) setSectionFolded(section, false)
       if (isNarrow()) {
         // on a phone the panel covers the page: get out of the way
         setAssistOpen(false)
@@ -2311,8 +2380,13 @@ export default function App() {
                 </button>
               </nav>
               {wallet && masterKeyHex && !readOnly && (
-                <div className="sidebar-sec" data-guide="storage">
-                  <div className="sec-heading">Storage</div>
+                <SideSection
+                  id="storage"
+                  title="Storage"
+                  summary={balance === null ? null : <span className={balance < 10n ** 16n ? 'sec-off' : undefined}>{fmtBalance(balance)} 0G</span>}
+                  folded={folded.has('storage')}
+                  onToggle={toggleSection}
+                >
                   <div className="sec-grid">
                     <SecRow
                       id="storage"
@@ -2339,11 +2413,16 @@ export default function App() {
                       }
                     />
                   </div>
-                </div>
+                </SideSection>
               )}
               {wallet && masterKeyHex && (
-                <div className="sidebar-sec" data-guide="security">
-                  <div className="sec-heading">Security</div>
+                <SideSection
+                  id="security"
+                  title="Security"
+                  summary={readOnly ? null : securityGaps.length ? <span className="sec-off">{securityGaps.join(' · ')}</span> : <SecOk>All set</SecOk>}
+                  folded={folded.has('security')}
+                  onToggle={toggleSection}
+                >
                   <div className="sec-grid">
                     {!readOnly && (
                       <>
@@ -2395,10 +2474,25 @@ export default function App() {
                     />
                   </div>
                   {restoreError && !readOnly && <p className="error-text sec-error">⚠ {restoreError}</p>}
-                </div>
+                </SideSection>
               )}
-              <div className="sidebar-sec" data-guide="on-device-ai">
-                <div className="sec-heading">On-device AI</div>
+              <SideSection
+                id="on-device-ai"
+                title="On-device AI"
+                summary={
+                  !smart.enabled ? (
+                    <span className="sec-off">Off</span>
+                  ) : smart.model.loading ? (
+                    <span className="sec-off">Loading…</span>
+                  ) : smart.model.error ? (
+                    <span className="sec-off">Names only</span>
+                  ) : (
+                    <SecOk>On</SecOk>
+                  )
+                }
+                folded={folded.has('on-device-ai')}
+                onToggle={toggleSection}
+              >
                 <label className="sec-item sec-toggle">
                   <input
                     type="checkbox"
@@ -2447,7 +2541,7 @@ export default function App() {
                     )}
                   </div>
                 )}
-              </div>
+              </SideSection>
             </>
           ) : (
             <div className="sidebar-empty">

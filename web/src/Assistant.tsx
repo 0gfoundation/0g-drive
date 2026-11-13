@@ -28,20 +28,21 @@ export const ASSISTANT_URL =
 const assistantOrigin = new URL(ASSISTANT_URL).origin
 
 /** controls the assistant may point at, and how to find them on the page */
-const TARGETS: Record<string, { selector: string; sidebar?: boolean }> = {
+/** `section`: the foldable sidebar section holding it, unfolded first */
+const TARGETS: Record<string, { selector: string; sidebar?: boolean; section?: string }> = {
   connect: { selector: '[data-guide="connect"]' },
   'lost-wallet': { selector: '.lost-wallet' },
-  storage: { selector: '[data-guide="storage"]', sidebar: true },
-  security: { selector: '[data-guide="security"]', sidebar: true },
-  recovery: { selector: '.sec-row[data-row="recovery"]', sidebar: true },
-  password: { selector: '.sec-row[data-row="password"]', sidebar: true },
-  'share-key': { selector: '.sec-row[data-row="share-key"]', sidebar: true },
-  'key-file': { selector: '.sec-row[data-row="key-file"]', sidebar: true },
+  storage: { selector: '[data-guide="storage"]', sidebar: true, section: 'storage' },
+  security: { selector: '[data-guide="security"]', sidebar: true, section: 'security' },
+  recovery: { selector: '.sec-row[data-row="recovery"]', sidebar: true, section: 'security' },
+  password: { selector: '.sec-row[data-row="password"]', sidebar: true, section: 'security' },
+  'share-key': { selector: '.sec-row[data-row="share-key"]', sidebar: true, section: 'security' },
+  'key-file': { selector: '.sec-row[data-row="key-file"]', sidebar: true, section: 'security' },
   upload: { selector: '.dropzone' },
   'new-folder': { selector: '[data-guide="new-folder"]' },
   trash: { selector: '[data-guide="trash"]', sidebar: true },
   search: { selector: '.searchbox' },
-  'on-device-ai': { selector: '[data-guide="on-device-ai"]', sidebar: true },
+  'on-device-ai': { selector: '[data-guide="on-device-ai"]', sidebar: true, section: 'on-device-ai' },
   share: { selector: 'button[aria-label="Share"]' },
   sync: { selector: '[data-guide="sync"]' },
   layout: { selector: '.layout-toggle' },
@@ -51,13 +52,13 @@ const NARROW = '(max-width: 760px)'
 
 /**
  * Scroll to a control and make it pulse. `prepare` opens whatever must be
- * open first (the phone sidebar, the lost-wallet form) and returns whether
- * this panel must get out of the way.
+ * open first (the phone sidebar, a folded sidebar section, the lost-wallet
+ * form) and gets this panel out of the way where it covers the page.
  */
-export async function highlight(target: string, prepare: (sidebar: boolean) => void): Promise<ShowResult> {
+export async function highlight(target: string, prepare: (sidebar: boolean, section?: string) => void): Promise<ShowResult> {
   const t = TARGETS[target]
   if (!t) return { shown: false, reason: 'unknown control' }
-  prepare(!!t.sidebar)
+  prepare(!!t.sidebar, t.section)
   await new Promise((r) => setTimeout(r, 120))
   const el = document.querySelector<HTMLElement>(t.selector)
   if (!el) return { shown: false, reason: 'that control is not on this screen right now' }

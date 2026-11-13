@@ -93,6 +93,10 @@ Creating a link stores nothing and needs no approval. A sent link can't be withd
 
 The recipient must have a 0GDrive: their share key is published with their drive when they create it. Sharing to an address with no drive is refused ("this address has no 0GDrive yet"), and so is an address whose drive was set up with a recovery password only ("send a share link instead"). A secret link points at the file's data on 0G Storage, so **Delete forever** makes it stop working.
 
+## Sidebar sections
+
+The sidebar's **Storage**, **Security** and **On-device AI** sections fold: click a heading (or press Enter on it) to fold or unfold it. A folded heading still shows the gist — your balance, what Security lacks (e.g. “Password not set”, or “All set”), whether on-device AI is on — and this browser remembers which you folded. When the assistant points at something inside a folded section, the section opens first.
+
 ## Storage balance
 
 The **Storage** section at the top of the sidebar shows your storage balance: the 0G that pays for the space your files take (greyed out when it's nearly empty). **Deposit** tops it up from your wallet (1 transaction); the balance updates by itself once the deposit is on chain (the button shows **Updating…** until then, usually a few seconds). The wallet balance at the top of the page updates too, and both are read again every 30 seconds while the page is open, so spending from your wallet elsewhere shows up by itself.
