@@ -164,7 +164,7 @@ try {
       (await page.getByRole('button', { name: 'Change recovery password' }).count()) === 1,
     JSON.stringify({ sign: prompts.sign - before.sign, tx: prompts.tx - before.tx }))
 
-  const secLayout = () => page.$$eval('.sec-row', (els) => els.map((e) => {
+  const secLayout = () => page.$$eval('[data-guide="security"] .sec-row', (els) => els.map((e) => {
     const r = (sel) => {
       const el = e.querySelector(sel)
       return el && el.textContent ? el.getBoundingClientRect() : null

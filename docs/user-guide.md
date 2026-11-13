@@ -93,13 +93,16 @@ Creating a link stores nothing and needs no approval. A sent link can't be withd
 
 The recipient must have a 0GDrive: their share key is published with their drive when they create it. Sharing to an address with no drive is refused ("this address has no 0GDrive yet"), and so is an address whose drive was set up with a recovery password only ("send a share link instead"). A secret link points at the file's data on 0G Storage, so **Delete forever** makes it stop working.
 
-## Security: storage, recovery, password, share key, key file
+## Storage balance
+
+The **Storage** section at the top of the sidebar shows your storage balance: the 0G that pays for the space your files take (greyed out when it's nearly empty). **Deposit** tops it up from your wallet (1 transaction); the balance updates by itself once the deposit is on chain (the button shows **Updating…** until then, usually a few seconds).
+
+## Security: recovery, password, share key, key file
 
 The **Security** section of the sidebar shows:
 
 | Row | Meaning | Action |
 |---|---|---|
-| **Storage** | Your storage balance (what pays for your files' space). | **Deposit** (1 transaction) |
 | **Recovery** | Your drive key, locked to your wallet's recovery signature and kept with your drive on 0G Storage. On a new device: connect wallet → **Restore my drive** → sign once. **Password only** for a drive set up with a recovery password instead. | — (on from setup) |
 | **Password** | A second lock on the drive key, for when you lose the wallet. | **Set** / **Change** (no wallet prompt) |
 | **Share key** | The public key others use for "Encrypted to recipient" links to you. **Not published** for a password-only drive. | — (published at setup) |

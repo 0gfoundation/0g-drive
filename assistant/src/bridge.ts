@@ -22,6 +22,7 @@ export interface DriveStatus {
 export const SHOW_TARGETS = [
   'connect',
   'lost-wallet',
+  'storage',
   'security',
   'recovery',
   'password',
