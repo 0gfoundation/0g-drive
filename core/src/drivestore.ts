@@ -115,6 +115,10 @@ const emptyFolder = (key: string): FolderManifest => ({ path: key, files: [], up
  * The public API takes folder paths; the index's tree maps each path to
  * the folder's permanent id, which is what its manifest is keyed by.
  */
+const DAY_MS = 24 * 60 * 60 * 1000
+/** Days a file stays in trash before it's deleted forever. */
+export const TRASH_DAYS = 30
+
 export class DriveStore {
   constructor(
     /** where the drive's data lives (V2Backend), encrypted with the drive key */
@@ -501,7 +505,7 @@ export class DriveStore {
         dest = ensured.id
         treeChanged ||= ensured.created
       }
-      const { originalPath: _op, originalFolder: _of, ...clean } = rec
+      const { originalPath: _op, originalFolder: _of, trashedAt: _ta, ...clean } = rec
       byFolder.set(dest, [...(byFolder.get(dest) ?? []), clean])
     }
 
@@ -668,7 +672,8 @@ export class DriveStore {
   private async trashWith(records: FileMeta[]): Promise<FolderManifest> {
     const trash = (await this.loadFolder(TRASH_PATH)) ?? emptyFolder(TRASH_PATH)
     const adding = new Set(records.map((r) => r.id))
-    trash.files = [...trash.files.filter((f) => !adding.has(f.id)), ...records]
+    const now = Date.now()
+    trash.files = [...trash.files.filter((f) => !adding.has(f.id)), ...records.map((r) => ({ ...r, trashedAt: now }))]
     trash.updatedAt = Date.now()
     trash.version += 1
     return trash
@@ -686,6 +691,46 @@ export class DriveStore {
     if (first.length + then.length === 0) return
     const extras = await this.searchSaveItems([...first, ...then]).catch(() => [])
     await this.backend.writeManifests(first, then, extras, partial)
+  }
+
+  /**
+   * Trash records older than `maxAgeMs` deleted forever (one change, then
+   * their files). Records trashed before trash dates were kept get today's
+   * date, saved in the same change. The records it deleted.
+   */
+  async expireTrash(maxAgeMs: number = TRASH_DAYS * DAY_MS): Promise<FileMeta[]> {
+    await this.refresh()
+    const trash = await this.loadFolder(TRASH_PATH)
+    if (trash === null) return []
+    const now = Date.now()
+    const undated = trash.files.filter((f) => typeof f.trashedAt !== 'number')
+    const expired = trash.files.filter((f) => typeof f.trashedAt === 'number' && now - f.trashedAt >= maxAgeMs)
+    if (undated.length === 0 && expired.length === 0) return []
+    const gone = new Set(expired.map((f) => f.id))
+    trash.files = trash.files.filter((f) => !gone.has(f.id)).map((f) => (typeof f.trashedAt === 'number' ? f : { ...f, trashedAt: now }))
+    trash.updatedAt = now
+    trash.version += 1
+    await this.writeManifests([], [this.manifestItem(trash, folderTag(TRASH_PATH))], '')
+    await this.backend.discard(expired)
+    return expired
+  }
+
+  /**
+   * Stop paying for stored files nothing references any more (a deletion
+   * that failed, an upload whose change never stored): see
+   * DriveBackend.sweep. Every listing is read first; if one can't be,
+   * nothing is deleted (throws). How many files it deleted.
+   */
+  async sweepLeftovers(minAgeMs: number = DAY_MS): Promise<number> {
+    await this.refresh()
+    const keep = new Set<string>()
+    for (const key of this.backend.listingKeys()) {
+      const text = await this.backend.readManifest(key)
+      if (text === null) throw new Error(`The listing ${key} couldn't be read: nothing was deleted.`)
+      const value = JSON.parse(text) as { files?: FileMeta[] }
+      for (const f of value.files ?? []) for (const h of f.rootHashes ?? []) keep.add(h.replace(/^0x/i, '').toLowerCase())
+    }
+    return this.backend.sweep(keep, minAgeMs)
   }
 
   /** Permanently drop a record from trash, and its file where the backend can delete it. */

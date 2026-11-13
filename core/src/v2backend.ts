@@ -449,9 +449,36 @@ export class V2Backend implements DriveBackend {
     return downloadV2(this.relayer, meta.rootHashes, opts)
   }
 
-  /** Delete the files' bytes: rent stops. In the background; a failure only costs rent. */
+  /** Delete the files' bytes: rent stops. In the background; a failure only costs rent (until sweep). */
   async discard(files: FileMeta[]): Promise<void> {
     void this.deleteAll(files.flatMap((f) => f.rootHashes.map(strip0x)))
+  }
+
+  listingKeys(): string[] {
+    return Object.keys(this.current?.root.listings ?? {})
+  }
+
+  async sweep(keep: Set<string>, minAgeMs: number): Promise<number> {
+    const current = this.current
+    if (!current) return 0
+    // the root, its listings, and what it retired (deleted with the next change)
+    const needed = new Set([current.hash, ...Object.values(current.root.listings).map((l) => l.h), ...current.root.retired].map(strip0x))
+    const cutoff = Date.now() - minAgeMs
+    const leftovers: string[] = []
+    let before: string | undefined
+    for (;;) {
+      const page = await this.relayer.list(this.account.address, { limit: 100, before })
+      for (const f of page.files) {
+        const h = strip0x(f.dataHash)
+        // availableAt: seconds on the relayer (milliseconds accepted too); unknown means keep
+        const at = !f.availableAt ? Infinity : f.availableAt < 1e12 ? f.availableAt * 1000 : f.availableAt
+        if (!needed.has(h) && !keep.has(h) && at < cutoff) leftovers.push(h)
+      }
+      if (!page.next || page.files.length === 0) break
+      before = page.next
+    }
+    await this.deleteAll(leftovers)
+    return leftovers.length
   }
 }
 

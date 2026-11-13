@@ -342,3 +342,11 @@ Since V2 almost nothing asks the wallet (D19), so "no wallet prompt" notes had b
 
 Verified: `npm run test:storage-balance` (11 checks; two replace the earlier "Updating…" checks: the deposit box's wording, and the button's labels in order while the test wallet takes 3 s to approve).
 
+### D25 — Real deletion, all of it: empty trash, trash after 30 days, leftovers swept (user decision, 2026-11-13)
+0G Storage V2 deletes files (rent stops), and **Delete forever** already did (D18/D19); old roots and listings were deleted one change later. Three gaps closed:
+- **Empty trash** (Trash view) and **Delete forever** on a selection: one change, then the files' bytes deleted. Each asks first and says links stop working.
+- **Trash expires after 30 days** (`TRASH_DAYS`): trashed records carry `trashedAt`; rows show "N days left". On the owner's device, once per drive opened, at a quiet moment (no busy action, no upload), records past it are deleted forever (`DriveStore.expireTrash`, one change, no wallet prompt). Records trashed before dates get today's date (so nothing old vanishes the day this ships). Never on a drive opened read-only with its password.
+- **Leftovers swept**: a deletion runs in the background and a failure was only logged, so the file kept paying rent with nothing pointing at it (as did a file whose change never stored). Once a day per device (`0gdrive:swept:<address>`), `DriveStore.sweepLeftovers` reads **every** listing the current root names (if any can't be read, it deletes nothing), collects every record's data hash, and `V2Backend.sweep` deletes the account's other files except the root, its listings, what it retired, and anything stored in the last 24 h (another device's upload whose change is still to come).
+
+Verified: `npm run test:deletion` (node, fresh account: delete forever and empty trash delete bytes; a young file doesn't expire, past its days it's deleted forever; an undated record gets today's date and stays; a leftover is kept within the grace, kept when a listing can't be read, then deleted; nothing else deleted; the drive loads intact) and `npm run test:trash` (browser: the 30-day note and days left, Delete forever on a selection and Empty trash warn and delete the bytes from 0G, the sweep runs after opening, 390 px).
+
