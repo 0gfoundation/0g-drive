@@ -12,6 +12,7 @@ import {
   wcState,
 } from './walletConnect'
 import { isTouchDevice } from './OpenInWallet'
+import { closeOnBackdrop } from './backdrop'
 
 /** The pairing link as a QR code (SVG path, dark modules on white). */
 function QrCode({ text }: { text: string }) {
@@ -60,7 +61,7 @@ export function WalletConnectDialog() {
   if (s.uri) {
     const copy = () => void navigator.clipboard?.writeText(s.uri!).then(() => setCopied(true), () => undefined)
     return (
-      <div className="modal-backdrop" onClick={cancelWalletConnect}>
+      <div className="modal-backdrop" {...closeOnBackdrop(cancelWalletConnect)}>
         <div className="modal wc-dialog" role="dialog" aria-label="Connect with WalletConnect" onClick={(e) => e.stopPropagation()}>
           {touch ? (
             <>

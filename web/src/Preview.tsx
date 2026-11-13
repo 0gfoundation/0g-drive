@@ -5,6 +5,7 @@ import { PdfPages, drawsPdfPages } from './PdfPages'
 import { HtmlPreview } from './HtmlPreview'
 import { MarkdownPreview } from './MarkdownPreview'
 import { loadPdfjs } from './pdfjs'
+import { closeOnBackdrop } from './backdrop'
 
 // ─── Thumbnails ───────────────────────────────────────────────────────
 //
@@ -527,7 +528,7 @@ export function PreviewModal({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" {...closeOnBackdrop(onClose)}>
       <div className="modal preview-modal" onClick={(e) => e.stopPropagation()}>
         <div className="preview-head">
           <div className="preview-title">

@@ -68,6 +68,7 @@ import {
   UnstableSignatureError,
   DepositError,
 } from './v2drive'
+import { closeOnBackdrop } from './backdrop'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
 import { FileIcon } from './fileIcons'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
@@ -2911,7 +2912,7 @@ export default function App() {
       )}
 
       {pwDialog && (
-        <div className="modal-backdrop" onClick={() => restoreBusy === null && setPwDialog(false)}>
+        <div className="modal-backdrop" {...closeOnBackdrop(() => restoreBusy === null && setPwDialog(false))}>
           <form
             className="modal"
             onClick={(e) => e.stopPropagation()}
@@ -2982,7 +2983,7 @@ export default function App() {
           const replaceOk = problems.every((p, j) => p === null || items[j].replaceable)
           const names = () => dupNames.map((n) => n.trim())
           return (
-            <div className="modal-backdrop" onClick={() => resolve({ kind: 'cancel' })}>
+            <div className="modal-backdrop" {...closeOnBackdrop(() => resolve({ kind: 'cancel' }))}>
               <form
                 className="modal dup-modal"
                 role="dialog"
@@ -3079,7 +3080,7 @@ export default function App() {
         }
         const extChanged = isFile && !problem && ext(name) !== ext(oldName)
         return (
-          <div className="modal-backdrop" onClick={() => busy === null && setRenameFor(null)}>
+          <div className="modal-backdrop" {...closeOnBackdrop(() => busy === null && setRenameFor(null))}>
             <form
               className="modal rename-modal"
               onClick={(e) => e.stopPropagation()}
@@ -3171,7 +3172,7 @@ export default function App() {
         }
         const options = ['', ...treeOrder(all)]
         return (
-          <div className="modal-backdrop" onClick={close}>
+          <div className="modal-backdrop" {...closeOnBackdrop(close)}>
             <form
               className="modal move-modal"
               onClick={(e) => e.stopPropagation()}
@@ -3252,7 +3253,7 @@ export default function App() {
       })()}
 
       {shareFor && (
-        <div className="modal-backdrop" onClick={() => setShareFor(null)}>
+        <div className="modal-backdrop" {...closeOnBackdrop(() => setShareFor(null))}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Share “{shareFor.name}”</h2>
             <div className="share-modes">
