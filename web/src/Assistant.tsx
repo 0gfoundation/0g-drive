@@ -31,6 +31,7 @@ const assistantOrigin = new URL(ASSISTANT_URL).origin
 const TARGETS: Record<string, { selector: string; sidebar?: boolean }> = {
   connect: { selector: '[data-guide="connect"]' },
   'lost-wallet': { selector: '.lost-wallet' },
+  storage: { selector: '[data-guide="storage"]', sidebar: true },
   security: { selector: '[data-guide="security"]', sidebar: true },
   recovery: { selector: '.sec-row[data-row="recovery"]', sidebar: true },
   password: { selector: '.sec-row[data-row="password"]', sidebar: true },

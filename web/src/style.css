@@ -604,6 +604,13 @@ a:hover {
 .sec-act {
   justify-self: end;
 }
+/* an amount never breaks ("0.700 / 0G") */
+.sec-status {
+  white-space: nowrap;
+}
+.sec-wide {
+  grid-column: 1 / span 2;
+}
 .sec-off {
   color: var(--muted);
 }

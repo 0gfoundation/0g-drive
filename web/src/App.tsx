@@ -137,6 +137,9 @@ function fmtDate(ts: number): string {
 }
 
 /** A storage balance (wei) for display: 4 significant digits. */
+/** How long a deposit may take to show in the balance before we stop reading it. */
+const DEPOSIT_SHOW_MS = 60_000
+
 function fmtBalance(wei: bigint): string {
   const n = Number(wei) / 1e18
   return n === 0 ? '0' : n >= 1 ? n.toFixed(3) : n.toPrecision(3)
@@ -204,15 +207,18 @@ function SecRow({
   action,
 }: {
   id: string
-  label: string
+  /** none: the section's heading names the row (its cells then span two columns) */
+  label?: string
   hint: string
   status?: React.ReactNode
   action?: React.ReactNode
 }) {
   return (
     <div className="sec-row" data-row={id}>
-      <span className="sec-label" title={hint}>{label}</span>
-      <span className="sec-status">{status}</span>
+      {label && <span className="sec-label" title={hint}>{label}</span>}
+      <span className={label ? 'sec-status' : 'sec-status sec-wide'} title={label ? undefined : hint}>
+        {status}
+      </span>
       <span className="sec-act">{action}</span>
     </div>
   )
@@ -720,6 +726,21 @@ export default function App() {
     balanceOf(masterKey).then(setBalance, (err) => console.warn('[drive] balance', err))
   }, [])
 
+  /**
+   * After a deposit: read the balance until it shows the deposit. The public
+   * RPC is load-balanced, and a backend still behind the deposit's block
+   * answers with the old balance.
+   */
+  const awaitDeposit = useCallback(async (masterKey: Uint8Array, before: bigint | null) => {
+    const deadline = Date.now() + DEPOSIT_SHOW_MS
+    for (;;) {
+      const now = await balanceOf(masterKey).catch((err) => (console.warn('[drive] balance', err), null))
+      if (now !== null) setBalance(now)
+      if ((now !== null && (before === null || now > before)) || Date.now() > deadline) return
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+  }, [])
+
   const initDrive = useCallback(
     async (signer: WalletState['signer'], masterKey: Uint8Array, address: string, driveCard: AccountCard | null) => {
       await openPendingSearch(address, masterKey)
@@ -1022,11 +1043,14 @@ export default function App() {
         log(`Not an amount: ${amount}`)
         return false
       }
-      setDepositBusy('Approve the deposit in your wallet…')
+      setDepositBusy('Depositing…')
       try {
-        await deposit(wallet.signer, hexToBytes(masterKeyHex), wei)
+        const masterKey = hexToBytes(masterKeyHex)
+        const before = await balanceOf(masterKey).catch(() => null)
+        await deposit(wallet.signer, masterKey, wei)
         log(`Deposited ${amount} 0G to your storage balance.`)
-        refreshBalance(hexToBytes(masterKeyHex))
+        setDepositBusy('Updating…')
+        await awaitDeposit(masterKey, before)
         return true
       } catch (err) {
         log(err instanceof DepositError ? (err as Error).message : `Deposit failed: ${(err as Error).message}`)
@@ -1035,7 +1059,7 @@ export default function App() {
         setDepositBusy(null)
       }
     },
-    [wallet, masterKeyHex, log, refreshBalance]
+    [wallet, masterKeyHex, log, awaitDeposit]
   )
 
   /** Open someone's drive read-only from its address + recovery password (lost wallet). */
@@ -2243,37 +2267,43 @@ export default function App() {
                   ) : null}
                 </button>
               </nav>
+              {wallet && masterKeyHex && !readOnly && (
+                <div className="sidebar-sec" data-guide="storage">
+                  <div className="sec-heading">Storage</div>
+                  <div className="sec-grid">
+                    <SecRow
+                      id="storage"
+                      hint="Your storage balance on 0G: it pays for the space your files take. Deposits come from your wallet."
+                      status={
+                        balance === null ? (
+                          <SecOff>Checking…</SecOff>
+                        ) : balance < 10n ** 16n ? (
+                          <SecOff>{fmtBalance(balance)} 0G</SecOff>
+                        ) : (
+                          <SecOk>{fmtBalance(balance)} 0G</SecOk>
+                        )
+                      }
+                      action={
+                        <button
+                          className="sec-action primary"
+                          onClick={() => void topUp()}
+                          disabled={depositBusy !== null}
+                          aria-label="Deposit to storage balance"
+                          title="1 transaction from your wallet"
+                        >
+                          {depositBusy ?? 'Deposit'}
+                        </button>
+                      }
+                    />
+                  </div>
+                </div>
+              )}
               {wallet && masterKeyHex && (
                 <div className="sidebar-sec" data-guide="security">
                   <div className="sec-heading">Security</div>
                   <div className="sec-grid">
                     {!readOnly && (
                       <>
-                        <SecRow
-                          id="storage"
-                          label="Storage"
-                          hint="Your storage balance on 0G: it pays for the space your files take. Deposits come from your wallet."
-                          status={
-                            balance === null ? (
-                              <SecOff>Checking…</SecOff>
-                            ) : balance < 10n ** 16n ? (
-                              <SecOff>{fmtBalance(balance)} 0G</SecOff>
-                            ) : (
-                              <SecOk>{fmtBalance(balance)} 0G</SecOk>
-                            )
-                          }
-                          action={
-                            <button
-                              className="sec-action primary"
-                              onClick={() => void topUp()}
-                              disabled={depositBusy !== null}
-                              aria-label="Deposit to storage balance"
-                              title="1 transaction from your wallet"
-                            >
-                              {depositBusy ? 'Depositing…' : 'Deposit'}
-                            </button>
-                          }
-                        />
                         <SecRow
                           id="recovery"
                           label="Recovery"

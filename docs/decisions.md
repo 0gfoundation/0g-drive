@@ -314,3 +314,11 @@ PDFs showed only their type icon. Now a PDF's thumbnail is its **first page**, d
 - **Safety**: the bytes must start with `%PDF-`; pdf.js's display API runs no PDF scripts; only canvas pixels are kept. A broken or password-protected PDF keeps its icon; that failure isn't remembered, so it's tried again (one download) each session, as for images.
 
 Verified: `npm run test:pdf-thumbs` (fresh funded drive, 12 checks: a PDF uploaded while pdf.js can't load gets none and still uploads; a normal upload stores its first page, portrait, red band on top, white page; the older PDF gets one drawn later; both shown from the top; a broken PDF keeps its icon; sharp grid pages 480 px with the badge; saved on this device; 390 px; after a reload with the file cache emptied the pages come back without downloading either PDF).
+
+### D22 — The storage balance: its own sidebar section, updated after a deposit (user report, 2026-11-13)
+Reported by the user after a deposit: the balance didn't update, "0G" wrapped onto its own line, and the balance sat under Security though it's about paying for space.
+- **Its own section**, **Storage**, above Security: the balance and **Deposit** (`data-row="storage"`, assistant target `storage`). The row has no label (the heading names it), so the amount has the room of two columns.
+- **One line**: the status never wraps; a balance of 12.345 0G fits the 232 px sidebar and a phone's drawer.
+- **Updated after a deposit**: the balance was read once, right after the deposit's receipt, through the load-balanced public RPC; a backend still behind the deposit's block returns the old balance, and nothing read it again. Now the balance is read before the deposit and then every 2 s until it's higher (60 s at most); the button shows **Updating…** meanwhile. An upload waiting on a top-up starts only after that, so it doesn't meet a stale balance either.
+
+Verified: `npm run test:storage-balance` (fresh funded drive: the section order; a deposit while the test answers the first 3 balance reads with the old balance, as a lagging backend would: "Updating…", then the new balance without a reload; a forced 12.345 0G balance on one line at desktop and 390 px).
