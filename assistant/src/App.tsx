@@ -253,6 +253,22 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [viewing, menu])
 
+  // the ⋯ menu closes on a click anywhere else: in this frame, or in the
+  // drive page around it (which this frame only sees as losing focus)
+  useEffect(() => {
+    if (!menu) return
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as Element).closest?.('.menu-wrap')) setMenu(false)
+    }
+    const onBlur = () => setMenu(false)
+    document.addEventListener('pointerdown', onDown)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [menu])
+
   const update = (i: number, patch: Partial<Turn>) =>
     setTurns((ts) => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)))
 
@@ -344,7 +360,13 @@ export default function App() {
             </button>
             {menu && (
               <div className="menu" role="menu">
-                <a href="https://pc.0g.ai/dashboard/overview" target="_blank" rel="noopener noreferrer" role="menuitem">
+                <a
+                  href="https://pc.0g.ai/dashboard/overview"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  role="menuitem"
+                  onClick={() => setMenu(false)}
+                >
                   Balance &amp; usage ↗
                 </a>
                 <button
