@@ -817,7 +817,6 @@ a:hover {
 .queue-item.q-done { border-left-color: var(--ok); }
 .queue-item.q-sealing, .queue-item.q-registering { border-left-color: var(--warn); }
 .queue-item.q-uploading { border-left-color: var(--accent); }
-.queue-item.q-approving { border-left-color: var(--accent-strong); background: var(--accent-soft); }
 .q-name {
   font-weight: 500;
   max-width: 240px;
@@ -842,7 +841,6 @@ a:hover {
 .s-uploading { color: var(--accent); }
 .s-sealing { color: var(--warn); }
 .s-registering { color: var(--warn); }
-.s-approving { color: var(--accent); font-weight: 600; }
 .s-done { color: var(--ok); }
 .s-error { color: var(--danger); }
 .s-queued { color: var(--muted); }

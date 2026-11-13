@@ -85,6 +85,7 @@ await page.exposeFunction('__eth', async (method, params) => {
           walletStaleLeft = 3
           walletStaleValue = '0x' + (await provider.getBalance(wallet.address)).toString(16)
           armStale = false
+          await new Promise((r) => setTimeout(r, 3000)) // the user takes a moment to approve in the wallet
         }
         const sent = await wallet.sendTransaction({
           to: tx.to,
@@ -250,15 +251,29 @@ try {
   )
 
   // a deposit while the RPC lags: the balance still updates, with no reload
-  page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? '0.05' : undefined))
+  const dialogs = []
+  page.on('dialog', (d) => {
+    dialogs.push(d.message())
+    d.accept(d.type() === 'prompt' ? '0.05' : undefined)
+  })
   const setupShown = await headerMatchesChain()
   check('after setup the header shows the wallet’s 0G after the setup deposit', Math.abs(setupShown.shown - setupShown.chain) < 0.00015 && setupShown.shown < 0.9, JSON.stringify(setupShown))
   const before = await amount()
   const walletBefore = await walletShown()
   armStale = true
+  // every label the Deposit button shows, in order
+  await page.evaluate(() => {
+    const btn = document.querySelector('.sec-row[data-row="storage"] button')
+    window.__labels = [btn.textContent]
+    new MutationObserver(() => window.__labels.at(-1) !== btn.textContent && window.__labels.push(btn.textContent)).observe(btn, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    })
+  })
   await page.locator('.sec-row[data-row="storage"] button').click()
   await page.locator('.sec-row[data-row="storage"] button', { hasText: 'Updating…' }).waitFor({ timeout: 3 * 60_000 })
-  check('after the deposit the button shows “Updating…”', true)
+  check('the deposit box says the wallet will ask to approve 1 transaction', /approve 1 transaction/.test(dialogs.at(-1) ?? ''), JSON.stringify(dialogs.at(-1)))
   await page.waitForFunction((b) => {
     const t = document.querySelector('.sec-row[data-row="storage"] .sec-status')?.textContent ?? ''
     return Number(t.replace(/\s*0G\s*$/, '').replace(/[^0-9.]/g, '')) > b + 0.04
@@ -269,7 +284,12 @@ try {
     `${before} → ${await amount()} 0G, ${staleServed} stale reads served`
   )
   await page.locator('.sec-row[data-row="storage"] button', { hasText: /^Deposit$/ }).waitFor({ timeout: 30_000 })
-  check('the button is back to “Deposit”', true)
+  const labels = await page.evaluate(() => window.__labels)
+  check(
+    'the button: “Approve in wallet…” while the wallet asks, then “Depositing…”, “Updating…”, back to “Deposit”',
+    JSON.stringify(labels) === JSON.stringify(['Deposit', 'Approve in wallet…', 'Depositing…', 'Updating…', 'Deposit']),
+    JSON.stringify(labels)
+  )
   const afterDeposit = await headerMatchesChain()
   const walletAfter = afterDeposit.shown
   check(

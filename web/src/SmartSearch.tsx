@@ -471,9 +471,7 @@ export function SuggestionsPanel({
             ))}
           </ul>
           <div className="suggest-actions">
-            <span className="muted">
-              {picked.length ? 'no wallet prompt' : 'nothing selected'}
-            </span>
+            <span className="muted">{picked.length ? '' : 'nothing selected'}</span>
             <button className="btn small primary" disabled={busy || picked.length === 0} onClick={() => onApply(picked)}>
               Move {picked.length || ''} file{picked.length === 1 ? '' : 's'}
             </button>
