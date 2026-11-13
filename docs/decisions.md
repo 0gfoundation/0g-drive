@@ -305,3 +305,12 @@ Reference: API study in `0g-storage-api-study.md`; SDK source clones in `referen
 - Styled with the app's dark palette and a readable line length; wide tables and code blocks scroll inside themselves, so the page fits a phone.
 
 Verified: `npm run test:markdown-preview` (fresh funded drive; a `.md` uploaded with no type: each element renders, raw HTML's script and handlers neither run nor remain, the remote image shows as alt text and nothing reaches the internet, opaque origin, policy first, link inert, Source exact, 390 px with the wide table and code block scrolling in place).
+
+### D21 — PDF thumbnails: the first page (user decision, 2026-11-13)
+PDFs showed only their type icon. Now a PDF's thumbnail is its **first page**, drawn with pdf.js (already loaded for the phone viewer and search; `web/src/Preview.tsx`):
+- **At upload**: page 1 as the usual ~96 px WebP stored in the encrypted listing, like a photo's (2–6 KB per PDF in the listing). Up to 40 MB, 15 s at most; if it fails the upload goes on without one.
+- **Grid tiles**: a sharp page (480 px across) drawn from the file when the tile comes into view, saved on this device only (`thumbStore.ts`, unencrypted, never uploaded, not saved on a read-only drive), as for photos. PDFs uploaded before this, or without a stored thumbnail, also get a small one drawn for the list. **Backfill up to 25 MB** (user's choice): such a PDF is downloaded once to draw it, then comes from this device.
+- **Look**: drawn on white (no black pages), shown from the top of the page (where the title is), and grid tiles carry a red "PDF" badge so a page doesn't read as a photo.
+- **Safety**: the bytes must start with `%PDF-`; pdf.js's display API runs no PDF scripts; only canvas pixels are kept. A broken or password-protected PDF keeps its icon; that failure isn't remembered, so it's tried again (one download) each session, as for images.
+
+Verified: `npm run test:pdf-thumbs` (fresh funded drive, 12 checks: a PDF uploaded while pdf.js can't load gets none and still uploads; a normal upload stores its first page, portrait, red band on top, white page; the older PDF gets one drawn later; both shown from the top; a broken PDF keeps its icon; sharp grid pages 480 px with the badge; saved on this device; 390 px; after a reload with the file cache emptied the pages come back without downloading either PDF).

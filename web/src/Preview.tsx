@@ -4,6 +4,7 @@ import { getSavedThumb, saveThumb, thumbKey } from './thumbStore'
 import { PdfPages, drawsPdfPages } from './PdfPages'
 import { HtmlPreview } from './HtmlPreview'
 import { MarkdownPreview } from './MarkdownPreview'
+import { loadPdfjs } from './pdfjs'
 
 // ─── Thumbnails ───────────────────────────────────────────────────────
 //
@@ -145,16 +146,68 @@ async function videoThumb(blob: Blob): Promise<string | undefined> {
   }
 }
 
+// A PDF's thumbnail is its first page, drawn with pdf.js onto white (pages
+// with no background would otherwise turn black). PDF scripting is off in
+// pdf.js's display API; only the canvas pixels are kept.
+const PDF_RENDER_TIMEOUT_MS = 15_000
+
+function isPdfFile(mime: string, name: string): boolean {
+  return mime === 'application/pdf' || name.split('.').pop()?.toLowerCase() === 'pdf'
+}
+
+const MAX_PAGE_PIXELS = 1_000_000
+
+/**
+ * Page 1 of a PDF on a canvas, scaled so its longer side is `side` (with
+ * `fill`, its shorter side), and never past MAX_PAGE_PIXELS.
+ */
+async function drawPdfPage(blob: Blob, side: number, fill: boolean): Promise<HTMLCanvasElement> {
+  const data = new Uint8Array(await blob.arrayBuffer())
+  if (new TextDecoder().decode(data.subarray(0, 5)) !== '%PDF-') throw new Error('not a PDF')
+  const pdfjs = await loadPdfjs()
+  const task = pdfjs.getDocument({ data })
+  try {
+    return await withTimeout(
+      (async () => {
+        const page = await (await task.promise).getPage(1)
+        const vp1 = page.getViewport({ scale: 1 })
+        const scale = side / (fill ? Math.min(vp1.width, vp1.height) : Math.max(vp1.width, vp1.height))
+        const viewport = page.getViewport({ scale: Math.min(scale, Math.sqrt(MAX_PAGE_PIXELS / (vp1.width * vp1.height))) })
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.floor(viewport.width))
+        canvas.height = Math.max(1, Math.floor(viewport.height))
+        await page.render({ canvas, viewport, background: '#ffffff' }).promise
+        return canvas
+      })(),
+      PDF_RENDER_TIMEOUT_MS
+    )
+  } finally {
+    void task.destroy()
+  }
+}
+
+async function pdfThumb(blob: Blob): Promise<string | undefined> {
+  if (blob.size > THUMB_MAX_IMAGE_BYTES) return undefined
+  const canvas = await drawPdfPage(blob, THUMB_MAX_DIM, false)
+  return canvasToDataUrl(canvas)
+}
+
 /** Images we can draw a thumbnail of (raster formats, and SVG via decodeImage). */
 function isThumbImage(mime: string): boolean {
   return mime.startsWith('image/')
 }
 
+/** Files that get a drawn thumbnail when they have none: images and PDFs. */
+function isDrawable(meta: FileMeta): boolean {
+  return isThumbImage(meta.mime) || isPdfFile(meta.mime, meta.name)
+}
+
 /** Best-effort thumbnail for an upload; undefined when not applicable. */
-export async function makeThumbnail(file: Blob, mime: string): Promise<string | undefined> {
+export async function makeThumbnail(file: Blob, mime: string, name = ''): Promise<string | undefined> {
   try {
     if (isThumbImage(mime)) return await imageThumb(file, mime)
     if (mime.startsWith('video/')) return await videoThumb(file)
+    if (isPdfFile(mime, name)) return await pdfThumb(file)
   } catch {
     // unsupported codec/format — the file just keeps its type icon
   }
@@ -186,7 +239,11 @@ const HIRES_CACHE_MAX = 300
 const hiresCache = new Map<string, string | null>()
 let hiresChain: Promise<unknown> = Promise.resolve()
 
-async function hiresThumb(blob: Blob, mime: string): Promise<Blob | null> {
+async function hiresThumb(blob: Blob, mime: string, name: string): Promise<Blob | null> {
+  if (isPdfFile(mime, name)) {
+    const page = await drawPdfPage(blob, HIRES_DIM, true)
+    return new Promise<Blob | null>((r) => page.toBlob(r, 'image/jpeg', 0.85))
+  }
   const probe = await decodeImage(blob, mime)
   // vector art is drawn at the target size (it may state a tiny one)
   const scale = mime === SVG_MIME
@@ -239,7 +296,7 @@ export function FileThumb({
   const imgRef = useRef<HTMLElement | null>(null)
 
   const wantSharp =
-    hiRes && isThumbImage(meta.mime) && meta.size <= HIRES_MAX_BYTES && sharp === undefined
+    hiRes && isDrawable(meta) && meta.size <= HIRES_MAX_BYTES && sharp === undefined
   useEffect(() => {
     const el = imgRef.current
     if (!wantSharp || !el) return
@@ -264,7 +321,7 @@ export function FileThumb({
             let url: string | null = null
             try {
               const bytes = await load(meta)
-              const out = await hiresThumb(new Blob([bytes as unknown as BlobPart], { type: meta.mime }), meta.mime)
+              const out = await hiresThumb(new Blob([bytes as unknown as BlobPart], { type: meta.mime }), meta.mime, meta.name)
               if (out) {
                 url = URL.createObjectURL(out)
                 void saveThumb(key, out)
@@ -289,7 +346,7 @@ export function FileThumb({
 
   useEffect(() => {
     if (isSafeThumb(meta.thumb) || legacyCache.has(meta.id)) return
-    if (!isThumbImage(meta.mime) || meta.size > LEGACY_MAX_BYTES) return
+    if (!isDrawable(meta) || meta.size > LEGACY_MAX_BYTES) return
     if (hiRes && meta.size <= HIRES_MAX_BYTES) return // the sharp preview covers it
     let alive = true
     const key = thumbKey('small', meta.rootHashes)
@@ -304,7 +361,8 @@ export function FileThumb({
         let t: string | null = null
         try {
           const bytes = await load(meta)
-          t = (await imageThumb(new Blob([bytes as unknown as BlobPart], { type: meta.mime }), meta.mime)) ?? null
+          const blob = new Blob([bytes as unknown as BlobPart], { type: meta.mime })
+          t = (isPdfFile(meta.mime, meta.name) ? await pdfThumb(blob) : await imageThumb(blob, meta.mime)) ?? null
           if (t) void saveThumb(key, t)
         } catch (err) {
           console.warn(`[thumbs] thumbnail failed for ${meta.name} (${meta.mime}, ${meta.size} B):`, err)
@@ -319,12 +377,16 @@ export function FileThumb({
     }
   }, [meta, load, hiRes])
 
-  if (sharp) return <img className={className} src={sharp} alt="" />
+  // a PDF's page is shown from its top (the title), and a grid tile says it's a PDF
+  const pdf = isPdfFile(meta.mime, meta.name)
+  const cls = pdf ? `${className} thumb-page` : className
+  const badge = pdf && hiRes ? <span className="tile-badge tile-badge-pdf" aria-hidden="true">PDF</span> : null
+  if (sharp) return <><img className={cls} src={sharp} alt="" />{badge}</>
   const src = isSafeThumb(meta.thumb) ? meta.thumb : lazy ?? undefined
   if (!isSafeThumb(src)) {
     return wantSharp ? <span ref={imgRef} className="thumb-pending">{fallback}</span> : <>{fallback}</>
   }
-  return <img ref={(el) => { imgRef.current = el }} className={className} src={src} alt="" loading="lazy" />
+  return <><img ref={(el) => { imgRef.current = el }} className={cls} src={src} alt="" loading="lazy" />{badge}</>
 }
 
 // ─── Preview ──────────────────────────────────────────────────────────

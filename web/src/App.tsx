@@ -1132,7 +1132,7 @@ export default function App() {
         setItem(i, { state: 'uploading', message: 'preparing…' })
         const file = files[i]
         const mime = file.type || 'application/octet-stream'
-        const thumb = await makeThumbnail(file, mime)
+        const thumb = await makeThumbnail(file, mime, file.name)
         const fileKey = generateFileKey()
         prep.push({
           fileKey,
