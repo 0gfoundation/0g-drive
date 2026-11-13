@@ -127,6 +127,28 @@ export function deposit(signer: Parameters<typeof depositForUser>[1], masterKey:
 
 type Signer = Parameters<typeof depositForUser>[1] & { signMessage(message: string): Promise<string> }
 
+/** How long the relayer may take to see the first deposit before setup gives up. */
+const RELAYER_SEES_DEPOSIT_MS = 90_000
+
+/**
+ * The drive's first root, right after its first deposit. The relayer checks
+ * the balance through its own view of the chain, which can still be from
+ * before the deposit ("have 0 wei"), so a shortfall then is tried again for
+ * a while instead of failing the setup.
+ */
+async function saveFirstRoot(masterKey: Uint8Array, card: AccountCard, deposited: boolean, onStep: (step: string) => void) {
+  const deadline = Date.now() + RELAYER_SEES_DEPOSIT_MS
+  for (;;) {
+    try {
+      return await backendFor(masterKey, card).saveCard(card)
+    } catch (err) {
+      if (!deposited || !isShortfall(err) || Date.now() > deadline) throw err
+      onStep('Waiting for 0G Storage to see your deposit…')
+      await new Promise((r) => setTimeout(r, 3000))
+    }
+  }
+}
+
 /**
  * Set up a drive for this key: the recovery signature (twice: the wallet
  * must sign it the same way), the signature linking the wallet to the
@@ -154,7 +176,7 @@ export async function setupDrive(
   }
   onStep('Saving your drive…')
   const card = await makeCard({ wallet: address, account, binding, masterKey, recoveryKey, shareKey: shareKey.pubKey })
-  await backendFor(masterKey, card).saveCard(card)
+  await saveFirstRoot(masterKey, card, needsDeposit, onStep)
   return card
 }
 
@@ -192,7 +214,7 @@ export async function setupDriveWithPassword(
   }
   onStep('Saving your drive…')
   const card = await makeCard({ wallet: address, account, binding, masterKey, password })
-  await backendFor(masterKey, card).saveCard(card)
+  await saveFirstRoot(masterKey, card, needsDeposit, onStep)
   return card
 }
 

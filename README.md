@@ -74,7 +74,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:wallets` | wallet picker with several wallets installed, switching accounts, disconnect and quiet reconnect, keeping connections warm, and the signature check (spends nothing) |
 | `npm run test:svg` | SVG thumbnails, including that an SVG's scripts and external images never load |
 | `npm run test:pdf-thumbs` | PDF thumbnails: the first page, stored at upload or drawn later for older PDFs; sharp grid tiles with a PDF badge |
-| `npm run test:storage-balance` | The sidebar's Storage section: a deposit shows in the balance even when the RPC lags; a wide balance stays on one line (desktop, 390 px) |
+| `npm run test:storage-balance` | The sidebar's Storage section: a deposit shows in the storage and wallet balances even when the RPC lags; the wallet balance follows spends outside the app; a wide balance stays on one line (desktop, 390 px) |
 | `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
 | `npm run test:rename` | file rename: name checks, duplicates refused, no wallet prompt, phone layout; file actions icon-only |
 | `npm run test:folder-rename` | folder rename: name checks, no wallet prompt, open folder follows, subfolder kept, phone layout |

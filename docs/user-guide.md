@@ -95,7 +95,7 @@ The recipient must have a 0GDrive: their share key is published with their drive
 
 ## Storage balance
 
-The **Storage** section at the top of the sidebar shows your storage balance: the 0G that pays for the space your files take (greyed out when it's nearly empty). **Deposit** tops it up from your wallet (1 transaction); the balance updates by itself once the deposit is on chain (the button shows **Updating…** until then, usually a few seconds).
+The **Storage** section at the top of the sidebar shows your storage balance: the 0G that pays for the space your files take (greyed out when it's nearly empty). **Deposit** tops it up from your wallet (1 transaction); the balance updates by itself once the deposit is on chain (the button shows **Updating…** until then, usually a few seconds). The wallet balance at the top of the page updates too, and both are read again every 30 seconds while the page is open, so spending from your wallet elsewhere shows up by itself.
 
 ## Security: recovery, password, share key, key file
 
