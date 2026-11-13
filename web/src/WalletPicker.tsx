@@ -7,6 +7,7 @@ import {
   subscribeWallets,
   walletSnapshot,
 } from './wallet'
+import { closeOnBackdrop } from './backdrop'
 
 /** The "choose a wallet" dialog chooseWallet() opens when several are installed. */
 export function WalletPicker() {
@@ -25,7 +26,7 @@ export function WalletPicker() {
   if (!open) return null
   const last = lastUsedWallet()
   return (
-    <div className="modal-backdrop" onClick={() => resolvePicker(null)}>
+    <div className="modal-backdrop" {...closeOnBackdrop(() => resolvePicker(null))}>
       <div className="modal wallet-picker" role="dialog" aria-label="Choose a wallet" onClick={(e) => e.stopPropagation()}>
         <h2>Choose a wallet</h2>
         <ul className="wallet-list">

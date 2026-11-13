@@ -76,6 +76,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:pdf-thumbs` | PDF thumbnails: the first page, stored at upload or drawn later for older PDFs; sharp grid tiles with a PDF badge |
 | `npm run test:storage-balance` | The sidebar's Storage section: a deposit shows in the storage and wallet balances even when the RPC lags; the wallet balance follows spends outside the app; a wide balance stays on one line (desktop, 390 px) |
 | `npm run test:foldable-sections` | Sidebar sections fold from their headings, keep a summary, stay folded after a reload, and unfold when the assistant points inside |
+| `npm run test:dialog-backdrop` | Dialogs stay open when a drag (selecting a field's text) ends outside them; a click outside still closes them |
 | `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
 | `npm run test:rename` | file rename: name checks, duplicates refused, no wallet prompt, phone layout; file actions icon-only |
 | `npm run test:folder-rename` | folder rename: name checks, no wallet prompt, open folder follows, subfolder kept, phone layout |

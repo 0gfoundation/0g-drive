@@ -30,6 +30,7 @@
     "test:pdf-thumbs": "npm run build -w core && node scripts/test-pdf-thumbs.mjs",
     "test:storage-balance": "npm run build -w core && node scripts/test-storage-balance.mjs",
     "test:foldable-sections": "npm run build -w core && node scripts/test-foldable-sections.mjs",
+    "test:dialog-backdrop": "npm run build -w core && node scripts/test-dialog-backdrop.mjs",
     "test:welcome": "node scripts/test-welcome.mjs",
     "test:model-download": "node scripts/test-model-download.mjs",
     "test:grid-thumbs": "node scripts/test-grid-thumbs.mjs",
