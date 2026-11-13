@@ -334,3 +334,11 @@ Storage, Security and On-device AI fold from their headings (`SideSection` in `w
 
 Verified: `npm run test:foldable-sections` (fresh funded drive, 7 checks: all open at first with button headings; folded bodies hidden with the three summaries; still folded after a reload; a stand-in page on the assistant's address sends the assistant's "show" for the Password row: Security alone unfolds and the row pulses; Enter unfolds; 390 px drawer).
 
+### D24 — Say when the wallet will ask, not when it won't (user decision, 2026-11-13)
+Since V2 almost nothing asks the wallet (D19), so "no wallet prompt" notes had become noise, while the few actions that do ask said little. Removed from the upload zone, the password dialog, rename (file and folder), move, the organize suggestions and the search index's Save. Where the wallet does ask:
+- **Deposit**: the amount box says "Your wallet will ask you to approve 1 transaction."; the button reads **Approve in wallet…** until the wallet has sent it (`depositForUser`'s `onSent`), then **Depositing…**, then **Updating…**. An upload that needs a top-up asks "Deposit now? (1 transaction in your wallet)".
+- Setup, restoring by signature and opening an encrypted share link already said so; unchanged.
+- The upload queue's leftover V1 state "approve in your wallet" (never set since V2) is gone.
+
+Verified: `npm run test:storage-balance` (11 checks; two replace the earlier "Updating…" checks: the deposit box's wording, and the button's labels in order while the test wallet takes 3 s to approve).
+

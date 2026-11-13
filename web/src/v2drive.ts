@@ -108,9 +108,9 @@ async function checkCanDeposit(signer: Parameters<typeof depositForUser>[1], amo
 }
 
 /** The vault deposit from the wallet (one transaction), its wallet errors in words. */
-async function depositFromWallet(signer: Parameters<typeof depositForUser>[1], account: string, amount: bigint) {
+async function depositFromWallet(signer: Parameters<typeof depositForUser>[1], account: string, amount: bigint, onSent?: () => void) {
   try {
-    return await depositForUser(V2, signer, account, amount)
+    return await depositForUser(V2, signer, account, amount, onSent)
   } catch (err) {
     const { isError } = await import('ethers')
     const msg = String((err as Error)?.message ?? err)
@@ -120,9 +120,9 @@ async function depositFromWallet(signer: Parameters<typeof depositForUser>[1], a
   }
 }
 
-/** Fund the drive's storage account from the wallet (one transaction). */
-export function deposit(signer: Parameters<typeof depositForUser>[1], masterKey: Uint8Array, amount: bigint) {
-  return depositFromWallet(signer, deriveStorageKey(masterKey).address, amount)
+/** Fund the drive's storage account from the wallet (one transaction); `onSent` once the wallet has approved it. */
+export function deposit(signer: Parameters<typeof depositForUser>[1], masterKey: Uint8Array, amount: bigint, onSent?: () => void) {
+  return depositFromWallet(signer, deriveStorageKey(masterKey).address, amount, onSent)
 }
 
 type Signer = Parameters<typeof depositForUser>[1] & { signMessage(message: string): Promise<string> }

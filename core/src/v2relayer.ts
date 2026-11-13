@@ -116,9 +116,16 @@ const RECEIPT_POLL_MS = 2000
  * poll is tried again: one RPC error must not report a deposit that went
  * through as failed.
  */
-export async function depositForUser(net: V2Network, payer: ethers.Signer, account: string, amount: bigint): Promise<ethers.TransactionReceipt> {
+export async function depositForUser(
+  net: V2Network,
+  payer: ethers.Signer,
+  account: string,
+  amount: bigint,
+  onSent?: (hash: string) => void
+): Promise<ethers.TransactionReceipt> {
   const vault = new ethers.Contract(net.paymentVault, VAULT_ABI, payer)
   const tx: ethers.TransactionResponse = await vault.depositForUser(account, { value: amount })
+  onSent?.(tx.hash)
   const provider = new ethers.JsonRpcProvider(net.rpc, net.chainId, { staticNetwork: true })
   const deadline = Date.now() + DEPOSIT_WAIT_MS
   let lastError = ''

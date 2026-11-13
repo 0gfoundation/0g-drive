@@ -107,7 +107,7 @@ interface QueueItem {
   /** the folder it goes to */
   path?: string
   size: number
-  state: 'queued' | 'uploading' | 'approving' | 'sealing' | 'registering' | 'done' | 'error'
+  state: 'queued' | 'uploading' | 'sealing' | 'registering' | 'done' | 'error'
   message?: string
   percent?: number
 }
@@ -1138,7 +1138,7 @@ export default function App() {
   const topUp = useCallback(
     async (suggested = FIRST_DEPOSIT): Promise<boolean> => {
       if (!wallet || !masterKeyHex) return false
-      const amount = window.prompt('Deposit to your storage balance (0G):', suggested)?.trim()
+      const amount = window.prompt('Deposit to your storage balance (0G). Your wallet will ask you to approve 1 transaction.', suggested)?.trim()
       if (!amount) return false
       const { parseEther } = await import('ethers')
       let wei: bigint
@@ -1149,11 +1149,11 @@ export default function App() {
         log(`Not an amount: ${amount}`)
         return false
       }
-      setDepositBusy('Depositing…')
+      setDepositBusy('Approve in wallet…')
       try {
         const masterKey = hexToBytes(masterKeyHex)
         const before = await balanceOf(masterKey).catch(() => null)
-        await deposit(wallet.signer, masterKey, wei)
+        await deposit(wallet.signer, masterKey, wei, () => setDepositBusy('Depositing…'))
         log(`Deposited ${amount} 0G to your storage balance.`)
         setDepositBusy('Updating…')
         await Promise.all([awaitDeposit(masterKey, before), refreshWalletBalance(wallet.signer, wallet.balance)])
@@ -1398,7 +1398,7 @@ export default function App() {
         const fmt = (wei: bigint) => Number(formatEther(wei)).toPrecision(2)
         const ok =
           window.confirm(
-            `Your storage balance (${fmt(have)} 0G) is below the ~${fmt(need)} 0G ${files.length === 1 ? 'this file needs' : 'these files need'} up front (about a week of storage). Deposit now?`
+            `Your storage balance (${fmt(have)} 0G) is below the ~${fmt(need)} 0G ${files.length === 1 ? 'this file needs' : 'these files need'} up front (about a week of storage). Deposit now? (1 transaction in your wallet)`
           ) && (await topUp(Number(formatEther(need * 10n > 10n ** 17n ? need * 10n : 10n ** 17n)).toString()))
         if (!ok) {
           const ids = new Set(items.map((i) => i.id))
@@ -2529,7 +2529,7 @@ export default function App() {
                           className="link"
                           disabled={busy !== null || smart.saving}
                           onClick={() => void smart.saveIndex()}
-                          title="Save these files' search entries in your drive, for your other devices (no wallet prompt). They're also saved with your next change."
+                          title="Save these files' search entries in your drive, for your other devices. They're also saved with your next change."
                         >
                           Save
                         </button>
@@ -2652,14 +2652,13 @@ export default function App() {
                 <span className="q-size">{fmtSize(q.size)}</span>
                 <span className={`q-state s-${q.state}`}>
                   {q.state === 'uploading' && (q.percent !== undefined ? `${q.percent}%` : 'uploading')}
-                  {q.state === 'approving' && '🔐 approve in your wallet'}
                   {q.state === 'sealing' && '⏳ sealing'}
                   {q.state === 'registering' && '📝 saving to your drive'}
                   {q.state === 'done' && `✓ ${q.message ?? 'stored'}`}
                   {q.state === 'error' && `✗ ${q.message ?? 'failed'}`}
                   {q.state === 'queued' && 'queued'}
                 </span>
-                {(q.state === 'uploading' || q.state === 'approving') && q.message && (
+                {q.state === 'uploading' && q.message && (
                   <span className="q-msg muted">{q.message}</span>
                 )}
               </div>
@@ -2704,7 +2703,7 @@ export default function App() {
                   )}
               </div>
               <div className="dropzone-sub">
-                Per-file encryption · no wallet prompt per upload · stored on 0G Storage
+                Per-file encryption · stored on 0G Storage
               </div>
             </div>
           </label>
@@ -2959,7 +2958,7 @@ export default function App() {
                 {restoreBusy ?? (hasPassword ? 'Change password' : 'Set password')}
               </button>
             </div>
-            <p className="muted small-print">No wallet prompt · saved with your drive on 0G</p>
+            <p className="muted small-print">Saved with your drive on 0G</p>
           </form>
         </div>
       )}
@@ -3126,8 +3125,8 @@ export default function App() {
               </div>
               <p className="muted small-print">
                 {isFile
-                  ? 'No wallet prompt · the file itself isn’t re-uploaded · links you already shared keep the old name'
-                  : 'No wallet prompt · nothing inside is re-uploaded · subfolders and files keep their place'}
+                  ? 'The file itself isn’t re-uploaded · links you already shared keep the old name'
+                  : 'Nothing inside is re-uploaded · subfolders and files keep their place'}
               </p>
             </form>
           </div>
@@ -3246,7 +3245,7 @@ export default function App() {
                   {busy !== null ? 'Moving…' : 'Move here'}
                 </button>
               </div>
-              <p className="muted small-print">No wallet prompt · nothing is re-uploaded{movePending.length > 0 ? ' · new folders are created in the same change' : ''}</p>
+              <p className="muted small-print">Nothing is re-uploaded{movePending.length > 0 ? ' · new folders are created in the same change' : ''}</p>
             </form>
           </div>
         )
