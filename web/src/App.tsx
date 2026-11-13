@@ -18,6 +18,7 @@ import {
   unlockShareKey,
   DriveStore,
   TRASH_PATH,
+  TRASH_DAYS,
   fileNameProblem,
   timed,
   uniqueName,
@@ -140,6 +141,23 @@ function fmtDate(ts: number): string {
 /** A storage balance (wei) for display: 4 significant digits. */
 /** How long a deposit may take to show in the balance before we stop reading it. */
 const DEPOSIT_SHOW_MS = 60_000
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** A trashed file's line: where it came from, and when it goes. */
+function trashNote(f: FileMeta): string {
+  const left = trashDaysLeft(f)
+  const from = f.originalPath ? `from ${f.originalPath}` : ''
+  const goes = left === null ? '' : left <= 1 ? 'deleted within a day' : `${left} days left`
+  return [from, goes].filter(Boolean).join(' · ')
+}
+/** Housekeeping (expired trash, leftover files) waits this long after the drive opens. */
+const HOUSEKEEPING_AFTER_MS = 20_000
+
+/** Whole days until a trashed file is deleted forever (null: not dated yet). */
+function trashDaysLeft(f: FileMeta): number | null {
+  return typeof f.trashedAt === 'number' ? Math.max(0, Math.ceil((f.trashedAt + TRASH_DAYS * DAY_MS - Date.now()) / DAY_MS)) : null
+}
+
 /** How often the wallet and storage balances are read again while the tab is shown. */
 const BALANCE_POLL_MS = 30_000
 
@@ -1796,11 +1814,20 @@ export default function App() {
     const store = storeRef.current
     if (!store || selectedIds.length === 0) return
     const n = selectedIds.length
-    if (!window.confirm(`Move ${n} file${n === 1 ? '' : 's'} to trash?`)) return
-    setBusy(`Moving ${n} file${n === 1 ? '' : 's'} to trash…`)
+    const files = `${n} file${n === 1 ? '' : 's'}`
+    const forever = view === 'trash'
+    if (
+      !window.confirm(
+        forever
+          ? `Delete ${files} forever? ${n === 1 ? 'It is' : 'They are'} deleted from 0G Storage; links you shared stop working.`
+          : `Move ${files} to trash?`
+      )
+    )
+      return
+    setBusy(forever ? `Deleting ${files}…` : `Moving ${files} to trash…`)
     try {
-      await store.removeFileRecords(view === 'trash' ? TRASH_PATH : currentPath, selectedIds, view !== 'trash')
-      log(`${n} file${n === 1 ? '' : 's'} moved to trash.`)
+      await store.removeFileRecords(forever ? TRASH_PATH : currentPath, selectedIds, !forever)
+      log(forever ? `${files} deleted forever.` : `${files} moved to trash.`)
       setSelectedIds([])
       await reloadDrive()
     } catch (err) {
@@ -1809,6 +1836,80 @@ export default function App() {
       setBusy(null)
     }
   }, [storeRef, selectedIds, currentPath, view, log, reloadDrive])
+
+  /** Every file in trash deleted forever: one change, then their bytes on 0G. */
+  const emptyTrash = useCallback(async () => {
+    const store = storeRef.current
+    const ids = drive?.trash?.files.map((f) => f.id) ?? []
+    if (!store || ids.length === 0) return
+    const files = `${ids.length} file${ids.length === 1 ? '' : 's'}`
+    if (!window.confirm(`Empty trash: delete ${files} forever? They're deleted from 0G Storage; links you shared stop working.`)) return
+    setBusy('Emptying trash…')
+    try {
+      await store.removeFileRecords(TRASH_PATH, ids, false)
+      log(`Trash emptied: ${files} deleted forever.`)
+      setSelectedIds([])
+      await reloadDrive()
+    } catch (err) {
+      log(`Emptying trash failed: ${(err as Error).message}`)
+    } finally {
+      setBusy(null)
+    }
+  }, [drive, log, reloadDrive])
+
+  // Housekeeping on the owner's device, once per drive opened, at a quiet
+  // moment: trash past TRASH_DAYS deleted forever (one change, no wallet
+  // prompt), and once a day, stored files nothing references deleted
+  // (a deletion that failed, an upload whose change never stored: rent).
+  const housekeepingFor = useRef<string | null>(null)
+  const driveRef = useRef(drive)
+  driveRef.current = drive
+  const quietRef = useRef(true)
+  quietRef.current = busy === null && queue.every((q) => q.state === 'done' || q.state === 'error')
+  useEffect(() => {
+    const store = storeRef.current
+    const address = wallet?.address
+    if (!drive || !store || !address || readOnly || housekeepingFor.current === address) return
+    housekeepingFor.current = address
+    const run = async () => {
+      if (storeRef.current !== store) return // another drive since
+      if (!quietRef.current) return void setTimeout(run, HOUSEKEEPING_AFTER_MS)
+      const trashed = driveRef.current?.trash?.files ?? []
+      if (trashed.some((f) => trashDaysLeft(f) === null || trashDaysLeft(f) === 0)) {
+        if (!quietRef.current) return void setTimeout(run, HOUSEKEEPING_AFTER_MS)
+        setBusy('Tidying trash…')
+        try {
+          const expired = await store.expireTrash()
+          if (expired.length) log(`${expired.length} file${expired.length === 1 ? '' : 's'} in trash for over ${TRASH_DAYS} days deleted forever.`)
+          setDrive(await store.loadDrive())
+        } catch (err) {
+          console.warn('[drive] trash expiry', err)
+        } finally {
+          setBusy(null)
+        }
+      }
+      const sweptKey = `0gdrive:swept:${address.toLowerCase()}`
+      let last = 0
+      try {
+        last = Number(localStorage.getItem(sweptKey) ?? 0)
+      } catch {
+        // storage blocked: sweep each visit
+      }
+      if (Date.now() - last < DAY_MS) return
+      try {
+        const n = await store.sweepLeftovers()
+        try {
+          localStorage.setItem(sweptKey, String(Date.now()))
+        } catch {
+          // as above
+        }
+        if (n) log(`${n} leftover file${n === 1 ? '' : 's'} on 0G that nothing in your drive used deleted (rent stopped).`)
+      } catch (err) {
+        console.warn('[drive] leftover sweep', err)
+      }
+    }
+    setTimeout(run, HOUSEKEEPING_AFTER_MS)
+  }, [drive, wallet?.address, readOnly, log])
 
   const restoreSelected = useCallback(async () => {
     const store = storeRef.current
@@ -2584,9 +2685,14 @@ export default function App() {
                 <div className="sel-bar">
                   <span className="sel-count">{selectedIds.length} selected</span>
                   {view === 'trash' ? (
-                    <button className="btn small" disabled={busy !== null} onClick={restoreSelected}>
-                      Restore selected
-                    </button>
+                    <>
+                      <button className="btn small" disabled={busy !== null} onClick={restoreSelected}>
+                        Restore selected
+                      </button>
+                      <button className="btn small danger" disabled={busy !== null} onClick={trashSelected}>
+                        Delete forever
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button className="btn small" disabled={busy !== null}
@@ -2611,6 +2717,11 @@ export default function App() {
               {view === 'drive' && !readOnly && (
                 <button className="btn small" disabled={busy !== null} onClick={newFolder} data-guide="new-folder">
                   + New folder
+                </button>
+              )}
+              {view === 'trash' && !readOnly && (drive?.trash?.files.length ?? 0) > 0 && (
+                <button className="btn small danger" disabled={busy !== null} onClick={() => void emptyTrash()}>
+                  Empty trash
                 </button>
               )}
               <button className="btn small" disabled={busy !== null} onClick={reloadDrive} data-guide="sync">
@@ -2763,6 +2874,7 @@ export default function App() {
             {view === 'trash' ? 'Trash' : currentPath === '' ? 'My drive' : currentPath}{' '}
             <span className="count">{shownFiles.length}</span>
           </h2>
+          {view === 'trash' && !readOnly && <p className="trash-note muted">Files in trash are deleted forever after {TRASH_DAYS} days.</p>}
           {shownFiles.length === 0 && view === 'drive' && drive ? (
             <div className="hero">
               <HeroIcon />
@@ -2812,7 +2924,7 @@ export default function App() {
                     <div className="tile-info">
                       <span className="tile-name" title={f.name}>{f.name}</span>
                       <span className="tile-meta muted">
-                        {fmtSize(f.size)} · {view === 'trash' && f.originalPath ? `from ${f.originalPath}` : fmtDate(f.uploadedAt)}
+                        {fmtSize(f.size)} · {(view === 'trash' && trashNote(f)) || fmtDate(f.uploadedAt)}
                       </span>
                     </div>
                     <div className="tile-actions">{fileActions(f)}</div>
@@ -2856,8 +2968,8 @@ export default function App() {
                         ) : (
                           f.name
                         )}
-                        {view === 'trash' && f.originalPath && (
-                          <span className="muted"> (from {f.originalPath})</span>
+                        {view === 'trash' && trashNote(f) && (
+                          <span className="muted"> ({trashNote(f)})</span>
                         )}
                         <span className="fname-sub muted">
                           {fmtSize(f.size)} · {fmtDate(f.uploadedAt)}

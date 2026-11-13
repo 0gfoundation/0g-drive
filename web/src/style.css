@@ -2444,3 +2444,8 @@ tbody tr:hover {
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+
+.trash-note {
+  margin: -4px 0 10px;
+  font-size: 12.5px;
+}

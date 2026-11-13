@@ -34,14 +34,14 @@ Your drive has its own **storage account**, derived from your drive key. It pays
 |---|---|
 | Create your drive | 3 signatures + 1 transaction (the first deposit) |
 | Deposit to your storage balance | 1 transaction |
-| Upload files, new folder, rename, move, trash, restore, delete forever, organize moves | nothing |
+| Upload files, new folder, rename, move, trash, restore, delete forever, empty trash, organize moves | nothing |
 | Set or change the recovery password | nothing |
 | Restore your drive on a new device | 1 signature (or the password, or the key file), no transaction |
 | Create a share link | nothing |
 | Open a link encrypted to you | 1 signature the first time on a device, no transaction |
 | Browse, preview, download, search | nothing |
 
-**The storage balance** shows in the sidebar's Security section (the **Storage** row), with a **Deposit** button (you choose the amount; 1 transaction). Storage is charged as rent for as long as a file is kept — on testnet about 38.9 0G per TB per month, so the first 0.1 0G covers roughly 2.5 GB for a month. An upload holds about a week of its rent up front: if the balance is lower than that, the app offers a deposit before uploading. If the balance runs out, uploads are refused until you deposit; keep it topped up, since the network can eventually reclaim the files of an account that stays unpaid. **Delete forever** (from the trash) deletes the file from 0G Storage and stops its rent; replaced versions of your folder listings are deleted the same way.
+**The storage balance** shows in the sidebar's **Storage** section, with a **Deposit** button (you choose the amount; 1 transaction). Storage is charged as rent for as long as a file is kept — on testnet about 38.9 0G per TB per month, so the first 0.1 0G covers roughly 2.5 GB for a month. An upload holds about a week of its rent up front: if the balance is lower than that, the app offers a deposit before uploading. If the balance runs out, uploads are refused until you deposit; keep it topped up, since the network can eventually reclaim the files of an account that stays unpaid. **Delete forever** (from the trash) deletes the file from 0G Storage and stops its rent; replaced versions of your folder listings are deleted the same way.
 
 ## On a phone
 
@@ -72,8 +72,9 @@ Every file gets its own random key; the file is encrypted with it before upload,
 - **Move files or folders** with "Move to…": the arrow-folder icon on a file or on a folder in the left list, or "Move to…" when you've selected several files. Pick where they go, or make a new folder right there with "+ New folder in …". Nothing is re-uploaded (a new folder made there is created in the same change); a moved folder keeps everything inside it. A name already used where you're moving to (ignoring upper/lower case) is refused, and a folder can't go into itself. If you have the moved folder open, you stay in it at its new place.
 - **Select files** with their checkboxes; **Select all** (the box at the top of the list, or above the tiles in grid view) picks every file in the folder, and clicking it again clears them. A dash in it means only some are selected.
 - **Move to trash** (trash icon on a file, or select several and **Trash selected**). Folders can be moved to trash from the tree.
-- **Trash** (sidebar): the restore button (↺) puts a file back where it was. If its folder has a file of the same name by then, the restored one is named “name (1).ext” and Activity says so. The × button is **Delete forever**: after you confirm, the file is deleted from 0G Storage (its rent stops) and share links to it stop working.
-- Moving a file to the trash keeps it (and its rent); only **Delete forever** removes it from 0G. Anyone who downloaded the encrypted file before, or holds a link with its key, may still have a copy.
+- **Trash** (sidebar): the restore button (↺) puts a file back where it was. If its folder has a file of the same name by then, the restored one is named “name (1).ext” and Activity says so. The × button is **Delete forever**: after you confirm, the file is deleted from 0G Storage (its rent stops) and share links to it stop working. Select several for **Restore selected** or **Delete forever**, or use **Empty trash** for everything in it.
+- **Files stay in the trash for 30 days**, then they're deleted forever (each shows its days left). Until then a file in the trash keeps its rent. Anyone who downloaded the encrypted file before, or holds a link with its key, may still have a copy.
+- **Leftovers are cleaned up.** About once a day, after your drive opens, the app looks for files in your storage account that nothing in your drive uses any more (a deletion that failed on the network, an upload that never finished) and deletes them, so they stop costing rent. Files from the last day are left alone (another device may still be finishing an upload).
 - **A change is all or nothing.** Each change (an upload's listing, a rename, a move…) becomes visible in one step, when its new drive *root* is saved; until then nothing has changed. If the page closes before that, the change simply didn't happen: do it again. Two devices changing the drive at the same moment are merged.
 - **⟳ Sync** reloads the drive from 0G Storage — useful after using the drive on another device.
 - **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails, and PDFs their first page (with a “PDF” badge in the grid). Other files show an icon for their type (PDF, document, spreadsheet, presentation, text, code, archive, audio, video, ebook, design, font, app); in the grid it also shows the extension, e.g. “PPTX”.

@@ -44,6 +44,8 @@
     "test:v2-vectors": "npm run build -w core && node scripts/test-v2-vectors.mjs",
     "test:v2-relayer": "npm run build -w core && node scripts/test-v2-relayer.mjs",
     "test:v2-drive": "npm run build -w core && node scripts/test-v2-drive.mjs",
+    "test:deletion": "npm run build -w core && node scripts/test-deletion.mjs",
+    "test:trash": "npm run build -w core && node scripts/test-trash.mjs",
     "test:v2-account": "npm run build -w core && node scripts/test-v2-account.mjs",
     "test:v2-app": "npm run build -w core && node scripts/test-v2-app.mjs",
     "test:password-only": "npm run build -w core && node scripts/test-password-only.mjs",

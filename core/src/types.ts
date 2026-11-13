@@ -55,6 +55,9 @@ export interface FileMeta {
   /** Set on records in the trash folder: the id of that folder, so restore
    *  finds it after a rename. Absent on records trashed before ids. */
   originalFolder?: string
+  /** Set on records in the trash folder: when they were put there (ms);
+   *  after TRASH_DAYS they're deleted forever. */
+  trashedAt?: number
   /**
    * Small thumbnail (data:image/webp|jpeg, a few KB), generated client-side
    * at upload. Lives inside the folder manifest, which is encrypted with the

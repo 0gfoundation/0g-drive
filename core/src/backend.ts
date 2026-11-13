@@ -59,6 +59,19 @@ export interface DriveBackend {
    * Best effort; never throws.
    */
   discard(files: FileMeta[]): Promise<void>
+
+  /** Keys of every listing the drive's current version names (after refresh). */
+  listingKeys(): string[]
+
+  /**
+   * Delete the account's stored files nothing needs any more (a deletion
+   * that failed, an upload whose change never stored): every file but the
+   * drive's own current version and what it still needs, the files in
+   * `keep` (data hashes of every file record), and anything stored less
+   * than `minAgeMs` ago (another device's upload whose change is still to
+   * come). How many it deleted.
+   */
+  sweep(keep: Set<string>, minAgeMs: number): Promise<number>
 }
 
 /** One listing to store: its key and its contents. */
