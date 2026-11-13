@@ -41,6 +41,7 @@
     "knowledge": "node scripts/build-knowledge.mjs",
     "test:assistant": "node scripts/test-assistant.mjs",
     "test:assistant-key": "node scripts/test-assistant-key.mjs",
+    "test:assistant-menu": "node scripts/test-assistant-menu.mjs",
     "test:v2-vectors": "npm run build -w core && node scripts/test-v2-vectors.mjs",
     "test:v2-relayer": "npm run build -w core && node scripts/test-v2-relayer.mjs",
     "test:v2-drive": "npm run build -w core && node scripts/test-v2-drive.mjs",

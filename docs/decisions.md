@@ -350,3 +350,8 @@ Verified: `npm run test:storage-balance` (11 checks; two replace the earlier "Up
 
 Verified: `npm run test:deletion` (node, fresh account: delete forever and empty trash delete bytes; a young file doesn't expire, past its days it's deleted forever; an undated record gets today's date and stays; a leftover is kept within the grace, kept when a listing can't be read, then deleted; nothing else deleted; the drive loads intact) and `npm run test:trash` (browser: the 30-day note and days left, Delete forever on a selection and Empty trash warn and delete the bytes from 0G, the sweep runs after opening, 390 px).
 
+
+### D27 — The assistant's ⋯ menu closes on a click elsewhere (user report, 2026-11-14)
+The menu (Balance & usage ↗, Forget API key) only closed on Escape, ⋯ again or Forget. Now, like the drive's address menu, a click anywhere else in the assistant closes it; so does a click on the drive page around the panel, which the assistant's frame only sees as losing focus (`blur`), and following "Balance & usage ↗".
+
+Verified: `npm run test:assistant-menu` (Router mocked, no wallet; Chromium desktop and WebKit phone: outside clicks in the assistant, a click on the drive page beside the panel, the Balance link, Escape, and Forget API key from the menu; 6 of its checks fail on the old code).
