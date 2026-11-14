@@ -60,6 +60,12 @@ export interface DriveBackend {
    */
   discard(files: FileMeta[]): Promise<void>
 
+  /**
+   * The drive's current version (after refresh), changing with every change
+   * stored from any device; null for a new drive.
+   */
+  version(): string | null
+
   /** Keys of every listing the drive's current version names (after refresh). */
   listingKeys(): string[]
 

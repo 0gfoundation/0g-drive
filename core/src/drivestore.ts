@@ -131,6 +131,16 @@ export class DriveStore {
     return this.backend.refresh()
   }
 
+  /**
+   * Whether the drive changed since this device last looked (a change from
+   * another device): one quick check, and the backend now knows the change.
+   */
+  async changedElsewhere(): Promise<boolean> {
+    const before = this.backend.version()
+    await this.backend.refresh()
+    return this.backend.version() !== before
+  }
+
   private async readManifest<T>(key: string): Promise<T | null> {
     const text = await this.backend.readManifest(key)
     return text === null ? null : (JSON.parse(text) as T)

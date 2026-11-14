@@ -76,7 +76,7 @@ Every file gets its own random key; the file is encrypted with it before upload,
 - **Files stay in the trash for 30 days**, then they're deleted forever (each shows its days left). Until then a file in the trash keeps its rent. Anyone who downloaded the encrypted file before, or holds a link with its key, may still have a copy.
 - **Leftovers are cleaned up.** About once a day, after your drive opens, the app looks for files in your storage account that nothing in your drive uses any more (a deletion that failed on the network, an upload that never finished) and deletes them, so they stop costing rent. Files from the last day are left alone (another device may still be finishing an upload).
 - **A change is all or nothing.** Each change (an upload's listing, a rename, a move…) becomes visible in one step, when its new drive *root* is saved; until then nothing has changed. If the page closes before that, the change simply didn't happen: do it again. Two devices changing the drive at the same moment are merged.
-- **⟳ Sync** reloads the drive from 0G Storage — useful after using the drive on another device.
+- **Changes from your other devices show up by themselves**: while the drive is open and its tab visible, it checks 0G Storage every 30 seconds (and as soon as you come back to the tab) and updates the view in place, keeping the folder you have open (followed if it was renamed). It waits while something is running or a dialog is open. **⟳ Sync** checks right away.
 - **List / Grid** toggle switches the file view; photos, videos and SVG images show thumbnails, and PDFs their first page (with a “PDF” badge in the grid). Other files show an icon for their type (PDF, document, spreadsheet, presentation, text, code, archive, audio, video, ebook, design, font, app); in the grid it also shows the extension, e.g. “PPTX”.
 
 ## Preview and download
@@ -167,7 +167,7 @@ The assistant answers questions about 0GDrive and 0G. It runs in a separate, iso
 - **An upload fails with "your storage balance ran out"** — deposit (Storage row), then upload the file again.
 - **"Models failed to load (…)"** next to Smart search — the reason is in brackets (also in Activity). *Not enough memory on this device* is common on phones and in wallet apps' browsers: smart search needs about 1 GB there; search keeps matching file names. *Couldn't download the models* — check the connection and retry from the search box.
 - **A change didn't happen** — the page closed before it was saved; do it again.
-- **A file disappeared after refresh** — click ⟳ Sync; another device may have changed the drive.
+- **A file disappeared after refresh** — another device may have changed the drive; the view updates by itself within about 30 seconds, or click ⟳ Sync.
 - **"The drive key on this device belongs to a different drive"** — restore this wallet's drive with the banner below it.
 - **Phone: stuck at "Reconnecting…" / "Connecting…", or "WalletConnect didn't start"** — what WalletConnect saved in this browser can get stuck. Tap **Start a new connection** (it clears only that, not your drive), then connect your wallet app again. Adding `?debug=wc` to the address shows WalletConnect's log on the page, for a screenshot when reporting a problem.
 - **Recipient can't open an encrypted link** — they must connect the exact wallet address the link was made for.
