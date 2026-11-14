@@ -12,6 +12,7 @@
 // wallets refunded at the end. Needs the model CDNs (or the app's /_models route).
 // Usage: node scripts/test-ai-loading.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
@@ -192,14 +193,11 @@ try {
   check('phone: smart search starts off, says why, and nothing downloads',
     !before.checked && /Off on phones at first: the models need about 600 MB/.test(before.note) && before.downloads === 0,
     JSON.stringify(before))
-  let asked = ''
-  phone.page.once('dialog', (d) => {
-    asked = d.message()
-    void d.dismiss()
-  })
+  // the drive's own confirm box (AskDialog): answer No
+  const asks = answerAsks(phone.page, () => false)
   await aiToggle(phone.page).click()
   await phone.page.waitForTimeout(3000)
-  const declined = { asked: /about 600 MB of memory/.test(asked), checked: await aiToggle(phone.page).isChecked(), downloads: phone.models.length }
+  const declined = { asked: asks.some((q) => /about 600 MB of memory/.test(q.text)), checked: await aiToggle(phone.page).isChecked(), downloads: phone.models.length }
   check('phone: turning it on warns about memory; "no" keeps it off',
     declined.asked && !declined.checked && declined.downloads === 0, JSON.stringify(declined))
   check('phone: no page errors', phone.errors.length === 0, phone.errors.join(' | '))
