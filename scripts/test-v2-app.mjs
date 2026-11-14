@@ -11,6 +11,7 @@
 //
 //   node scripts/test-v2-app.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -74,11 +75,7 @@ async function device({ width = 1280, withWallet = true } = {}) {
   const context = await browser.newContext({ viewport: { width, height: 900 } })
   const page = await context.newPage()
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
-  page.on('dialog', (d) => {
-    const m = d.message()
-    if (d.type() === 'prompt') return d.accept(m.startsWith('New folder') ? 'Recipes' : m.startsWith('Deposit') ? '0.05' : undefined)
-    return d.accept()
-  })
+  answerAsks(page, (q) => (q.title === 'New folder' ? 'Recipes' : q.title.startsWith('Deposit') ? '0.05' : true))
   if (withWallet) {
     await page.exposeFunction('__eth', async (method, params) => {
       try {

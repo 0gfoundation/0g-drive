@@ -4,6 +4,7 @@ import { setNodeRelay } from '@0gdrive/core'
 import App from './App'
 import { ErrorBoundary } from './ErrorBoundary'
 import { WalletPicker } from './WalletPicker'
+import { AskDialog } from './AskDialog'
 import { WalletConnectDebug, WalletConnectDialog } from './WalletConnectDialog'
 import './style.css'
 
@@ -17,6 +18,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <App />
       <WalletPicker />
+      <AskDialog />
       <WalletConnectDialog />
       <WalletConnectDebug />
     </ErrorBoundary>

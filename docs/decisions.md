@@ -351,6 +351,14 @@ Verified: `npm run test:storage-balance` (11 checks; two replace the earlier "Up
 Verified: `npm run test:deletion` (node, fresh account: delete forever and empty trash delete bytes; a young file doesn't expire, past its days it's deleted forever; an undated record gets today's date and stays; a leftover is kept within the grace, kept when a listing can't be read, then deleted; nothing else deleted; the drive loads intact) and `npm run test:trash` (browser: the 30-day note and days left, Delete forever on a selection and Empty trash warn and delete the bytes from 0G, the sweep runs after opening, 390 px).
 
 
+### D26 — The drive's own confirm and prompt boxes (user decision, 2026-11-14)
+The browser's `window.confirm` / `window.prompt` look like the browser, not the drive, and can't be styled. All nine are now one in-app dialog (`web/src/AskDialog.tsx`, mounted once in `main.tsx`): `askConfirm` and `askText` return promises, so each call site kept its wording and logic.
+- **Prompts check as you type**: a folder name (no `/`, not a folder already here) and a deposit amount (a number of 0G above 0) show the problem under the field; Enter does nothing until it's fixed.
+- **Confirms name the action** ("Delete forever", "Empty trash", "Move to trash", "Deposit…", "Turn on"), not OK. What can't be undone (delete forever, empty trash, deleting an empty folder, leaving mid-upload) gets a red button and starts focused on **Cancel**, so a stray Enter cancels; the others start on the action.
+- **Like the other dialogs**: Escape and a click outside cancel (a drag that ends outside doesn’t count, as in #72); at ≤ 520 px it's a bottom sheet with full-width 44 px buttons.
+
+Verified: `npm run test:dialogs` (fresh funded drive: New folder and Deposit open the drive's dialog with the field focused and checked as you type, Escape creates nothing, Cancel sends no transaction; Delete forever is red with focus on Cancel, Enter and a click outside keep the file, the red button deletes it; 390 px bottom sheet; no browser dialog at any point). The suites that answered browser dialogs answer the new one (`scripts/lib/ask.mjs`).
+
 ### D27 — The assistant's ⋯ menu closes on a click elsewhere (user report, 2026-11-14)
 The menu (Balance & usage ↗, Forget API key) only closed on Escape, ⋯ again or Forget. Now, like the drive's address menu, a click anywhere else in the assistant closes it; so does a click on the drive page around the panel, which the assistant's frame only sees as losing focus (`blur`), and following "Balance & usage ↗".
 

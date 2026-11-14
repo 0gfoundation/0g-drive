@@ -7,6 +7,7 @@
 // deleted and the wallet refunded at the end.
 //   node scripts/test-file-cache.mjs
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
@@ -79,7 +80,7 @@ page.on('worker', (w) => w.on('console', (m) => {
   consoleTail.push(`worker ${m.type()}: ${m.text().slice(0, 200)}`)
   if (consoleTail.length > 40) consoleTail.shift()
 }))
-page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? 'Recipes' : undefined))
+answerAsks(page, (q) => (q.title === 'New folder' ? 'Recipes' : true))
 await page.exposeFunction('__eth', async (method, params) => {
   try {
     return { ok: await rpc(method, params) }

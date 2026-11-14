@@ -9,6 +9,7 @@
 //
 //   node scripts/test-trash.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
@@ -119,11 +120,7 @@ async function goneSoon(hashes) {
     await page.waitForTimeout(3000)
   }
 }
-const dialogs = []
-page.on('dialog', (d) => {
-  dialogs.push(d.message())
-  d.accept()
-})
+const dialogs = answerAsks(page)
 const NAMES = ['one.txt', 'two.txt', 'three.txt']
 
 let masterKeyHex = null
@@ -168,13 +165,13 @@ try {
   await page.locator('table tbody tr', { hasText: 'one.txt' }).locator('input[type=checkbox]').check()
   await page.locator('.sel-bar').getByRole('button', { name: 'Delete forever' }).click()
   await page.waitForFunction(() => document.querySelectorAll('table tbody tr').length === 2, null, { timeout: 3 * 60_000 })
-  check('“Delete forever” on a selection warns first, then removes it', /Delete 1 file forever\? It is deleted from 0G Storage/.test(dialogs.at(-1) ?? ''), JSON.stringify(dialogs.at(-1)))
+  check('“Delete forever” on a selection warns first, then removes it', /Delete 1 file forever\? It is deleted from 0G Storage/.test(dialogs.at(-1)?.text ?? ''), JSON.stringify(dialogs.at(-1)))
   check('…and its bytes are deleted from 0G', (await goneSoon([hashOf['one.txt']])).length === 0)
 
   // empty trash
   await page.getByRole('button', { name: 'Empty trash' }).click()
   await page.locator('.empty', { hasText: 'Trash is empty.' }).waitFor({ timeout: 3 * 60_000 })
-  check('“Empty trash” warns first, then empties it', /Empty trash: delete 2 files forever\?/.test(dialogs.at(-1) ?? ''), JSON.stringify(dialogs.at(-1)))
+  check('“Empty trash” warns first, then empties it', /Empty trash: delete 2 files forever\?/.test(dialogs.at(-1)?.text ?? ''), JSON.stringify(dialogs.at(-1)))
 
   const left = await goneSoon([hashOf['two.txt'], hashOf['three.txt']])
   check('…and their bytes are deleted from 0G', left.length === 0, `${left.length} still stored`)

@@ -31,7 +31,7 @@ export function isPhone(): boolean {
 export const PHONE_MEMORY_WARNING =
   'Smart search runs AI models on this phone. They download about 250 MB once and need about 600 MB of memory, ' +
   'and some phones close the page when it runs short (it turns white). ' +
-  'Search by file name works without it.\n\nTurn smart search on?'
+  'Search by file name works without it.'
 
 export function smartSearchEnabled(): boolean {
   try {
