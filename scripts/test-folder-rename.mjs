@@ -11,6 +11,7 @@
 //
 //   node scripts/test-folder-rename.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
@@ -114,7 +115,7 @@ const dialog = page.locator('.rename-modal')
 const input = dialog.getByRole('textbox', { name: 'New name' })
 const submit = dialog.getByRole('button', { name: 'Rename' })
 let promptAnswer = ''
-page.on('dialog', (d) => d.accept(promptAnswer))
+answerAsks(page, (q) => (q.prompt && q.title === 'New folder' ? promptAnswer : true))
 const newFolder = async (name) => {
   promptAnswer = name
   await page.getByRole('button', { name: '+ New folder' }).click()

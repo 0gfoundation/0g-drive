@@ -10,6 +10,7 @@
 // Makes a drive on a FRESH key funded from .env's test wallet, refunded at
 // the end. Usage: node scripts/test-bg-index.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
@@ -45,7 +46,7 @@ const page = await context.newPage()
 const errors = []
 page.on('pageerror', (e) => errors.push(e.message))
 let promptAnswer = ''
-page.on('dialog', (d) => d.accept(promptAnswer))
+answerAsks(page, (q) => (q.prompt && q.title === 'New folder' ? promptAnswer : true))
 await page.exposeFunction('__eth', async (method, params) => {
   try {
     switch (method) {

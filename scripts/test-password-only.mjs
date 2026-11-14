@@ -11,6 +11,7 @@
 //
 //   node scripts/test-password-only.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -78,7 +79,7 @@ async function device({ width = 1280, withWallet = true } = {}) {
   const context = await browser.newContext({ viewport: { width, height: 900 } })
   const page = await context.newPage()
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
-  page.on('dialog', (d) => d.accept())
+  answerAsks(page)
   if (withWallet) {
     await page.exposeFunction('__eth', async (method, params) => {
       try {

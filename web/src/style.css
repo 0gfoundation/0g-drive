@@ -219,6 +219,16 @@ a:hover {
   border-color: var(--danger);
   color: var(--danger);
 }
+.btn.danger-solid {
+  /* darker than --danger, so white text reads on it */
+  background: #d63c3c;
+  border-color: #d63c3c;
+  color: #fff;
+  font-weight: 550;
+}
+.btn.danger-solid:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
 .link {
   background: none;
   border: none;
@@ -1074,6 +1084,20 @@ tbody tr:hover {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 18px;
+}
+.ask-modal {
+  max-width: 440px;
+}
+.ask-message {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.ask-modal .key-input {
+  margin-top: 8px;
 }
 .dup-list {
   list-style: none;

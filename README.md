@@ -79,6 +79,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:dialog-backdrop` | Dialogs stay open when a drag (selecting a field's text) ends outside them; a click outside still closes them |
 | `npm run test:deletion` | Real deletion on 0G (node): delete forever, empty trash, trash expiry, the leftover sweep and its safeguards |
 | `npm run test:trash` | The Trash screen: 30-day note and days left, Delete forever on a selection, Empty trash, bytes gone from 0G, 390 px |
+| `npm run test:dialogs` | The drive's own confirm and prompt boxes (New folder, Deposit, Delete forever): checks as you type, Enter / Escape / click outside, red button with focus on Cancel for deletes, 390 px bottom sheet, no browser dialogs |
 | `npm run test:welcome` | the welcome panel shown before a wallet is connected (spends nothing) |
 | `npm run test:rename` | file rename: name checks, duplicates refused, no wallet prompt, phone layout; file actions icon-only |
 | `npm run test:folder-rename` | folder rename: name checks, no wallet prompt, open folder follows, subfolder kept, phone layout |

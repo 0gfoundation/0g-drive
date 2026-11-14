@@ -70,6 +70,7 @@ import {
   DepositError,
 } from './v2drive'
 import { closeOnBackdrop } from './backdrop'
+import { askConfirm, askText } from './AskDialog'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
 import { FileIcon } from './fileIcons'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
@@ -938,13 +939,18 @@ export default function App() {
   }, [])
 
   /** Uploads or another action still running: say so before a reload drops them. */
-  const confirmLeave = (what: string) =>
+  const confirmLeave = async (what: string) =>
     (busy === null && queue.every((q) => q.state === 'done' || q.state === 'error')) ||
-    window.confirm(`Something is still in progress (${busy ?? 'uploads'}). ${what} anyway? It will stop.`)
+    askConfirm({
+      title: `${what} anyway?`,
+      message: `Something is still in progress (${busy ?? 'uploads'}). It will stop.`,
+      action: what,
+      danger: true,
+    })
 
   const switchAccount = useCallback(async () => {
     setWalletMenu(false)
-    if (!wallet || !confirmLeave('Switch wallet')) return
+    if (!wallet || !(await confirmLeave('Switch wallet'))) return
     try {
       await switchWallet(NETWORK, wallet.address)
     } catch (err) {
@@ -966,9 +972,9 @@ export default function App() {
     }
   }, [walletMenu])
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
     setWalletMenu(false)
-    if (!confirmLeave('Disconnect')) return
+    if (!(await confirmLeave('Disconnect'))) return
     void disconnectWallet()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, queue])
@@ -1156,17 +1162,28 @@ export default function App() {
   const topUp = useCallback(
     async (suggested = FIRST_DEPOSIT): Promise<boolean> => {
       if (!wallet || !masterKeyHex) return false
-      const amount = window.prompt('Deposit to your storage balance (0G). Your wallet will ask you to approve 1 transaction.', suggested)?.trim()
-      if (!amount) return false
       const { parseEther } = await import('ethers')
-      let wei: bigint
-      try {
-        wei = parseEther(amount)
-        if (wei <= 0n) throw new Error()
-      } catch {
-        log(`Not an amount: ${amount}`)
-        return false
+      const weiOf = (amount: string) => {
+        try {
+          const wei = parseEther(amount)
+          return wei > 0n ? wei : null
+        } catch {
+          return null
+        }
       }
+      const amount = await askText({
+        title: 'Deposit to your storage balance',
+        message: 'Your wallet will ask you to approve 1 transaction.',
+        action: 'Deposit',
+        input: {
+          label: 'Amount (0G)',
+          value: suggested,
+          inputMode: 'decimal',
+          check: (v) => (weiOf(v) === null ? 'Enter an amount of 0G above 0, like 0.1.' : null),
+        },
+      })
+      if (amount === null) return false
+      const wei = weiOf(amount)!
       setDepositBusy('Approve in wallet…')
       try {
         const masterKey = hexToBytes(masterKeyHex)
@@ -1415,9 +1432,11 @@ export default function App() {
         const { formatEther } = await import('ethers')
         const fmt = (wei: bigint) => Number(formatEther(wei)).toPrecision(2)
         const ok =
-          window.confirm(
-            `Your storage balance (${fmt(have)} 0G) is below the ~${fmt(need)} 0G ${files.length === 1 ? 'this file needs' : 'these files need'} up front (about a week of storage). Deposit now? (1 transaction in your wallet)`
-          ) && (await topUp(Number(formatEther(need * 10n > 10n ** 17n ? need * 10n : 10n ** 17n)).toString()))
+          (await askConfirm({
+            title: 'Storage balance too low',
+            message: `Your storage balance (${fmt(have)} 0G) is below the ~${fmt(need)} 0G ${files.length === 1 ? 'this file needs' : 'these files need'} up front (about a week of storage). Deposit now? (1 transaction in your wallet)`,
+            action: 'Deposit…',
+          })) && (await topUp(Number(formatEther(need * 10n > 10n ** 17n ? need * 10n : 10n ** 17n)).toString()))
         if (!ok) {
           const ids = new Set(items.map((i) => i.id))
           setQueue((q) => q.map((x) => (ids.has(x.id) ? { ...x, state: 'error', message: 'storage balance too low — deposit, then upload again', percent: undefined } : x)))
@@ -1672,7 +1691,16 @@ export default function App() {
     async (meta: FileMeta) => {
       const store = storeRef.current
       if (!store) return
-      if (view === 'trash' && !window.confirm(`Delete "${meta.name}" forever? The file is deleted from 0G Storage; links you shared stop working.`)) return
+      if (
+        view === 'trash' &&
+        !(await askConfirm({
+          title: `Delete “${meta.name}” forever?`,
+          message: 'The file is deleted from 0G Storage; links you shared stop working.',
+          action: 'Delete forever',
+          danger: true,
+        }))
+      )
+        return
       setBusy(view === 'trash' ? `Deleting ${meta.name}…` : `Moving ${meta.name} to trash…`)
       try {
         if (view === 'trash') {
@@ -1817,11 +1845,16 @@ export default function App() {
     const files = `${n} file${n === 1 ? '' : 's'}`
     const forever = view === 'trash'
     if (
-      !window.confirm(
+      !(await askConfirm(
         forever
-          ? `Delete ${files} forever? ${n === 1 ? 'It is' : 'They are'} deleted from 0G Storage; links you shared stop working.`
-          : `Move ${files} to trash?`
-      )
+          ? {
+              title: `Delete ${files} forever?`,
+              message: `${n === 1 ? 'It is' : 'They are'} deleted from 0G Storage; links you shared stop working.`,
+              action: 'Delete forever',
+              danger: true,
+            }
+          : { title: `Move ${files} to trash?`, message: 'You can restore them from Trash.', action: 'Move to trash' }
+      ))
     )
       return
     setBusy(forever ? `Deleting ${files}…` : `Moving ${files} to trash…`)
@@ -1843,7 +1876,15 @@ export default function App() {
     const ids = drive?.trash?.files.map((f) => f.id) ?? []
     if (!store || ids.length === 0) return
     const files = `${ids.length} file${ids.length === 1 ? '' : 's'}`
-    if (!window.confirm(`Empty trash: delete ${files} forever? They're deleted from 0G Storage; links you shared stop working.`)) return
+    if (
+      !(await askConfirm({
+        title: `Empty trash: delete ${files} forever?`,
+        message: 'They’re deleted from 0G Storage; links you shared stop working.',
+        action: 'Empty trash',
+        danger: true,
+      }))
+    )
+      return
     setBusy('Emptying trash…')
     try {
       await store.removeFileRecords(TRASH_PATH, ids, false)
@@ -1932,9 +1973,21 @@ export default function App() {
   const newFolder = useCallback(async () => {
     const store = storeRef.current
     if (!store) return
-    const name = window.prompt('New folder name:')
-    if (!name?.trim()) return
-    const path = currentPath === '' ? name.trim() : currentPath + '/' + name.trim()
+    const here = drive ? subFolders(drive, currentPath).map(baseName) : []
+    const name = await askText({
+      title: 'New folder',
+      action: 'Create',
+      input: {
+        label: 'Folder name',
+        placeholder: 'Folder name',
+        check: (v) => {
+          const clash = here.find((n) => n.toLowerCase() === v.toLowerCase())
+          return folderNameProblem(v) ?? (clash ? `There is already a folder named “${clash}” here.` : null)
+        },
+      },
+    })
+    if (name === null) return
+    const path = currentPath === '' ? name : currentPath + '/' + name
     setBusy(`Creating folder ${name}…`)
     try {
       await store.createFolder(path)
@@ -1945,7 +1998,7 @@ export default function App() {
     } finally {
       setBusy(null)
     }
-  }, [currentPath, log, reloadDrive])
+  }, [currentPath, drive, log, reloadDrive])
 
   const removeFolder = useCallback(
     async (path: string) => {
@@ -1960,7 +2013,7 @@ export default function App() {
         count > 0
           ? `Move "${path}" and ${count} file${count === 1 ? '' : 's'} to trash?`
           : `Delete the empty folder "${path}"?`
-      if (!window.confirm(msg)) return
+      if (!(await askConfirm({ title: msg, message: count > 0 ? 'You can restore the files from Trash.' : undefined, action: count > 0 ? 'Move to trash' : 'Delete', danger: count === 0 }))) return
       setBusy(`Moving ${path} to trash…`)
       try {
         await store.trashFolder(path)

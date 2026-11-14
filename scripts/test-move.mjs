@@ -14,6 +14,7 @@
 //
 //   node scripts/test-move.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
@@ -128,7 +129,7 @@ page.on('console', (m) => {
   consoleTail.push(`${m.type()}: ${m.text().slice(0, 200)}`)
   if (consoleTail.length > 40) consoleTail.shift()
 })
-page.on('dialog', (d) => d.accept(promptAnswer))
+answerAsks(page, (q) => (q.prompt && q.title === 'New folder' ? promptAnswer : true))
 const newFolder = async (name) => {
   promptAnswer = name
   await page.getByRole('button', { name: '+ New folder' }).click()

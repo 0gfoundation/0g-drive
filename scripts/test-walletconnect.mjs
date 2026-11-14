@@ -33,6 +33,7 @@
 // wallet uses the same project ID (WALLETCONNECT_PROJECT_ID, else
 // web/.env.local).
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -182,7 +183,7 @@ async function open(opts, setup) {
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   page.on('request', (r) => requests.push(r.url()))
   page.on('websocket', (ws) => requests.push(ws.url()))
-  page.on('dialog', (d) => d.accept())
+  answerAsks(page)
   await page.goto(base)
   await page.evaluate(() => localStorage.setItem('0gdrive:layout', 'list'))
   return { context, page }

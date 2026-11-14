@@ -22,6 +22,7 @@ import {
 } from './ai/client'
 import { rank, suggestMoves, type MoveSuggestion } from './ai/searchcore'
 import { addPendingSearch, pendingSearch, prunePendingSearch, subscribePendingSearch } from './searchPending'
+import { askConfirm } from './AskDialog'
 
 export interface FileHit {
   meta: FileMeta
@@ -101,8 +102,8 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
     if (enabled && driveOpen) prefetchPhotoModels()
   }, [enabled, driveOpen])
 
-  const toggle = useCallback((on: boolean) => {
-    if (on && isPhone() && !window.confirm(PHONE_MEMORY_WARNING)) return
+  const toggle = useCallback(async (on: boolean) => {
+    if (on && isPhone() && !(await askConfirm({ title: 'Turn smart search on?', message: PHONE_MEMORY_WARNING, action: 'Turn on' }))) return
     setSmartSearchEnabled(on)
     setEnabled(on)
   }, [])

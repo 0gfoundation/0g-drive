@@ -16,6 +16,7 @@
 //
 //   node scripts/test-storage-balance.mjs [http://localhost:5173]
 import { chromium } from 'playwright'
+import { answerAsks } from './lib/ask.mjs'
 import { connectExtension } from './lib/connect.mjs'
 import { ethers } from 'ethers'
 import { readFileSync } from 'node:fs'
@@ -251,11 +252,7 @@ try {
   )
 
   // a deposit while the RPC lags: the balance still updates, with no reload
-  const dialogs = []
-  page.on('dialog', (d) => {
-    dialogs.push(d.message())
-    d.accept(d.type() === 'prompt' ? '0.05' : undefined)
-  })
+  const dialogs = answerAsks(page, (q) => (q.prompt ? '0.05' : true))
   const setupShown = await headerMatchesChain()
   check('after setup the header shows the wallet’s 0G after the setup deposit', Math.abs(setupShown.shown - setupShown.chain) < 0.00015 && setupShown.shown < 0.9, JSON.stringify(setupShown))
   const before = await amount()
@@ -273,7 +270,7 @@ try {
   })
   await page.locator('.sec-row[data-row="storage"] button').click()
   await page.locator('.sec-row[data-row="storage"] button', { hasText: 'Updating…' }).waitFor({ timeout: 3 * 60_000 })
-  check('the deposit box says the wallet will ask to approve 1 transaction', /approve 1 transaction/.test(dialogs.at(-1) ?? ''), JSON.stringify(dialogs.at(-1)))
+  check('the deposit box says the wallet will ask to approve 1 transaction', /approve 1 transaction/.test(dialogs.at(-1)?.text ?? ''), JSON.stringify(dialogs.at(-1)))
   await page.waitForFunction((b) => {
     const t = document.querySelector('.sec-row[data-row="storage"] .sec-status')?.textContent ?? ''
     return Number(t.replace(/\s*0G\s*$/, '').replace(/[^0-9.]/g, '')) > b + 0.04
