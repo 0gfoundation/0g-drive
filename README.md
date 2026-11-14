@@ -97,6 +97,7 @@ Then open <http://localhost:5173> in a browser with a wallet extension installed
 | `npm run test:ai-memory` | the AI engine’s memory reservation stays at 1 GB, and models load in a tab that has no room for 4 GB |
 | `npm run test:pdf-preview` | PDF preview on phones: pages drawn and released as you scroll; desktop keeps the browser’s viewer |
 | `npm run test:bg-index` | background indexing: files without search entries indexed on the device, saved with the next change or Save |
+| `npm run test:background-sync` | two devices on one drive: changes from one show on the other within ~30 s with no Sync click, open folder kept (followed through a rename), held while a dialog is open, no checks while the tab is hidden, 390 px |
 | `npm run test:html-preview` | HTML preview: the page shown sandboxed (no scripts, nothing loaded from the internet), or its source |
 | `npm run test:markdown-preview` | Markdown preview: formatted in the same sandbox (raw HTML's scripts and handlers removed, internet images as their alt text), or its source; 390 px |
 | `node scripts/test-ai-loading.mjs` | AI model loading: off on phones (asks before turning on), text model first, photo models on the first photo |

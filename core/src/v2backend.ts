@@ -454,6 +454,10 @@ export class V2Backend implements DriveBackend {
     void this.deleteAll(files.flatMap((f) => f.rootHashes.map(strip0x)))
   }
 
+  version(): string | null {
+    return this.current?.hash ?? null
+  }
+
   listingKeys(): string[] {
     return Object.keys(this.current?.root.listings ?? {})
   }

@@ -153,6 +153,22 @@ function trashNote(f: FileMeta): string {
 }
 /** Housekeeping (expired trash, leftover files) waits this long after the drive opens. */
 const HOUSEKEEPING_AFTER_MS = 20_000
+/** how often an open drive checks for changes made on another device */
+const BG_SYNC_MS = 30_000
+
+/** The open folder after a change from elsewhere: followed if renamed or moved, else its nearest folder still there. */
+function followFolder(path: string, before: DriveState | null, next: DriveState): string {
+  if (path === '' || next.paths.includes(path)) return path
+  const id = before?.tree.idOf(path)
+  const moved = id ? next.tree.pathOf(id) : null
+  if (moved !== null) return moved
+  let up = path
+  while (up.includes('/')) {
+    up = up.slice(0, up.lastIndexOf('/'))
+    if (next.paths.includes(up)) return up
+  }
+  return ''
+}
 
 /** Whole days until a trashed file is deleted forever (null: not dated yet). */
 function trashDaysLeft(f: FileMeta): number | null {
@@ -1951,6 +1967,51 @@ export default function App() {
     }
     setTimeout(run, HOUSEKEEPING_AFTER_MS)
   }, [drive, wallet?.address, readOnly, log])
+
+  // Background sync: every BG_SYNC_MS while this tab is visible, and on
+  // coming back to it, one quick check for a change made on another device
+  // (one list request); only then the drive is reloaded, quietly, keeping
+  // the open folder. Waits while something runs here or a dialog is open,
+  // so nothing changes under an action.
+  const syncingRef = useRef(false)
+  const unappliedRef = useRef(false)
+  const driveOpen = drive !== null
+  useEffect(() => {
+    if (!driveOpen) return
+    const idle = () => quietRef.current && document.querySelector('.modal-backdrop') === null
+    const check = async () => {
+      const store = storeRef.current
+      if (!store || syncingRef.current || document.visibilityState !== 'visible' || !idle()) return
+      syncingRef.current = true
+      try {
+        // a change found while busy is still to show
+        if (!(await store.changedElsewhere()) && !unappliedRef.current) return
+        unappliedRef.current = true
+        const next = await store.loadDrive()
+        if (storeRef.current !== store || !idle()) return
+        unappliedRef.current = false
+        const before = driveRef.current
+        setDrive(next)
+        setCurrentPath((p) => followFolder(p, before, next))
+        const ids = new Set([...next.folders.values(), next.trash].flatMap((f) => f?.files.map((r) => r.id) ?? []))
+        setSelectedIds((sel) => sel.filter((id) => ids.has(id)))
+        log('Updated with changes from another device.')
+      } catch (err) {
+        console.warn('[drive] background sync', err)
+      } finally {
+        syncingRef.current = false
+      }
+    }
+    const timer = setInterval(() => void check(), BG_SYNC_MS)
+    const onBack = () => document.visibilityState === 'visible' && void check()
+    document.addEventListener('visibilitychange', onBack)
+    window.addEventListener('focus', onBack)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onBack)
+      window.removeEventListener('focus', onBack)
+    }
+  }, [driveOpen, log])
 
   const restoreSelected = useCallback(async () => {
     const store = storeRef.current

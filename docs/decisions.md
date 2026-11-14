@@ -363,3 +363,12 @@ Verified: `npm run test:dialogs` (fresh funded drive: New folder and Deposit ope
 The menu (Balance & usage ↗, Forget API key) only closed on Escape, ⋯ again or Forget. Now, like the drive's address menu, a click anywhere else in the assistant closes it; so does a click on the drive page around the panel, which the assistant's frame only sees as losing focus (`blur`), and following "Balance & usage ↗".
 
 Verified: `npm run test:assistant-menu` (Router mocked, no wallet; Chromium desktop and WebKit phone: outside clicks in the assistant, a click on the drive page beside the panel, the Balance link, Escape, and Forget API key from the menu; 6 of its checks fail on the old code).
+
+### D28 — Background sync: other devices' changes show up by themselves (user decision, 2026-11-14)
+Only ⟳ Sync (or a reload) showed what another device changed. Now an open drive checks **every 30 s while its tab is visible**, and at once on coming back to the tab or window.
+- **The check is cheap**: `DriveStore.changedElsewhere` refreshes the backend and compares its `version()` (V2: the newest root's hash). The relayer lists newest first and the scan stops at the root already held, so an unchanged drive costs one list request; reading is free and asks the wallet for nothing. Only on a change is the drive reloaded, and folder listings are cached by hash, so only changed ones download.
+- **Quiet**: no busy banner; the view updates in place; Activity says "Updated with changes from another device." The open folder is kept, followed by its id if it was renamed or moved, else the nearest folder still there; selected files that are gone are unselected.
+- **Never under an action**: no check while something runs on this device (busy, uploads) or a dialog is open; a change found then is applied at the next quiet check.
+- Read-only drives (opened with the password) update too. ⟳ Sync stays, for right now. Simultaneous edits are still merged by the backend as before (`newer`); this only makes them show sooner.
+
+Verified: `npm run test:background-sync` (fresh funded drive on two devices: B, sitting in a folder, shows A's new folder and upload with no Sync click and no banner, follows its folder through A's rename, doesn't change with a dialog open and catches up after, makes no requests with its tab hidden and catches up on return, ~1 request per 30 s when nothing changes; 390 px).
