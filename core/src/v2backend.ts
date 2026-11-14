@@ -39,6 +39,11 @@ interface FoundRoot {
   card: unknown
 }
 
+/** A stored root, and its check against other devices' roots still to come. */
+interface Commit {
+  checked: Promise<void>
+}
+
 export interface V2BackendOpts {
   onProgress?: (msg: string) => void
   /** files uploaded at once (each sends a few parts in parallel; the relayer allows 8 per account) */
@@ -65,6 +70,8 @@ const ENC_PIECE = 4 * 1024 * 1024
 
 /** after storing a root, look for one stored at the same time this long after */
 const VERIFY_AFTER_MS = 1000
+/** a root read this recently is the base of a change without reading again (the check after catches a newer one) */
+const FRESH_MS = 10_000
 /** roots stored again over another device's, at most */
 const MERGE_ROUNDS = 3
 
@@ -167,8 +174,10 @@ export class V2Backend implements DriveBackend {
   private texts = new Map<string, string>()
   /** account files seen not to be roots */
   private notRoots = new Set<string>()
-  /** one change at a time: each reads the latest root and replaces it */
+  /** one change at a time: each reads the latest root and replaces it, and is checked before the next starts */
   private writing: Promise<unknown> = Promise.resolve()
+  /** when refresh last read the newest root */
+  private refreshedAt = 0
   private card: unknown
 
   constructor(
@@ -188,6 +197,12 @@ export class V2Backend implements DriveBackend {
 
   async refresh(): Promise<void> {
     this.current = this.newer(await this.findRoot(), this.current)
+    this.refreshedAt = Date.now()
+  }
+
+  /** Resolves once every change so far is stored and checked against other devices' (see commit). */
+  settled(): Promise<void> {
+    return this.writing.then(() => undefined)
   }
 
   /** The card stored with the current root (after refresh). */
@@ -198,7 +213,7 @@ export class V2Backend implements DriveBackend {
   /** Store `card` with a new root now (the drive's first root, or a card change). */
   saveCard(card: unknown): Promise<void> {
     this.card = card
-    const run = this.writing.then(() => this.commit({}))
+    const run = this.writing.then(() => this.commit({})).then((c) => c.checked)
     this.writing = run.catch(() => undefined)
     return run
   }
@@ -285,6 +300,7 @@ export class V2Backend implements DriveBackend {
     const src = new EncryptedSource(new Blob([text]), { type: 'aes256', key: this.masterKey })
     const r = await this.relayer.upload(this.account, src)
     this.texts.set(r.dataHash, text)
+    this.notRoots.add(strip0x(r.dataHash))
     return { h: r.dataHash, n: src.size }
   }
 
@@ -310,16 +326,18 @@ export class V2Backend implements DriveBackend {
    * One change: its listings, then a root naming them. All of `first` and
    * `then` are required (on V2 nothing shows until the root is stored, so
    * their order doesn't matter and a change is never half done); extras
-   * join the root only if they stored.
+   * join the root only if they stored. Resolves once the root is stored;
+   * the check against other devices' changes goes on after (the next
+   * change waits for it).
    */
   writeManifests(first: ManifestWrite[], then: ManifestWrite[], extras: ManifestWrite[], _partial: string): Promise<void> {
     const run = this.writing.then(() => this.change([...first, ...then], extras))
-    this.writing = run.catch(() => undefined)
-    return run
+    this.writing = run.then((c) => c.checked).catch(() => undefined)
+    return run.then(() => undefined)
   }
 
-  private async change(required: ManifestWrite[], extras: ManifestWrite[]): Promise<void> {
-    if (required.length === 0) return
+  private async change(required: ManifestWrite[], extras: ManifestWrite[]): Promise<Commit> {
+    if (required.length === 0) return { checked: Promise.resolve() }
     const stored = await this.storeListings([...required, ...extras])
     const failed = stored.slice(0, required.length).find((r) => !r.ok)
     if (failed && !failed.ok) throw new Error(`nothing was changed: a listing could not be stored (${failed.error})`)
@@ -328,23 +346,33 @@ export class V2Backend implements DriveBackend {
       const r = stored[i]
       if (r.ok) refs[w.key] = r.ref
     })
-    await this.commit(refs)
+    return this.commit(refs)
   }
 
   /**
-   * Store a root naming `refs` over the latest root's listings. Then look
-   * again: if another device stored a root at the same time, ours may not
-   * be the one readers find, so lay `refs` over theirs and store again.
+   * Store a root naming `refs` over the latest root's listings (the one
+   * refresh just read, else read again). `checked` then looks again: if
+   * another device stored a root at the same time, ours may not be the one
+   * readers find, so it lays `refs` over theirs and stores again.
    */
-  private async commit(refs: Record<string, ListingRef>): Promise<void> {
-    let ours: FoundRoot | null = null
-    for (let round = 0; ; round++) {
-      // the latest: another device may have changed the drive since our last read
-      const base = this.newer(await this.findRoot(), this.current)
-      const kept = base !== null && Object.entries(refs).every(([key, ref]) => base.root.listings[key]?.h === ref.h)
-      if (ours && (kept || round > MERGE_ROUNDS)) return
-      ours = await this.storeRoot(base, refs, ours)
-      await sleep(VERIFY_AFTER_MS)
+  private async commit(refs: Record<string, ListingRef>): Promise<Commit> {
+    const base = Date.now() - this.refreshedAt < FRESH_MS ? this.current : this.newer(await this.findRoot(), this.current)
+    const ours = await this.storeRoot(base, refs, null)
+    return { checked: this.check(refs, ours) }
+  }
+
+  /** commit's look again; a failure is only logged (the next refresh shows the drive as stored). */
+  private async check(refs: Record<string, ListingRef>, ours: FoundRoot): Promise<void> {
+    try {
+      for (let round = 1; ; round++) {
+        await sleep(VERIFY_AFTER_MS)
+        const base = this.newer(await this.findRoot(), this.current)
+        const kept = base !== null && Object.entries(refs).every(([key, ref]) => base.root.listings[key]?.h === ref.h)
+        if (kept || round > MERGE_ROUNDS) return
+        ours = await this.storeRoot(base, refs, ours)
+      }
+    } catch (err) {
+      console.warn(`[drive] could not check the change against other devices': ${(err as Error).message}`)
     }
   }
 
@@ -414,6 +442,7 @@ export class V2Backend implements DriveBackend {
           const r = await this.relayer.upload(this.account, src, {
             onProgress: (sent, total) => opts.onItemProgress?.(i, 'sending', total ? sent / total : 1),
           })
+          this.notRoots.add(strip0x(r.dataHash))
           results[i] = { ok: true, ref: { rootHashes: ['0x' + r.dataHash], txHashes: [] } }
           opts.onItem?.(i, 'done')
         } catch (err) {

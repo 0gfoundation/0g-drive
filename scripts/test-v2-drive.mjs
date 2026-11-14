@@ -157,6 +157,8 @@ try {
   await b.loadDrive()
   const record = (id, name) => ({ ...rec('f1'), id, name })
   await Promise.all([a.putFileRecord('Docs', record('fa', 'from-a.bin')), b.putFileRecord('Docs/2026', record('fb', 'from-b.bin'))])
+  // each change returns once its root is stored; each device's check against the other's goes on after
+  await Promise.all([a.backend.settled(), b.backend.settled()])
   drive = await newStore().loadDrive()
   check(
     'two devices at once: both changes kept',

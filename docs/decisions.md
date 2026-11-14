@@ -372,3 +372,9 @@ Only ⟳ Sync (or a reload) showed what another device changed. Now an open driv
 - Read-only drives (opened with the password) update too. ⟳ Sync stays, for right now. Simultaneous edits are still merged by the backend as before (`newer`); this only makes them show sooner.
 
 Verified: `npm run test:background-sync` (fresh funded drive on two devices: B, sitting in a folder, shows A's new folder and upload with no Sync click and no banner, follows its folder through A's rename, doesn't change with a dialog open and catches up after, makes no requests with its tab hidden and catches up on return, ~1 request per 30 s when nothing changes; 390 px).
+
+### D29 — A change returns once its root is stored (2026-11-14)
+Moving one file to trash took ~2 s on staging, and half of it was a fixed 1 s wait: after storing a root, the backend waited, read the newest root again, and stored again over another device's root made at the same moment (D18's merge). Rename, move, folders and restore paid the same.
+- **The check runs after**: `writeManifests` resolves once the root is stored, so the view updates then; the 1 s wait, the second read and any re-store go on in the background. The next change waits for that check (one change at a time, as before), so changes still never cross. `V2Backend.settled()` resolves when every check so far is done (tests with two devices wait on it). A check that fails is logged; the next refresh shows the drive as stored.
+- **Fewer reads**: a change starts from the root `refresh` read in the last 10 s instead of reading it again (a root another device stored in between is caught by the check), and the backend's own listings and files are known not to be roots, so finding the root doesn't read their first bytes.
+- Measured (staging relayer, one file to trash): ~2.0 s → ~1.0 s; what remains is the relayer storing two files in turn (listings, then root), ~0.35 s each.
