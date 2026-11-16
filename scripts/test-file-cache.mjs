@@ -107,11 +107,14 @@ await page.addInitScript(() => {
 
 // downloads of the file itself from the relayer (GET /v1/files/<its data
 // hash>); the drive's listings and root come from there too, but under
-// other hashes
+// other hashes. Not counted: a read of its first bytes (Range bytes=0-19),
+// how the drive tells its root from its other files on load — the file is
+// read so when it was stored close to the root (not a download, 20 bytes)
 let fileHash = ''
+const firstBytes = (req) => Number(/^bytes=0-(\d+)$/.exec(req.headers()['range'] ?? '')?.[1] ?? Infinity) < 1024
 page.on('requestfinished', (req) => {
   const u = new URL(req.url())
-  if (u.origin === new URL(V2_TESTNET.relayer).origin && u.pathname.startsWith('/v1/files/')) {
+  if (u.origin === new URL(V2_TESTNET.relayer).origin && u.pathname.startsWith('/v1/files/') && !firstBytes(req)) {
     net.push({ at: Date.now() - t0, hash: u.pathname.split('/')[3], ms: Math.round(req.timing().responseEnd) })
   }
 })
