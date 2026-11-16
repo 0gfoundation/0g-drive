@@ -2,6 +2,7 @@
 // against the testnet relayer. A fresh storage account, funded from the
 // .env wallet; folders, uploads, rename, move, trash; a restart from the
 // relayer alone; two devices changing the drive at once; a wrong drive key;
+// the root begun alongside its listings, never sent when one fails;
 // superseded versions deleted; then every file of the account deleted.
 // Usage: npm run test:v2-drive  (reads PRIVATE_KEY from env or .env)
 import { ethers } from 'ethers'
@@ -188,6 +189,64 @@ try {
   // files: 2 uploads (the purged one too: purge drops the record, not the blob)
   // + current listings (index, root, 3+2 folders, trash) + one change of grace
   check('old listing versions deleted', listed.length <= 2 + 8 + 8, `${listed.length} files`)
+
+  // the root begins alongside its listings and is sent once they're stored;
+  // a listing that fails leaves no root (spied: when each upload starts and
+  // ends; `fail` makes the nth listing upload fail after it began)
+  const probe = newStore()
+  await probe.loadDrive()
+  const rel = probe.backend.relayer
+  const realUpload = rel.upload.bind(rel)
+  let spans = []
+  let fail = 0
+  rel.upload = (signer, src, opts = {}) => {
+    const listing = Boolean(opts.onHashed)
+    const span = { listing, start: Date.now(), end: 0, error: null }
+    spans.push(span)
+    const lost = listing && --fail === 0 ? Promise.reject(new Error('test: this listing is lost')) : null
+    lost?.catch(() => undefined) // awaited once the upload has begun
+    const lose = lost ? { after: lost } : {}
+    return realUpload(signer, src, { ...opts, ...lose }).then(
+      (r) => ((span.end = Date.now()), r),
+      (e) => {
+        span.end = Date.now()
+        span.error = e
+        throw e
+      }
+    )
+  }
+  const write = (required, extras = []) => probe.backend.writeManifests(required, [], extras, '')
+  await write([{ key: 'probe:a', value: { n: 1 } }])
+  const [l1, r1] = spans
+  check(
+    'the root begins alongside its listing and is sent after it',
+    spans.length === 2 && l1.listing && !r1.listing && r1.start < l1.end && r1.end >= l1.end,
+    JSON.stringify(spans.map((x) => ({ listing: x.listing, start: x.start - l1.start, end: x.end - l1.start })))
+  )
+  await probe.backend.settled()
+  const v0 = probe.backend.version()
+  spans = []
+  fail = 1
+  let refused = ''
+  await write([{ key: 'probe:a', value: { n: 2 } }]).catch((e) => (refused = e.message))
+  const after = newStore()
+  await after.loadDrive()
+  check(
+    'a listing that fails: nothing changed, and its root was never sent',
+    /nothing was changed/.test(refused) && probe.backend.version() === v0 && after.backend.version() === v0 && spans.filter((x) => !x.listing).every((x) => x.error),
+    `${refused}; roots: ${spans.filter((x) => !x.listing).length}`
+  )
+  spans = []
+  fail = 2
+  await write([{ key: 'probe:a', value: { n: 3 } }], [{ key: 'probe:b', value: { n: 1 } }])
+  await probe.backend.settled()
+  const later = newStore()
+  await later.loadDrive()
+  check(
+    'an optional listing that fails: the change is stored without it',
+    (await later.backend.readManifest('probe:a')) === JSON.stringify({ n: 3 }) && (await later.backend.readManifest('probe:b')) === null,
+    `roots sent: ${spans.filter((x) => !x.listing && !x.error).length}`
+  )
 
   const balance = await storageBalance(V2_TESTNET, account.address)
   console.log(`${stamp()} storage balance left: ${ethers.formatEther(balance)} of ${ethers.formatEther(DEPOSIT)} 0G`)
