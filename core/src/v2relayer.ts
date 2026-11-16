@@ -232,6 +232,14 @@ export interface RelayerUploadOptions {
   onProgress?: (sentBytes: number, totalBytes: number) => void
   /** an earlier upload of these bytes was interrupted: find what it stored first */
   resume?: boolean
+  /** called with the data hash once it's computed, before the upload begins */
+  onHashed?: (dataHash: string) => void
+  /**
+   * Begin now, but send nothing until this resolves; if it rejects, the
+   * upload fails with its error, never completed (so never listed: the
+   * relayer drops the reservation).
+   */
+  after?: Promise<unknown>
 }
 
 export interface RelayerUploadResult {
@@ -318,6 +326,7 @@ export class RelayerClient {
     const info = await this.info()
     if (blob.size > info.maxFileSize) throw new Error(`${blob.size} bytes is over the relayer's ${info.maxFileSize}-byte file limit`)
     const { dataHash, leaves } = await hashBlob(blob, info.chunkSize)
+    opts.onHashed?.(dataHash)
     const partChunks = Math.max(1, Math.min(opts.partChunks ?? 16, Math.floor(info.maxPartBytes / info.chunkSize)))
     const parallel = Math.max(1, Math.min(opts.parallel ?? 4, 8))
     const chunkHashes = base64(new Uint8Array(await new Blob(leaves as BlobPart[]).arrayBuffer()))
@@ -354,6 +363,7 @@ export class RelayerClient {
       )
     let begun = await begin(opts.resume ?? false)
     result.fileId = begun.fileId
+    await opts.after
     // a first begin's dedup is content stored before; with `completed`, this upload's own earlier parts
     if (begun.dedup) return { ...result, dedup: !begun.completed }
 

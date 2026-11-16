@@ -39,6 +39,9 @@ interface FoundRoot {
   card: unknown
 }
 
+/** A change's listings didn't all store, so its root wasn't sent. */
+class NotAllListed extends Error {}
+
 /** A stored root, and its check against other devices' roots still to come. */
 interface Commit {
   checked: Promise<void>
@@ -295,24 +298,24 @@ export class V2Backend implements DriveBackend {
   }
 
   /** Encrypt and upload one listing; its ref. */
-  private async storeListing(w: ManifestWrite): Promise<ListingRef> {
+  private async storeListing(w: ManifestWrite, onNamed?: (ref: ListingRef) => void): Promise<ListingRef> {
     const text = JSON.stringify(w.value)
     const src = new EncryptedSource(new Blob([text]), { type: 'aes256', key: this.masterKey })
-    const r = await this.relayer.upload(this.account, src)
+    const r = await this.relayer.upload(this.account, src, { onHashed: (h) => onNamed?.({ h, n: src.size }) })
     this.texts.set(r.dataHash, text)
     this.notRoots.add(strip0x(r.dataHash))
     return { h: r.dataHash, n: src.size }
   }
 
-  /** Upload listings a few at a time; per listing, its ref or its error. */
-  private async storeListings(ws: ManifestWrite[]): Promise<({ ok: true; ref: ListingRef } | { ok: false; error: string })[]> {
+  /** Upload listings a few at a time; per listing, its ref or its error. `onNamed` gets each ref as soon as it's hashed. */
+  private async storeListings(ws: ManifestWrite[], onNamed?: (i: number, ref: ListingRef) => void): Promise<({ ok: true; ref: ListingRef } | { ok: false; error: string })[]> {
     const out: ({ ok: true; ref: ListingRef } | { ok: false; error: string })[] = new Array(ws.length)
     let next = 0
     const worker = async () => {
       while (next < ws.length) {
         const i = next++
         try {
-          out[i] = { ok: true, ref: await this.storeListing(ws[i]) }
+          out[i] = { ok: true, ref: await this.storeListing(ws[i], (ref) => onNamed?.(i, ref)) }
         } catch (err) {
           out[i] = { ok: false, error: (err as Error).message }
         }
@@ -338,7 +341,31 @@ export class V2Backend implements DriveBackend {
 
   private async change(required: ManifestWrite[], extras: ManifestWrite[]): Promise<Commit> {
     if (required.length === 0) return { checked: Promise.resolve() }
-    const stored = await this.storeListings([...required, ...extras])
+    const all = [...required, ...extras]
+    const named: ListingRef[] = []
+    let allNamed!: () => void
+    const everyNamed = new Promise<void>((r) => (allNamed = r))
+    const storing = this.storeListings(all, (i, ref) => {
+      named[i] = ref
+      if (Object.keys(named).length === all.length) allNamed()
+    })
+    // The root names listings by hash, known before they're stored: it
+    // begins alongside them (the relayer's balance check, ~0.3 s) and is
+    // sent only once every one is stored. A listing that fails before it's
+    // hashed is never named: storing then ends first.
+    if (await Promise.race([everyNamed.then(() => true), storing.then(() => false)])) {
+      const listed = storing.then((stored) => {
+        if (!stored.every((r) => r.ok)) throw new NotAllListed()
+      })
+      listed.catch(() => undefined)
+      try {
+        return await this.commit(Object.fromEntries(all.map((w, i) => [w.key, named[i]])), listed)
+      } catch (err) {
+        if (!(err instanceof NotAllListed)) throw err
+        // some listing didn't store: its root was never sent; below, as without one
+      }
+    }
+    const stored = await storing
     const failed = stored.slice(0, required.length).find((r) => !r.ok)
     if (failed && !failed.ok) throw new Error(`nothing was changed: a listing could not be stored (${failed.error})`)
     const refs: Record<string, ListingRef> = {}
@@ -355,9 +382,9 @@ export class V2Backend implements DriveBackend {
    * another device stored a root at the same time, ours may not be the one
    * readers find, so it lays `refs` over theirs and stores again.
    */
-  private async commit(refs: Record<string, ListingRef>): Promise<Commit> {
+  private async commit(refs: Record<string, ListingRef>, after?: Promise<unknown>): Promise<Commit> {
     const base = Date.now() - this.refreshedAt < FRESH_MS ? this.current : this.newer(await this.findRoot(), this.current)
-    const ours = await this.storeRoot(base, refs, null)
+    const ours = await this.storeRoot(base, refs, null, after)
     return { checked: this.check(refs, ours) }
   }
 
@@ -376,7 +403,8 @@ export class V2Backend implements DriveBackend {
     }
   }
 
-  private async storeRoot(base: FoundRoot | null, refs: Record<string, ListingRef>, replacing: FoundRoot | null): Promise<FoundRoot> {
+  /** `after`: the root's bytes are sent once it resolves (see change). */
+  private async storeRoot(base: FoundRoot | null, refs: Record<string, ListingRef>, replacing: FoundRoot | null, after?: Promise<unknown>): Promise<FoundRoot> {
     const retired = Object.entries(refs)
       .map(([key, ref]) => base?.root.listings[key]?.h !== ref.h && base?.root.listings[key]?.h)
       .filter((h): h is string => typeof h === 'string')
@@ -407,7 +435,7 @@ export class V2Backend implements DriveBackend {
         return out
       },
     }
-    const r = await this.relayer.upload(this.account, file)
+    const r = await this.relayer.upload(this.account, file, { after })
     this.current = { root, hash: r.dataHash, card }
     // what the replaced root retired is now two changes old: stop paying for it
     if (base) void this.deleteAll(base.root.retired)
