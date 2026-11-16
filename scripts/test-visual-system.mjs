@@ -186,6 +186,19 @@ const audit = () =>
   }, { SIZES, RADII })
 const clean = (a) => Object.keys(a.size).length === 0 && Object.keys(a.weight).length === 0 && Object.keys(a.radius).length === 0 && a.glyphs.length === 0 && a.contrast.length === 0
 const brief = (a) => JSON.stringify({ size: a.size, weight: a.weight, radius: a.radius, glyphs: a.glyphs, contrast: a.contrast })
+/** The header: the 0G mark's size and shape, and whether anything in it overlaps or spills. */
+const header = () =>
+  page.evaluate(() => {
+    const box = (el) => el && el.getBoundingClientRect()
+    const logo = box(document.querySelector('.logo-mark'))
+    const brand = [...document.querySelectorAll('.brand > *')].map(box).filter((r) => r.width > 0)
+    const right = [...document.querySelectorAll('.header-right > *')].map(box).filter((r) => r.width > 0)
+    const brandEnd = Math.max(...brand.map((r) => r.right))
+    const rightStart = Math.min(...right.map((r) => r.left))
+    return { logoH: Math.round(logo.height), ratio: +(logo.width / logo.height).toFixed(2), gap: Math.round(rightStart - brandEnd), scroll: document.documentElement.scrollWidth - innerWidth }
+  })
+/** the 0G mark's own proportions (viewBox 160 × 78) */
+const LOGO_RATIO = 160 / 78
 const themeNow = () => page.evaluate(() => ({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.body).backgroundColor }))
 const row = (n) => page.locator('table tbody tr', { has: page.locator('.fname-btn', { hasText: n }) })
 const settled = () => page.waitForFunction(() => !document.querySelector('.progress-line.on'), null, { timeout: 3 * 60_000, polling: 200 })
@@ -241,6 +254,9 @@ try {
   check('a main action is the brand purple (light: #8200d1)', primary === null || primary === 'rgb(130, 0, 209)', String(primary))
   await row('notes.txt').locator('input[type=checkbox]').uncheck()
 
+  const desk = await header()
+  check('header: the 0G mark is 28 px tall and keeps its shape', desk.logoH === 28 && Math.abs(desk.ratio - LOGO_RATIO) < 0.05 && desk.gap > 0, JSON.stringify(desk))
+
   // a dialog
   await row('plan.md').getByRole('button', { name: 'Rename' }).click()
   await page.locator('.rename-modal').waitFor()
@@ -289,6 +305,22 @@ try {
   await page.waitForTimeout(400)
   const phone = await audit()
   check('390 px: only the system’s sizes, weights and corners, readable contrast; no emoji; no sideways scroll', clean(phone) && phone.scroll <= 0, `${brief(phone)} scroll ${phone.scroll}`)
+  const p390 = await header()
+  await page.setViewportSize({ width: 360, height: 780 })
+  await page.waitForTimeout(300)
+  const p360 = await header()
+  check('phone header (menu button, 0G mark, wallet): the mark is 24 px tall, keeps its shape, nothing overlaps at 390 and 360 px',
+    [p390, p360].every((h) => h.logoH === 24 && Math.abs(h.ratio - LOGO_RATIO) < 0.05 && h.gap >= 8 && h.scroll <= 0), JSON.stringify({ p390, p360 }))
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Wallet menu' }).click()
+  const inMenu = await page.evaluate(() => ({
+    balance: document.querySelector('.wallet-menu-balance')?.textContent ?? '',
+    headerSwitch: document.querySelector('.header-right .theme-switch')?.getBoundingClientRect().width ?? 0,
+  }))
+  await page.getByRole('menuitem', { name: 'Dark theme' }).click()
+  const fromMenu = await themeNow()
+  check('phone: the wallet balance and the theme switch are in the wallet menu, and the switch works',
+    /^Wallet balance: [\d.]+ 0G$/.test(inMenu.balance) && inMenu.headerSwitch === 0 && fromMenu.theme === 'dark', JSON.stringify({ ...inMenu, fromMenu }))
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {

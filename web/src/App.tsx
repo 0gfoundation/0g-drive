@@ -2394,6 +2394,12 @@ export default function App() {
             </span>
             {walletMenu && (
               <div className="wallet-menu" role="menu">
+                {/* phones: the header has no room for these (style.css) */}
+                <div className="wallet-menu-balance">Wallet balance: {Number(wallet.balance).toFixed(4)} 0G</div>
+                <button role="menuitem" className="wallet-menu-theme" onClick={() => { toggleTheme(); setWalletMenu(false) }}>
+                  <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+                  {theme === 'dark' ? 'Light theme' : 'Dark theme'}
+                </button>
                 <button role="menuitem" onClick={() => void switchAccount()}>
                   Switch wallet or account
                 </button>
@@ -2409,7 +2415,7 @@ export default function App() {
             </button>
           )}
           <button
-            className="btn small ghost icon-only theme-switch"
+            className={`btn small ghost icon-only theme-switch${wallet && !readOnly ? ' in-menu-on-phones' : ''}`}
             onClick={toggleTheme}
             aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
             title={theme === 'dark' ? 'Light theme' : 'Dark theme'}

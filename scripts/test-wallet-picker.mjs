@@ -217,8 +217,8 @@ try {
     })
     await page.keyboard.press('Escape')
     const closed = (await page.locator('.wallet-menu').count()) === 0
-    check('phone: wallet menu inside the screen, ≥44 px items, Escape closes it',
-      menu.left >= 0 && menu.right <= 390 && menu.overflow <= 0 && menu.items.length === 2 && menu.items.every((h) => h >= 44) && menu.btn >= 30 && closed,
+    check('phone: wallet menu inside the screen, with the theme switch, ≥44 px items, Escape closes it',
+      menu.left >= 0 && menu.right <= 390 && menu.overflow <= 0 && menu.items.length === 3 && menu.items.every((h) => h >= 44) && menu.btn >= 30 && closed,
       JSON.stringify({ ...menu, closed }))
     await page.setViewportSize({ width: 1280, height: 900 })
 
