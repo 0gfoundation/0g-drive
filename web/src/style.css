@@ -134,13 +134,15 @@ a:hover {
   gap: 12px;
 }
 .logo-mark {
-  height: 22px;
+  height: 28px;
   width: auto;
+  /* keeps its shape: the header's right side gives way first */
+  flex: none;
   color: var(--logo);
   display: block;
 }
 .brand-name {
-  font-size: var(--fs-lg);
+  font-size: var(--fs-xl);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -226,6 +228,36 @@ a:hover {
 }
 .wallet-menu button.danger {
   color: var(--danger);
+}
+/* on phones the balance and the theme switch move here from the header */
+.wallet-menu-balance,
+.wallet-menu .wallet-menu-theme {
+  display: none;
+}
+@media (max-width: 520px) {
+  .header-right .balance,
+  .header-right .theme-switch.in-menu-on-phones {
+    display: none;
+  }
+  .wallet-menu-balance {
+    display: block;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: var(--fs-sm);
+  }
+  .wallet-menu .wallet-menu-theme {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+}
+/* the smallest phones: the 0G mark alone */
+@media (max-width: 370px) {
+  .brand-name {
+    display: none;
+  }
 }
 .copy-btn:hover {
   background: var(--panel-2);
@@ -1917,6 +1949,9 @@ tbody tr:hover {
   }
   .brand-name {
     font-size: var(--fs-lg);
+  }
+  .logo-mark {
+    height: 24px;
   }
 
   /* modals become bottom sheets */
