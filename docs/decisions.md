@@ -385,3 +385,13 @@ After D29 a change was two uploads in turn, listings then root, and most of each
 - Still a change is all or none: a root that is begun but never completed is never listed (the relayer lists available files only), so nobody finds it, and its reservation costs nothing and is dropped. If a required listing fails, the root is never sent: "nothing was changed", as before. If an optional one fails (search entries riding along), that root is dropped and a new one is stored without it.
 
 Verified: `npm run test:v2-drive` (the root's upload starts with its listing's and ends just after it; a failing listing leaves the drive as it was, with no root sent; a failing optional listing: stored without it).
+
+### D31 — File changes show at once, with Undo (user decision, 2026-11-16)
+Trash, restore, move, rename and delete forever waited for the change to be stored (~1 s after D29/D30) with every button greyed and nothing on screen saying why.
+- **Shown at once, stored after** (`web/src/changes.ts`): each change is drawn over the drive as last loaded the moment it's made, and stored in the background. Changes run **one at a time, in order**: a DriveStore change reads a listing, edits it and writes it back, so two at once would lose one. When none is left, the drive is loaded again and replaces what was drawn. One that fails is dropped from the view (the file is back where it was) and an error toast says so in plain words, with Details → Activity; Activity keeps the error itself.
+- **Undo instead of asking**: "Move N files to trash?" is gone; a toast says "a.txt moved to trash · Undo". Undo on a change still waiting its turn drops it (never stored); after it's stored, Undo is the opposite change (restore, move back, the old name). Delete forever and Empty trash still ask, and have no Undo.
+- **Folder changes** (new, rename, move, trash) go through the same queue, so they never cross a file change, but wait for it as before (their dialogs show errors); they aren't drawn ahead.
+- **A progress line** at the top shows while anything is stored or loaded (Sync included), after 0.3 s so quick ones don't flash. ⟳ Sync says "Your drive is up to date".
+- Not covered: an upload's own listing write isn't in the queue (as before, a change made during an upload's last step could cross it).
+
+Verified: `npm run test:instant-actions` (fresh funded drive: trash asks nothing and the row goes before it's stored; Undo after storing restores it; Undo on a change still waiting is never stored; rename and move show at once; a failing change comes back with an error toast and Details; each checked against the drive as stored on 0G; 390 px).

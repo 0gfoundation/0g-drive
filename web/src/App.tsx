@@ -71,6 +71,8 @@ import {
 } from './v2drive'
 import { closeOnBackdrop } from './backdrop'
 import { askConfirm, askText } from './AskDialog'
+import { showDeleted, showMoved, showRenamed, showRestored, showTrashed, useChanges } from './changes'
+import { Toast, useToast } from './Toast'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
 import { FileIcon } from './fileIcons'
 import { FILE_CACHE_MAX_BYTES, cachedOrDownload, fileCacheKey } from './fileCache'
@@ -700,11 +702,13 @@ export default function App() {
   const [lostPassword, setLostPassword] = useState('')
   const [lostBusy, setLostBusy] = useState<string | null>(null)
   const [lostError, setLostError] = useState<string | null>(null)
-  const [drive, setDrive] = useState<DriveState | null>(null)
+  /** the drive as last loaded; `drive` (below) is what's shown: it with the changes not stored yet */
+  const [loadedDrive, setDrive] = useState<DriveState | null>(null)
   const [currentPath, setCurrentPath] = useState('')
   const [view, setView] = useState<'drive' | 'trash'>('drive')
   const [activities, setActivities] = useState<Activity[]>([])
-  const [busy, setBusy] = useState<string | null>(null)
+  /** something running that the change queue doesn't run (a download, a sync, …) */
+  const [busyText, setBusy] = useState<string | null>(null)
   const [addressCopied, setAddressCopied] = useState(false)
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [dragOver, setDragOver] = useState(false)
@@ -744,6 +748,8 @@ export default function App() {
   const [movePending, setMovePending] = useState<string[]>([])
   const [moveNewName, setMoveNewName] = useState<string | null>(null)
   const [moveError, setMoveError] = useState<string | null>(null)
+  /** a folder rename or move being stored: its dialog waits */
+  const [folderSaving, setFolderSaving] = useState(false)
   const [previewFor, setPreviewFor] = useState<FileMeta | null>(null)
   const [shareMode, setShareMode] = useState<'A' | 'B'>('A')
   const [shareRecipient, setShareRecipient] = useState('')
@@ -766,6 +772,14 @@ export default function App() {
   })
   const activityId = useRef(0)
   const storeRef = useRef<DriveStore | null>(null)
+  const loadStored = useCallback(async () => (storeRef.current ? storeRef.current.loadDrive() : null), [])
+  const changes = useChanges(loadedDrive, loadStored, setDrive)
+  const drive = changes.drive
+  /** anything running, a change being stored included: what isn't queued waits for it */
+  const busy = busyText ?? changes.working
+  /** the rename and move dialogs wait only for their own (folder) change */
+  const dialogBusy = busyText !== null || folderSaving
+  const { toast, show: showToast, close: closeToast } = useToast()
 
   const log = useCallback((msg: string, percent?: number) => {
     setActivities((prev) =>
@@ -802,18 +816,30 @@ export default function App() {
     setSelectedIds([])
   }, [currentPath, view])
 
+  /** A change that couldn't be made: in Activity, with its error, and in a toast, in plain words. */
+  const failed = useCallback(
+    (what: string) => (err: Error) => {
+      log(`${what}: ${err.message}`)
+      showToast({ text: `${what}. Please try again.`, error: true })
+    },
+    [log, showToast]
+  )
+
+  /** The drive loaded again; false if that failed. */
   const reloadDrive = useCallback(async () => {
     const store = storeRef.current
-    if (!store) return
+    if (!store) return false
     setBusy('Syncing drive from chain…')
     try {
       setDrive(await store.loadDrive())
+      return true
     } catch (err) {
-      log(`Drive sync failed: ${(err as Error).message}`)
+      failed('Couldn’t sync your drive')(err as Error)
+      return false
     } finally {
       setBusy(null)
     }
-  }, [log])
+  }, [failed])
 
   /** The drive as its card says: found (or just set up) for this wallet, or none (null). */
   const adoptCard = useCallback((c: AccountCard | null) => {
@@ -1703,37 +1729,151 @@ export default function App() {
 
   // ─── Drive ops (unchanged from M2) ───────────────────────────────────
 
-  const trashFile = useCallback(
-    async (meta: FileMeta) => {
+  // Changes to files are shown at once and stored in the background, one
+  // at a time (changes.ts); the toast says what was done, with Undo where
+  // it can be undone. Folder changes go through the same queue but wait.
+
+  const restoreFiles = useCallback(
+    (metas: FileMeta[]) => {
+      const store = storeRef.current
+      if (!store || metas.length === 0) return
+      const one = metas.length === 1 ? metas[0] : null
+      const what = one ? one.name : `${metas.length} files`
+      changes
+        .add({
+          label: `Restoring ${what}…`,
+          shows: (d) => showRestored(d, metas),
+          run: async () => {
+            const renamed = await store.restoreRecords(metas.map((m) => m.id))
+            if (one) {
+              const where = one.originalPath || 'drive root'
+              log(
+                renamed.length > 0
+                  ? `${one.name} restored to ${where} as “${renamed[0].to}”: a file named “${one.name}” is already there.`
+                  : `${one.name} restored to ${where}.`
+              )
+            } else {
+              log(`${what} restored.`)
+              for (const r of renamed) log(`“${r.from}” restored as “${r.to}”: a file with its name is already in that folder.`)
+            }
+          },
+          failed: failed(`Couldn’t restore ${what}`),
+        })
+        .done.catch(() => undefined)
+      showToast({ text: `${what} restored` })
+    },
+    [changes, log, failed, showToast]
+  )
+
+  /** Files in folder `path` to trash, with Undo. */
+  const trashFiles = useCallback(
+    (path: string, metas: FileMeta[]) => {
+      const store = storeRef.current
+      if (!store || metas.length === 0) return
+      const what = metas.length === 1 ? metas[0].name : `${metas.length} files`
+      const queued = changes.add({
+        label: `Moving ${what} to trash…`,
+        shows: (d) => showTrashed(d, path, metas),
+        run: async () => {
+          await store.removeFileRecords(path, metas.map((m) => m.id), true)
+          log(`${what} moved to trash.`)
+        },
+        failed: failed(`Couldn’t move ${what} to trash`),
+      })
+      queued.done.catch(() => undefined)
+      showToast({
+        text: `${what} moved to trash`,
+        action: { label: 'Undo', run: () => queued.cancel() || restoreFiles(metas.map((m) => ({ ...m, originalPath: path }))) },
+      })
+    },
+    [changes, log, failed, showToast, restoreFiles]
+  )
+
+  /** Files in trash deleted forever (asked first: there's no undo). */
+  const deleteFiles = useCallback(
+    (metas: FileMeta[], done: string) => {
+      const store = storeRef.current
+      if (!store || metas.length === 0) return
+      const what = metas.length === 1 ? metas[0].name : `${metas.length} files`
+      const ids = metas.map((m) => m.id)
+      changes
+        .add({
+          label: `Deleting ${what}…`,
+          shows: (d) => showDeleted(d, ids),
+          run: async () => {
+            await store.removeFileRecords(TRASH_PATH, ids, false)
+            log(done)
+          },
+          failed: failed(`Couldn’t delete ${what}`),
+        })
+        .done.catch(() => undefined)
+      showToast({ text: `${what} deleted forever` })
+    },
+    [changes, log, failed, showToast]
+  )
+
+  /** Files moved from folder `from` to `to`; `label` names them ("a.txt", "2 files"). */
+  const moveFiles = useCallback(
+    (from: string, metas: FileMeta[], to: string, label: string, undo = true) => {
+      const store = storeRef.current
+      if (!store || metas.length === 0) return
+      const where = to === '' ? 'My drive' : to
+      const queued = changes.add({
+        label: `Moving ${label}…`,
+        shows: (d) => showMoved(d, from, metas, to),
+        run: async () => {
+          await store.moveRecords(from, metas.map((m) => ({ id: m.id, to })), { refuseNameClash: true })
+          log(`Moved ${label} to ${where}.`)
+        },
+        failed: failed(`Couldn’t move ${label}`),
+      })
+      queued.done.catch(() => undefined)
+      showToast({
+        text: `Moved ${label} to ${where}`,
+        action: undo ? { label: 'Undo', run: () => queued.cancel() || moveFiles(to, metas, from, label, false) } : undefined,
+      })
+    },
+    [changes, log, failed, showToast]
+  )
+
+  /** A file in folder `path` renamed. */
+  const renameOne = useCallback(
+    (path: string, meta: FileMeta, name: string, undo = true) => {
       const store = storeRef.current
       if (!store) return
+      const queued = changes.add({
+        label: `Renaming ${meta.name}…`,
+        shows: (d) => showRenamed(d, path, meta.id, name),
+        run: async () => {
+          const search = await entryForRename(meta.search, name)
+          await store.renameFile(path, meta.id, name, search)
+          log(`Renamed ${meta.name} → ${name}.`)
+        },
+        failed: failed(`Couldn’t rename ${meta.name}`),
+      })
+      queued.done.catch(() => undefined)
+      showToast({
+        text: `Renamed to ${name}`,
+        action: undo ? { label: 'Undo', run: () => queued.cancel() || renameOne(path, { ...meta, name }, meta.name, false) } : undefined,
+      })
+    },
+    [changes, log, failed, showToast]
+  )
+
+  const trashFile = useCallback(
+    async (meta: FileMeta) => {
+      if (view !== 'trash') return trashFiles(currentPath, [meta])
       if (
-        view === 'trash' &&
-        !(await askConfirm({
+        await askConfirm({
           title: `Delete “${meta.name}” forever?`,
           message: 'The file is deleted from 0G Storage; links you shared stop working.',
           action: 'Delete forever',
           danger: true,
-        }))
+        })
       )
-        return
-      setBusy(view === 'trash' ? `Deleting ${meta.name}…` : `Moving ${meta.name} to trash…`)
-      try {
-        if (view === 'trash') {
-          await store.purgeFromTrash(meta.id)
-          log(`${meta.name} deleted forever.`)
-        } else {
-          await store.removeFileRecord(currentPath, meta.id, true)
-          log(`${meta.name} moved to trash.`)
-        }
-        await reloadDrive()
-      } catch (err) {
-        log(`Trash failed: ${(err as Error).message}`)
-      } finally {
-        setBusy(null)
-      }
+        deleteFiles([meta], `${meta.name} deleted forever.`)
     },
-    [currentPath, view, log, reloadDrive]
+    [currentPath, view, trashFiles, deleteFiles]
   )
 
   const openRename = useCallback((meta: FileMeta) => {
@@ -1760,51 +1900,35 @@ export default function App() {
       return
     }
     setRenameError(null)
-    setBusy(`Renaming ${oldName}…`)
-    try {
-      if (target.kind === 'file') {
-        const search = await entryForRename(target.meta.search, name)
-        await store.renameFile(currentPath, target.meta.id, name, search)
-        log(`Renamed ${oldName} → ${name}.`)
-      } else {
-        const newPath = await store.renameFolder(target.path, name)
-        log(`Renamed folder ${target.path} → ${newPath}.`)
-        // the open folder and expanded tree rows follow the new path
-        const moved = (p: string) =>
-          p === target.path ? newPath : p.startsWith(target.path + '/') ? newPath + p.slice(target.path.length) : p
-        setCurrentPath(moved)
-        setExpandedFolders((prev) => prev.map(moved))
-      }
+    if (target.kind === 'file') {
+      // checked in the dialog: shown at once
       setRenameFor(null)
-      await reloadDrive()
+      return renameOne(currentPath, target.meta, name)
+    }
+    setFolderSaving(true)
+    try {
+      let newPath = target.path
+      await changes.add({
+        label: `Renaming ${oldName}…`,
+        run: async () => {
+          newPath = await store.renameFolder(target.path, name)
+          log(`Renamed folder ${target.path} → ${newPath}.`)
+        },
+      }).done
+      // the open folder and expanded tree rows follow the new path
+      const moved = (p: string) =>
+        p === target.path ? newPath : p.startsWith(target.path + '/') ? newPath + p.slice(target.path.length) : p
+      setCurrentPath(moved)
+      setExpandedFolders((prev) => prev.map(moved))
+      setRenameFor(null)
     } catch (err) {
       setRenameError((err as Error).message)
     } finally {
-      setBusy(null)
+      setFolderSaving(false)
     }
-  }, [renameFor, renameTo, currentPath, log, reloadDrive])
+  }, [renameFor, renameTo, currentPath, changes, log, renameOne])
 
-  const restoreFile = useCallback(
-    async (meta: FileMeta) => {
-      const store = storeRef.current
-      if (!store) return
-      setBusy(`Restoring ${meta.name}…`)
-      try {
-        const renamed = await store.restoreFromTrash(meta.id)
-        log(
-          renamed.length > 0
-            ? `${meta.name} restored to ${meta.originalPath || 'drive root'} as “${renamed[0].to}”: a file named “${meta.name}” is already there.`
-            : `${meta.name} restored to ${meta.originalPath || 'drive root'}.`
-        )
-        await reloadDrive()
-      } catch (err) {
-        log(`Restore failed: ${(err as Error).message}`)
-      } finally {
-        setBusy(null)
-      }
-    },
-    [log, reloadDrive]
-  )
+  const restoreFile = useCallback((meta: FileMeta) => restoreFiles([meta]), [restoreFiles])
 
   // ─── Batch selection operations ──────────────────────────────────────
 
@@ -1828,70 +1952,68 @@ export default function App() {
     const target = moveFor
     const dest = moveDest
     if (!store || !target || dest === null) return
-    const where = dest === '' ? 'My drive' : dest
     setMoveError(null)
-    setBusy(target.kind === 'folder' ? `Moving ${target.path}…` : `Moving ${target.label}…`)
-    try {
-      if (target.kind === 'folder') {
-        const newPath = await store.moveFolder(target.path, dest)
-        log(`Moved folder ${target.path} → ${newPath}.`)
-        // the open folder and expanded tree rows follow the new path
-        const moved = (p: string) =>
-          p === target.path ? newPath : p.startsWith(target.path + '/') ? newPath + p.slice(target.path.length) : p
-        setCurrentPath(moved)
-        setExpandedFolders((prev) => [...prev.map(moved), dest])
-      } else {
-        await store.moveRecords(target.from, target.ids.map((id) => ({ id, to: dest })), { refuseNameClash: true })
-        log(`Moved ${target.label} to ${where}.`)
-        setSelectedIds([])
-      }
+    if (target.kind === 'files') {
+      // a name already in the destination: said here, nothing moves
+      const metas = (drive?.folders.get(target.from)?.files ?? []).filter((f) => target.ids.includes(f.id))
+      const taken = new Set((drive?.folders.get(dest)?.files ?? []).map((f) => f.name.toLowerCase()))
+      const clash = metas.find((f) => taken.has(f.name.toLowerCase()) || !taken.add(f.name.toLowerCase()))
+      if (clash) return setMoveError(`There is already a file named "${clash.name}" in ${dest === '' ? 'My drive' : `"${dest}"`}.`)
       setMoveFor(null)
-      await reloadDrive()
+      setSelectedIds([])
+      return moveFiles(target.from, metas, dest, target.label)
+    }
+    setFolderSaving(true)
+    try {
+      let newPath = target.path
+      await changes.add({
+        label: `Moving ${target.path}…`,
+        run: async () => {
+          newPath = await store.moveFolder(target.path, dest)
+          log(`Moved folder ${target.path} → ${newPath}.`)
+        },
+      }).done
+      // the open folder and expanded tree rows follow the new path
+      const moved = (p: string) =>
+        p === target.path ? newPath : p.startsWith(target.path + '/') ? newPath + p.slice(target.path.length) : p
+      setCurrentPath(moved)
+      setExpandedFolders((prev) => [...prev.map(moved), dest])
+      setMoveFor(null)
     } catch (err) {
       setMoveError((err as Error).message)
     } finally {
-      setBusy(null)
+      setFolderSaving(false)
     }
-  }, [moveFor, moveDest, log, reloadDrive])
+  }, [moveFor, moveDest, drive, changes, log, moveFiles])
 
   const trashSelected = useCallback(async () => {
-    const store = storeRef.current
-    if (!store || selectedIds.length === 0) return
-    const n = selectedIds.length
+    const path = view === 'trash' ? TRASH_PATH : currentPath
+    const metas = ((path === TRASH_PATH ? drive?.trash : drive?.folders.get(path))?.files ?? []).filter((f) => selectedIds.includes(f.id))
+    if (metas.length === 0) return
+    const n = metas.length
     const files = `${n} file${n === 1 ? '' : 's'}`
-    const forever = view === 'trash'
+    if (view !== 'trash') {
+      setSelectedIds([])
+      return trashFiles(path, metas)
+    }
     if (
-      !(await askConfirm(
-        forever
-          ? {
-              title: `Delete ${files} forever?`,
-              message: `${n === 1 ? 'It is' : 'They are'} deleted from 0G Storage; links you shared stop working.`,
-              action: 'Delete forever',
-              danger: true,
-            }
-          : { title: `Move ${files} to trash?`, message: 'You can restore them from Trash.', action: 'Move to trash' }
-      ))
+      !(await askConfirm({
+        title: `Delete ${files} forever?`,
+        message: `${n === 1 ? 'It is' : 'They are'} deleted from 0G Storage; links you shared stop working.`,
+        action: 'Delete forever',
+        danger: true,
+      }))
     )
       return
-    setBusy(forever ? `Deleting ${files}…` : `Moving ${files} to trash…`)
-    try {
-      await store.removeFileRecords(forever ? TRASH_PATH : currentPath, selectedIds, !forever)
-      log(forever ? `${files} deleted forever.` : `${files} moved to trash.`)
-      setSelectedIds([])
-      await reloadDrive()
-    } catch (err) {
-      log(`Batch trash failed: ${(err as Error).message}`)
-    } finally {
-      setBusy(null)
-    }
-  }, [storeRef, selectedIds, currentPath, view, log, reloadDrive])
+    setSelectedIds([])
+    deleteFiles(metas, `${files} deleted forever.`)
+  }, [drive, selectedIds, currentPath, view, trashFiles, deleteFiles])
 
   /** Every file in trash deleted forever: one change, then their bytes on 0G. */
   const emptyTrash = useCallback(async () => {
-    const store = storeRef.current
-    const ids = drive?.trash?.files.map((f) => f.id) ?? []
-    if (!store || ids.length === 0) return
-    const files = `${ids.length} file${ids.length === 1 ? '' : 's'}`
+    const metas = drive?.trash?.files ?? []
+    if (metas.length === 0) return
+    const files = `${metas.length} file${metas.length === 1 ? '' : 's'}`
     if (
       !(await askConfirm({
         title: `Empty trash: delete ${files} forever?`,
@@ -1901,18 +2023,9 @@ export default function App() {
       }))
     )
       return
-    setBusy('Emptying trash…')
-    try {
-      await store.removeFileRecords(TRASH_PATH, ids, false)
-      log(`Trash emptied: ${files} deleted forever.`)
-      setSelectedIds([])
-      await reloadDrive()
-    } catch (err) {
-      log(`Emptying trash failed: ${(err as Error).message}`)
-    } finally {
-      setBusy(null)
-    }
-  }, [drive, log, reloadDrive])
+    setSelectedIds([])
+    deleteFiles(metas, `Trash emptied: ${files} deleted forever.`)
+  }, [drive, deleteFiles])
 
   // Housekeeping on the owner's device, once per drive opened, at a quiet
   // moment: trash past TRASH_DAYS deleted forever (one change, no wallet
@@ -2013,23 +2126,11 @@ export default function App() {
     }
   }, [driveOpen, log])
 
-  const restoreSelected = useCallback(async () => {
-    const store = storeRef.current
-    if (!store || selectedIds.length === 0) return
-    const n = selectedIds.length
-    setBusy(`Restoring ${n} file${n === 1 ? '' : 's'}…`)
-    try {
-      const renamed = await store.restoreRecords(selectedIds)
-      log(`${n} file${n === 1 ? '' : 's'} restored.`)
-      for (const r of renamed) log(`“${r.from}” restored as “${r.to}”: a file with its name is already in that folder.`)
-      setSelectedIds([])
-      await reloadDrive()
-    } catch (err) {
-      log(`Batch restore failed: ${(err as Error).message}`)
-    } finally {
-      setBusy(null)
-    }
-  }, [storeRef, selectedIds, log, reloadDrive])
+  const restoreSelected = useCallback(() => {
+    const metas = (drive?.trash?.files ?? []).filter((f) => selectedIds.includes(f.id))
+    setSelectedIds([])
+    restoreFiles(metas)
+  }, [drive, selectedIds, restoreFiles])
 
   const newFolder = useCallback(async () => {
     const store = storeRef.current
@@ -2049,17 +2150,17 @@ export default function App() {
     })
     if (name === null) return
     const path = currentPath === '' ? name : currentPath + '/' + name
-    setBusy(`Creating folder ${name}…`)
-    try {
-      await store.createFolder(path)
-      log(`Folder ${path} created.`)
-      await reloadDrive()
-    } catch (err) {
-      log(`Create folder failed: ${(err as Error).message}`)
-    } finally {
-      setBusy(null)
-    }
-  }, [currentPath, drive, log, reloadDrive])
+    changes
+      .add({
+        label: `Creating folder ${name}…`,
+        run: async () => {
+          await store.createFolder(path)
+          log(`Folder ${path} created.`)
+        },
+        failed: failed(`Couldn’t create the folder ${name}`),
+      })
+      .done.catch(() => undefined)
+  }, [currentPath, drive, changes, log, failed])
 
   const removeFolder = useCallback(
     async (path: string) => {
@@ -2075,27 +2176,31 @@ export default function App() {
           ? `Move "${path}" and ${count} file${count === 1 ? '' : 's'} to trash?`
           : `Delete the empty folder "${path}"?`
       if (!(await askConfirm({ title: msg, message: count > 0 ? 'You can restore the files from Trash.' : undefined, action: count > 0 ? 'Move to trash' : 'Delete', danger: count === 0 }))) return
-      setBusy(`Moving ${path} to trash…`)
       try {
-        await store.trashFolder(path)
-        log(`Folder ${path} moved to trash${count > 0 ? ` (${count} files)` : ''}.`)
+        await changes.add({
+          label: `Moving ${path} to trash…`,
+          run: async () => {
+            await store.trashFolder(path)
+            log(`Folder ${path} moved to trash${count > 0 ? ` (${count} files)` : ''}.`)
+          },
+          failed: failed(`Couldn’t move ${path} to trash`),
+        }).done
         if (currentPath === path || currentPath.startsWith(path + '/')) {
           setView('drive')
           setCurrentPath('')
         }
-        await reloadDrive()
-      } catch (err) {
-        log(`Folder trash failed: ${(err as Error).message}`)
-      } finally {
-        setBusy(null)
+        showToast({ text: count > 0 ? `${path} moved to trash` : `${path} deleted` })
+      } catch {
+        // said by `failed`
       }
     },
-    [drive, currentPath, log, reloadDrive]
+    [drive, currentPath, changes, log, failed, showToast]
   )
 
   const uploading = queue.some((q) => q.state !== 'done' && q.state !== 'error')
+  const smartReload = useCallback(async () => void (await reloadDrive()), [reloadDrive])
   const smart = useSmartDrive({
-    drive, storeRef, currentPath, loadBytes, reloadDrive, log, setBusy, readOnly,
+    drive, storeRef, currentPath, loadBytes, reloadDrive: smartReload, log, setBusy, readOnly,
     paused: busy !== null || uploading || previewFor !== null,
   })
 
@@ -2176,22 +2281,22 @@ export default function App() {
     view === 'trash' ? (
       readOnly ? null : (
       <>
-        <button className="btn small" disabled={busy !== null} onClick={() => restoreFile(f)} title="Restore" aria-label="Restore">
+        <button className="btn small" disabled={busyText !== null} onClick={() => restoreFile(f)} title="Restore" aria-label="Restore">
           <ActionLabel icon="restore" />
         </button>
-        <button className="btn small danger" disabled={busy !== null} onClick={() => trashFile(f)} title="Delete forever" aria-label="Delete forever">
+        <button className="btn small danger" disabled={busyText !== null} onClick={() => trashFile(f)} title="Delete forever" aria-label="Delete forever">
           <ActionLabel icon="close" />
         </button>
       </>
       )
     ) : (
       <>
-        <button className="btn small" disabled={busy !== null} onClick={() => download(f)} title="Download" aria-label="Download">
+        <button className="btn small" disabled={busyText !== null} onClick={() => download(f)} title="Download" aria-label="Download">
           <ActionLabel icon="download" />
         </button>
         <button
           className="btn small"
-          disabled={busy !== null || !f.wrappedKey}
+          disabled={busyText !== null || !f.wrappedKey}
           title={f.wrappedKey ? 'Share this file' : 'Legacy file — re-upload to enable sharing'}
           onClick={() => openShare(f)}
           aria-label="Share"
@@ -2199,18 +2304,18 @@ export default function App() {
           <ActionLabel icon="share" />
         </button>
         {!readOnly && (
-          <button className="btn small" disabled={busy !== null} title="Move to…" aria-label="Move to…"
+          <button className="btn small" disabled={busyText !== null} title="Move to…" aria-label="Move to…"
             onClick={() => openMove({ kind: 'files', ids: [f.id], from: currentPath, label: f.name })}>
             <ActionLabel icon="move" />
           </button>
         )}
         {!readOnly && (
-          <button className="btn small" disabled={busy !== null} onClick={() => openRename(f)} title="Rename" aria-label="Rename">
+          <button className="btn small" disabled={busyText !== null} onClick={() => openRename(f)} title="Rename" aria-label="Rename">
             <ActionLabel icon="rename" />
           </button>
         )}
         {!readOnly && (
-          <button className="btn small danger" disabled={busy !== null} onClick={() => trashFile(f)} title="Move to trash" aria-label="Move to trash">
+          <button className="btn small danger" disabled={busyText !== null} onClick={() => trashFile(f)} title="Move to trash" aria-label="Move to trash">
             <ActionLabel icon="trash" />
           </button>
         )}
@@ -2226,6 +2331,12 @@ export default function App() {
 
   return (
     <div className="app">
+      <div className={`progress-line${busy !== null ? ' on' : ''}`} role="progressbar" aria-hidden={busy === null} aria-label={busy ?? undefined} />
+      <Toast
+        toast={toast}
+        onClose={closeToast}
+        onDetails={() => document.querySelector('.activity')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+      />
       <header className="header">
         <div className="brand">
           {drive && (
@@ -2800,16 +2911,16 @@ export default function App() {
                   <span className="sel-count">{selectedIds.length} selected</span>
                   {view === 'trash' ? (
                     <>
-                      <button className="btn small" disabled={busy !== null} onClick={restoreSelected}>
+                      <button className="btn small" disabled={busyText !== null} onClick={restoreSelected}>
                         Restore selected
                       </button>
-                      <button className="btn small danger" disabled={busy !== null} onClick={trashSelected}>
+                      <button className="btn small danger" disabled={busyText !== null} onClick={trashSelected}>
                         Delete forever
                       </button>
                     </>
                   ) : (
                     <>
-                      <button className="btn small" disabled={busy !== null}
+                      <button className="btn small" disabled={busyText !== null}
                         onClick={() => openMove({
                           kind: 'files',
                           ids: selectedIds,
@@ -2820,7 +2931,7 @@ export default function App() {
                         })}>
                         Move to…
                       </button>
-                      <button className="btn small danger" disabled={busy !== null} onClick={trashSelected}>
+                      <button className="btn small danger" disabled={busyText !== null} onClick={trashSelected}>
                         Trash selected
                       </button>
                     </>
@@ -2829,16 +2940,21 @@ export default function App() {
                 </div>
               )}
               {view === 'drive' && !readOnly && (
-                <button className="btn small" disabled={busy !== null} onClick={newFolder} data-guide="new-folder">
+                <button className="btn small" disabled={busyText !== null} onClick={newFolder} data-guide="new-folder">
                   + New folder
                 </button>
               )}
               {view === 'trash' && !readOnly && (drive?.trash?.files.length ?? 0) > 0 && (
-                <button className="btn small danger" disabled={busy !== null} onClick={() => void emptyTrash()}>
+                <button className="btn small danger" disabled={busyText !== null} onClick={() => void emptyTrash()}>
                   Empty trash
                 </button>
               )}
-              <button className="btn small" disabled={busy !== null} onClick={reloadDrive} data-guide="sync">
+              <button
+                className="btn small"
+                disabled={busy !== null}
+                onClick={() => void reloadDrive().then((ok) => ok && showToast({ text: 'Your drive is up to date' }))}
+                data-guide="sync"
+              >
                 ⟳ Sync
               </button>
               <div className="layout-toggle" role="group" aria-label="Layout">
@@ -3305,11 +3421,11 @@ export default function App() {
         }
         const extChanged = isFile && !problem && ext(name) !== ext(oldName)
         return (
-          <div className="modal-backdrop" {...closeOnBackdrop(() => busy === null && setRenameFor(null))}>
+          <div className="modal-backdrop" {...closeOnBackdrop(() => !dialogBusy && setRenameFor(null))}>
             <form
               className="modal rename-modal"
               onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.key === 'Escape' && busy === null && setRenameFor(null)}
+              onKeyDown={(e) => e.key === 'Escape' && !dialogBusy && setRenameFor(null)}
               onSubmit={(e) => {
                 e.preventDefault()
                 if (!problem) void submitRename()
@@ -3342,11 +3458,11 @@ export default function App() {
               )}
               {renameError && <p className="error-text">⚠ {renameError}</p>}
               <div className="modal-actions">
-                <button className="btn" type="button" onClick={() => setRenameFor(null)} disabled={busy !== null}>
+                <button className="btn" type="button" onClick={() => setRenameFor(null)} disabled={dialogBusy}>
                   Cancel
                 </button>
-                <button className="btn primary" type="submit" disabled={busy !== null || !!problem || name === oldName}>
-                  {busy !== null ? 'Renaming…' : 'Rename'}
+                <button className="btn primary" type="submit" disabled={dialogBusy || !!problem || name === oldName}>
+                  {dialogBusy ? 'Renaming…' : 'Rename'}
                 </button>
               </div>
               <p className="muted small-print">
@@ -3360,7 +3476,7 @@ export default function App() {
       })()}
 
       {moveFor && drive && (() => {
-        const close = () => busy === null && setMoveFor(null)
+        const close = () => !dialogBusy && setMoveFor(null)
         const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
         const all = [...drive.paths, ...movePending]
         const children = (p: string) => all.filter((x) => parentOf(x) === p).map(baseName)
@@ -3422,7 +3538,7 @@ export default function App() {
                       aria-selected={moveDest === p}
                       className={`move-opt${moveDest === p ? ' selected' : ''}`}
                       style={{ paddingLeft: 10 + depth * 16 }}
-                      disabled={disabled || busy !== null}
+                      disabled={disabled || dialogBusy}
                       onClick={() => setMoveDest(p)}
                     >
                       <FolderGlyph />
@@ -3434,7 +3550,7 @@ export default function App() {
                 })}
               </div>
               {moveNewName === null ? (
-                <button type="button" className="btn small move-new" disabled={busy !== null}
+                <button type="button" className="btn small move-new" disabled={dialogBusy}
                   onClick={() => setMoveNewName('')}>
                   + New folder in {parentForNew === '' ? 'My drive' : `“${baseName(parentForNew)}”`}
                 </button>
@@ -3464,11 +3580,11 @@ export default function App() {
               {problem && <p className="error-text">⚠ {problem}</p>}
               {moveError && <p className="error-text">⚠ {moveError}</p>}
               <div className="modal-actions">
-                <button className="btn" type="button" onClick={() => setMoveFor(null)} disabled={busy !== null}>
+                <button className="btn" type="button" onClick={() => setMoveFor(null)} disabled={dialogBusy}>
                   Cancel
                 </button>
-                <button className="btn primary" type="submit" disabled={busy !== null || moveDest === null || !!problem}>
-                  {busy !== null ? 'Moving…' : 'Move here'}
+                <button className="btn primary" type="submit" disabled={dialogBusy || moveDest === null || !!problem}>
+                  {dialogBusy ? 'Moving…' : 'Move here'}
                 </button>
               </div>
               <p className="muted small-print">Nothing is re-uploaded{movePending.length > 0 ? ' · new folders are created in the same change' : ''}</p>
