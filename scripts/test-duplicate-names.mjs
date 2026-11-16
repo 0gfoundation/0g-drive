@@ -139,7 +139,7 @@ try {
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 120_000 })
   await drop([file('a.txt', 'A1'), file('b.txt', 'B1'), file('notes.txt', 'N1')])
   await waitNames(['a.txt', 'b.txt', 'notes.txt'])
   step('a.txt, b.txt, notes.txt uploaded')

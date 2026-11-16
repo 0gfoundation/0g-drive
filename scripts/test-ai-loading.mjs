@@ -83,7 +83,7 @@ async function openDrive(contextOpts) {
   await connectExtension(s.page)
   // setup: 3 signatures and the storage deposit (one transaction)
   await s.page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await s.page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await s.page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   driveKeys.push(await s.page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address))
   return s
 }

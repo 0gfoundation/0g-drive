@@ -147,9 +147,9 @@ try {
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 120_000 })
   promptAnswer = 'Recipes'
-  await page.getByRole('button', { name: '+ New folder' }).click()
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await treeRow('Recipes').first().waitFor({ timeout: 5 * 60_000 })
   await treeRow('Recipes').first().locator('.tree-label').click()
   await upload([['carbonara.md', 'Spaghetti carbonara: guanciale, eggs, pecorino, black pepper. Boil the pasta al dente.']])

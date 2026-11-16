@@ -171,7 +171,7 @@ try {
   await page.evaluate(() => localStorage.setItem('0gdrive:layout', 'list'))
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 120_000 })
   const b64 = await page.evaluate(async () => {
     const c = document.createElement('canvas'); c.width = 1200; c.height = 900
     const x = c.getContext('2d'); const d = x.createImageData(1200, 900)
@@ -183,9 +183,9 @@ try {
   })
   const png = Buffer.from(b64, 'base64')
   await page.setInputFiles('.dropzone input[type=file]', [{ name: 'scan.png', mimeType: 'image/png', buffer: png }])
-  // up to 10 minutes, saying every minute where the upload is; a failed upload (✗) stops at once
+  // up to 10 minutes, saying every minute where the upload is; a failed upload stops at once
   const listed = page.locator('table .fname-btn', { hasText: 'scan.png' })
-  const failedItem = page.locator('.queue-item', { hasText: '✗' })
+  const failedItem = page.locator('.queue-item.q-error')
   for (let minute = 1; ; minute++) {
     const outcome = await Promise.race([
       listed.waitFor({ timeout: 60_000 }).then(() => 'listed', () => 'waiting'),

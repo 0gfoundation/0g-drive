@@ -6,6 +6,8 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { WalletPicker } from './WalletPicker'
 import { AskDialog } from './AskDialog'
 import { WalletConnectDebug, WalletConnectDialog } from './WalletConnectDialog'
+// Inter, bundled with the app (no font request leaves the site): the wght axis only
+import '@fontsource-variable/inter/wght.css'
 import './style.css'
 
 // Storage nodes speak plain HTTP, which an https page may not call: route

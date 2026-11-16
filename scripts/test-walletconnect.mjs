@@ -225,7 +225,7 @@ try {
   holdNext = 3000
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   const bar = await page.locator('.wc-approve').textContent({ timeout: 10_000 }).catch(() => null)
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   check('the wallet approves; the dialog closes and the drive is created',
     (await page.locator('.wc-dialog').count()) === 0 && (await page.locator('.address').getAttribute('title')) === wallet.address)

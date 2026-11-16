@@ -151,12 +151,12 @@ async function uploadAndWait(files) {
   await page.waitForFunction(
     (names) => {
       const rows = [...document.querySelectorAll('.queue-item')]
-      return names.every((n) => rows.some((r) => r.textContent.includes(n) && /in your drive|✗/.test(r.textContent)))
+      return names.every((n) => rows.some((r) => r.textContent.includes(n) && (/in your drive/.test(r.textContent) || r.classList.contains('q-error'))))
     },
     files.map((f) => f.name),
     { timeout: 8 * 60_000, polling: 1000 }
   )
-  const failed = await page.$$eval('.queue-item', (rows) => rows.filter((r) => r.textContent.includes('✗')).map((r) => r.textContent))
+  const failed = await page.$$eval('.queue-item', (rows) => rows.filter((r) => r.classList.contains('q-error')).map((r) => r.textContent))
   if (failed.length) throw new Error(`upload failed: ${failed.join(' | ')}`)
   // "in your drive" shows before the list reloads — wait for it
   for (const f of files) await page.locator('table .fname-btn', { hasText: f.name }).waitFor({ timeout: 3 * 60_000 })
@@ -174,12 +174,12 @@ try {
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   check('drive created: 3 signatures + 1 deposit transaction', prompts.sign === 3 && prompts.tx === 1, JSON.stringify(prompts))
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
 
   let asked = prompts.tx + prompts.sign
-  await page.getByRole('button', { name: '+ New folder' }).click()
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).waitFor({ timeout: 10 * 60_000 })
   check('folder created with no wallet prompt', prompts.tx + prompts.sign === asked)
 
@@ -221,7 +221,7 @@ try {
   await page.fill('input[aria-label="Search your drive"]', '')
   await page.locator('.files h2', { hasText: 'My drive' }).waitFor()
 
-  await page.getByRole('button', { name: '✨ Suggest organization' }).click()
+  await page.getByRole('button', { name: 'Suggest organization' }).click()
   await page.locator('.suggest').waitFor({ timeout: 120_000 })
   const sugg = await page.$$eval('.suggest-list li', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()))
   const want = sugg.some((s) => s.includes('carbonara.md') && s.includes('Recipes'))

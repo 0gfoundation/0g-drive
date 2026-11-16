@@ -1,29 +1,93 @@
+/* The visual system (D32): every size, radius and color comes from here.
+   Type: 6 sizes, weights 400/500/600. Spacing: 4 px steps. Radii: 6
+   (controls), 10 (cards, menus, toasts), 16 (dialogs, panels), pill.
+   Depth on dark comes from lighter layers (bg < panel < panel-2 <
+   panel-3), not shadows; purple is for the main action, selection and
+   links. */
 :root {
-  /* 0G brand palette (studied from 0g.ai):
-     vivid purple #9200e1 · light purple #b75fff · blue-violet #4932c4
-     near-black #0a0a0c · warm-gray neutrals */
-  --bg: #0a0a0c;
-  --bg-elev: #101014;
-  --panel: #141419;
-  --panel-2: #1b1b22;
-  --border: #26262e;
-  --border-soft: #1e1e25;
-  --text: #dcdfe4;
-  --text-dim: #b8b8c0;
-  --muted: #7c7e89;
-  --accent: #b75fff;
-  --accent-strong: #9200e1;
-  --accent-soft: rgba(146, 0, 225, 0.16);
-  --warn: #ffb454;
-  --danger: #ff6b6b;
-  --ok: #4ade80;
-  --radius: 12px;
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 28px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+  --radius: var(--r-md);
+  --font: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* 0G brand palette (studied from 0g.ai): vivid purple #9200e1 · light
+     purple #b75fff · near-black #0a0a0c · warm-gray neutrals */
+  --bg: #0a0a0c;
+  --bg-elev: #111115;
+  --panel: #111115;
+  --panel-2: #18181e;
+  --panel-3: #202028;
+  --border: #26262f;
+  --border-soft: #1c1c23;
+  --border-strong: #3a3a46;
+  --text: #e7e8ec;
+  --text-dim: #b5b6be;
+  --muted: #8b8d98;
+  --accent: #c084ff;
+  --accent-strong: #9200e1;
+  --accent-soft: rgba(183, 95, 255, 0.14);
+  --primary: #9200e1;
+  --primary-hover: #a21ff0;
+  --warn: #ffb454;
+  --danger: #ff7a7a;
+  --danger-soft: rgba(255, 107, 107, 0.12);
+  --danger-strong: #d63c3c;
+  --ok: #4ade80;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --logo: #ffffff;
+  color-scheme: dark;
+}
+
+/* light: chosen in the header, or the system's (theme.ts) */
+:root[data-theme='light'] {
+  --bg: #f6f6f8;
+  --bg-elev: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f1f1f5;
+  --panel-3: #e9e9ef;
+  --border: #e2e2e9;
+  --border-soft: #ececf1;
+  --border-strong: #c9c9d3;
+  --text: #16161b;
+  --text-dim: #42434c;
+  --muted: #686a75;
+  --accent: #7a00c2;
+  --accent-strong: #8200d1;
+  --accent-soft: rgba(130, 0, 209, 0.08);
+  --primary: #8200d1;
+  --primary-hover: #7000b5;
+  --warn: #a15c07;
+  --danger: #c42b2b;
+  --danger-soft: rgba(196, 43, 43, 0.08);
+  --danger-strong: #c42b2b;
+  --ok: #15803d;
+  --shadow: 0 12px 32px rgba(20, 20, 30, 0.12);
+  --logo: #16161b;
+  color-scheme: light;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* the browser's bold is 700: the system's is 600 */
+b,
+strong,
+th,
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 600;
 }
 
 html,
@@ -31,8 +95,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 14px;
+  font-family: var(--font);
+  font-size: var(--fs-md);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -60,33 +124,33 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 0;
+  padding: 16px 0;
   gap: 12px;
   flex-wrap: wrap;
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 .logo-mark {
   height: 22px;
   width: auto;
-  color: #ffffff;
+  color: var(--logo);
   display: block;
 }
 .brand-name {
-  font-size: 17px;
-  font-weight: 650;
+  font-size: var(--fs-lg);
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 .network-badge {
   color: var(--muted);
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 2px 10px;
-  font-size: 11.5px;
+  border-radius: var(--r-pill);
+  padding: 2px 12px;
+  font-size: var(--fs-xs);
 }
 .header-right {
   display: flex;
@@ -96,7 +160,7 @@ a:hover {
 .balance {
   color: var(--ok);
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .balance-label {
   color: var(--muted);
@@ -107,11 +171,11 @@ a:hover {
   gap: 4px;
   font-family: var(--mono);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 3px 4px 3px 8px;
+  border-radius: var(--r-md);
+  padding: 4px 4px 4px 8px;
 }
 .copy-btn {
   display: inline-flex;
@@ -121,7 +185,7 @@ a:hover {
   height: 22px;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -141,18 +205,18 @@ a:hover {
   padding: 4px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   box-shadow: var(--shadow);
 }
 .wallet-menu button {
   min-height: 36px;
   padding: 0 12px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -180,54 +244,97 @@ a:hover {
 /* ── Buttons & inputs ───────────────────────────────── */
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 16px;
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 7px 16px;
-  font-size: 13.5px;
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: #1f1f26;
+  background: var(--panel-3);
+  border-color: var(--border-strong);
 }
 .btn:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
-.btn.primary {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
-  color: #fff;
-  font-weight: 550;
-}
-.btn.primary:hover:not(:disabled) {
-  background: #a63df0;
-  border-color: #a63df0;
+.btn .ico,
+.btn .btn-ico {
+  width: 16px;
+  height: 16px;
+  flex: none;
 }
 .btn.small {
-  padding: 4px 10px;
-  font-size: 12.5px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: var(--fs-sm);
+}
+/* one primary per screen: the main action */
+.btn.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+/* low-key actions, Cancel, row actions */
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.btn.ghost:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: transparent;
+  color: var(--text);
+}
+/* red text; solid red only on the final, can't-undo button */
+.btn.danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--danger);
 }
 .btn.danger:hover:not(:disabled) {
-  border-color: var(--danger);
+  background: var(--danger-soft);
+  border-color: transparent;
   color: var(--danger);
 }
 .btn.danger-solid {
   /* darker than --danger, so white text reads on it */
-  background: #d63c3c;
-  border-color: #d63c3c;
+  background: var(--danger-strong);
+  border-color: var(--danger-strong);
   color: #fff;
-  font-weight: 550;
 }
 .btn.danger-solid:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+.btn.icon-only {
+  padding: 0;
+  min-width: 32px;
+}
+.ico {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  vertical-align: -0.125em;
 }
 .link {
   background: none;
@@ -235,7 +342,7 @@ a:hover {
   color: var(--accent);
   cursor: pointer;
   padding: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 .link:hover {
   text-decoration: underline;
@@ -248,11 +355,11 @@ a:hover {
 .key-input {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-md);
   color: var(--text);
-  padding: 8px 10px;
+  padding: 8px 12px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   width: 320px;
   max-width: 100%;
 }
@@ -268,9 +375,9 @@ a:hover {
 
 .banner {
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 18px;
-  margin: 0 0 14px;
+  border-radius: var(--r-md);
+  padding: 16px 20px;
+  margin: 0 0 16px;
   background: var(--panel);
   display: flex;
   align-items: center;
@@ -293,7 +400,7 @@ a:hover {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 /* the password-only setup offered when the wallet's signatures change */
 .password-setup {
@@ -303,9 +410,13 @@ a:hover {
 }
 .error-text {
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
-  margin: 6px 0 0;
+  margin: 8px 0 0;
+}
+.error-text .ico,
+.q-state .ico {
+  margin-right: 4px;
 }
 
 /* ── Layout: sidebar + content ──────────────────────── */
@@ -317,7 +428,7 @@ a:hover {
 .layout {
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
-  gap: 18px;
+  gap: 20px;
   align-items: start;
 }
 @media (max-width: 760px) {
@@ -332,12 +443,12 @@ a:hover {
   position: sticky;
   top: 14px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   background: var(--panel);
-  padding: 10px 8px;
+  padding: 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 @media (max-width: 760px) {
   /* off-canvas drawer, opened from the header menu button */
@@ -348,10 +459,10 @@ a:hover {
     left: 0;
     z-index: 90;
     width: min(290px, 84vw);
-    border-radius: 0 16px 16px 0;
+    border-radius: 0 var(--r-lg) var(--r-lg) 0;
     border-left: none;
-    padding: calc(14px + env(safe-area-inset-top)) 10px calc(14px + env(safe-area-inset-bottom))
-      calc(10px + env(safe-area-inset-left));
+    padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom))
+      calc(12px + env(safe-area-inset-left));
     overflow-y: auto;
     overscroll-behavior: contain;
     transform: translateX(-105%);
@@ -370,8 +481,8 @@ a:hover {
 }
 .sidebar-empty {
   color: var(--muted);
-  font-size: 12.5px;
-  padding: 8px 10px;
+  font-size: var(--fs-sm);
+  padding: 8px 12px;
 }
 .nav {
   display: flex;
@@ -381,14 +492,14 @@ a:hover {
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
   background: none;
   border: none;
   color: var(--text-dim);
-  font-size: 13.5px;
-  padding: 7px 10px;
-  border-radius: 8px;
+  font-size: var(--fs-md);
+  padding: 8px 12px;
+  border-radius: var(--r-md);
   cursor: pointer;
   text-align: left;
 }
@@ -399,23 +510,23 @@ a:hover {
 .nav-item.active {
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 550;
+  font-weight: 500;
 }
 .nav-count {
   margin-left: auto;
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--muted);
-  border-radius: 999px;
-  font-size: 10.5px;
-  padding: 0 7px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-xs);
+  padding: 0 8px;
 }
 
 .tree-row {
   display: flex;
   align-items: center;
   gap: 2px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
 }
 .tree-row:hover {
   background: var(--panel-2);
@@ -427,7 +538,7 @@ a:hover {
   background: none;
   border: none;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   width: 16px;
   cursor: pointer;
   padding: 0;
@@ -436,23 +547,37 @@ a:hover {
 .tree-caret.spacer {
   cursor: default;
 }
+.tree-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+}
+.tree-chevron {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.15s;
+}
+.tree-chevron.open {
+  transform: rotate(90deg);
+}
 .tree-label {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   background: none;
   border: none;
   color: var(--text-dim);
-  font-size: 13px;
-  padding: 5px 4px;
+  font-size: var(--fs-sm);
+  padding: 4px 4px;
   cursor: pointer;
   text-align: left;
   min-width: 0;
 }
 .tree-row.selected .tree-label {
   color: var(--accent);
-  font-weight: 550;
+  font-weight: 500;
 }
 .tree-label:hover {
   color: var(--text);
@@ -466,9 +591,9 @@ a:hover {
   background: none;
   border: none;
   color: var(--muted);
-  font-size: 11px;
-  padding: 2px 5px;
-  border-radius: 6px;
+  font-size: var(--fs-xs);
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   opacity: 0;
   flex: none;
@@ -497,9 +622,9 @@ a:hover {
   max-height: min(46vh, 360px);
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 4px;
-  margin: 4px 0 10px;
+  margin: 4px 0 12px;
 }
 .move-opt {
   display: flex;
@@ -509,14 +634,14 @@ a:hover {
   min-height: 36px;
   background: none;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   color: var(--text-dim);
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   text-align: left;
   cursor: pointer;
-  padding-top: 6px;
-  padding-bottom: 6px;
-  padding-right: 10px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-right: 12px;
 }
 .move-opt:hover:not(:disabled) {
   background: var(--panel-2);
@@ -525,7 +650,7 @@ a:hover {
 .move-opt.selected {
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 550;
+  font-weight: 500;
 }
 .move-opt:disabled {
   opacity: 0.45;
@@ -539,7 +664,7 @@ a:hover {
 }
 .move-note {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   flex: none;
 }
 .move-new-row {
@@ -563,30 +688,30 @@ a:hover {
 
 .sidebar-sec {
   border-top: 1px solid var(--border-soft);
-  padding-top: 10px;
+  padding-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .sec-heading {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  padding: 0 10px 2px;
+  padding: 0 12px 2px;
 }
 /* foldable sections: the heading is the button; folded, it carries a summary */
 .sec-fold {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
   min-width: 0;
   background: none;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-align: left;
   cursor: pointer;
 }
@@ -620,27 +745,27 @@ a:hover {
   white-space: nowrap;
   text-transform: none;
   letter-spacing: normal;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text);
 }
 .sec-summary .sec-ok {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .sec-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .sec-body[hidden] {
   display: none;
 }
 .sec-item {
-  padding: 2px 10px;
-  font-size: 12.5px;
+  padding: 2px 12px;
+  font-size: var(--fs-sm);
 }
 .sec-ok {
   color: var(--ok);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -659,9 +784,9 @@ a:hover {
   grid-template-columns: max-content 1fr auto;
   grid-auto-rows: minmax(28px, auto);
   align-items: center;
-  column-gap: 14px;
-  padding: 0 10px;
-  font-size: 12.5px;
+  column-gap: 16px;
+  padding: 0 12px;
+  font-size: var(--fs-sm);
 }
 .sec-row {
   display: contents;
@@ -686,11 +811,11 @@ a:hover {
 .sec-action {
   background: none;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
-  padding: 2px 9px;
+  font-size: var(--fs-xs);
+  padding: 2px 8px;
   cursor: pointer;
 }
 .sec-action:hover:not(:disabled) {
@@ -707,9 +832,9 @@ a:hover {
   cursor: not-allowed;
 }
 .sec-error {
-  padding: 0 10px;
+  padding: 0 12px;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 /* ── Content column ─────────────────────────────────── */
@@ -718,7 +843,7 @@ a:hover {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .toolbar {
@@ -734,16 +859,16 @@ a:hover {
   align-items: center;
   gap: 2px;
   flex-wrap: wrap;
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 .crumb {
   background: none;
   border: none;
   color: var(--accent);
   cursor: pointer;
-  font-size: 13.5px;
-  padding: 3px 7px;
-  border-radius: 6px;
+  font-size: var(--fs-md);
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
 }
 .crumb:hover {
   background: var(--panel);
@@ -753,6 +878,7 @@ a:hover {
 }
 .toolbar-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -760,8 +886,8 @@ a:hover {
 
 .dropzone {
   border: 1.5px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 26px 16px;
+  border-radius: var(--r-md);
+  padding: 28px 16px;
   text-align: center;
   transition: border-color 0.15s, background 0.15s;
   background: var(--bg-elev);
@@ -781,31 +907,31 @@ a:hover {
   display: none;
 }
 .dropzone-title {
-  font-size: 14.5px;
-  font-weight: 550;
+  font-size: var(--fs-md);
+  font-weight: 500;
 }
 .dropzone-sub {
   color: var(--muted);
-  margin-top: 3px;
-  font-size: 12.5px;
+  margin-top: 4px;
+  font-size: var(--fs-sm);
 }
 .encrypt-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin-top: 12px;
   color: var(--muted);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 /* ── Upload queue ───────────────────────────────────── */
 
 .queue h2 {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin: 0;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -818,8 +944,8 @@ a:hover {
   padding: 8px 12px;
   border: 1px solid var(--border-soft);
   border-left: 3px solid var(--border);
-  border-radius: 8px;
-  margin-top: 6px;
+  border-radius: var(--r-md);
+  margin-top: 8px;
   background: var(--panel);
   flex-wrap: wrap;
 }
@@ -836,15 +962,15 @@ a:hover {
 }
 .q-size {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 .q-state {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   margin-left: auto;
 }
 .q-msg {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   flex-basis: 100%;
   color: var(--muted);
 }
@@ -863,13 +989,13 @@ a:hover {
   gap: 8px;
   background: var(--accent-soft);
   border: 1px solid var(--accent-strong);
-  border-radius: 8px;
-  padding: 3px 6px 3px 10px;
+  border-radius: var(--r-md);
+  padding: 4px 8px 4px 12px;
 }
 .sel-count {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--accent);
-  font-weight: 550;
+  font-weight: 500;
 }
 .th-check,
 .td-check {
@@ -891,19 +1017,19 @@ tbody tr.row-selected {
 
 .files h2,
 .activity h2 {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   margin: 0;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
 }
 .count {
   color: var(--muted);
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-transform: none;
 }
 table {
@@ -915,16 +1041,16 @@ th {
   text-align: left;
   color: var(--muted);
   font-weight: 500;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 7px 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 td {
-  padding: 9px 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border-soft);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 tbody tr {
   transition: background 0.1s;
@@ -937,7 +1063,7 @@ tbody tr:hover {
   max-width: 300px;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
 }
 .fname-text {
   overflow: hidden;
@@ -954,11 +1080,11 @@ tbody tr:hover {
   white-space: nowrap;
 }
 .row-actions .btn + .btn {
-  margin-left: 6px;
+  margin-left: 2px;
 }
 .tag {
-  font-size: 11px;
-  border-radius: 999px;
+  font-size: var(--fs-xs);
+  border-radius: var(--r-pill);
   padding: 1px 8px;
 }
 .tag.enc {
@@ -972,15 +1098,15 @@ tbody tr:hover {
 
 .muted {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .empty {
   color: var(--muted);
-  font-size: 13px;
-  padding: 22px 0;
+  font-size: var(--fs-sm);
+  padding: 24px 0;
   text-align: center;
   border: 1px dashed var(--border-soft);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   margin-top: 8px;
 }
 
@@ -990,7 +1116,7 @@ tbody tr:hover {
   text-align: center;
   padding: 52px 24px 56px;
   border: 1px dashed var(--border);
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   margin-top: 8px;
   background:
     radial-gradient(ellipse 60% 50% at 50% 0%, rgba(146, 0, 225, 0.08), transparent 70%),
@@ -999,23 +1125,23 @@ tbody tr:hover {
 .hero-icon {
   width: 64px;
   height: 64px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 .hero h3 {
   margin: 0 0 8px;
-  font-size: 17px;
-  font-weight: 650;
+  font-size: var(--fs-lg);
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 .hero-sub {
   margin: 0 0 4px;
   color: var(--text-dim);
-  font-size: 13.5px;
+  font-size: var(--fs-md);
 }
 .hero-hint {
   margin: 0;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 /* ── Activity ───────────────────────────────────────── */
@@ -1025,12 +1151,12 @@ tbody tr:hover {
   margin: 8px 0 0;
   padding: 0;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   max-height: 220px;
   overflow-y: auto;
 }
 .activity li {
-  padding: 3px 0;
+  padding: 4px 0;
   border-bottom: 1px solid var(--border-soft);
 }
 .ts {
@@ -1057,15 +1183,15 @@ tbody tr:hover {
 .modal {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 22px;
+  border-radius: var(--r-lg);
+  padding: 24px;
   width: 100%;
   max-width: 540px;
   box-shadow: var(--shadow);
 }
 .modal h2 {
   margin: 0 0 12px;
-  font-size: 16px;
+  font-size: var(--fs-lg);
   overflow-wrap: anywhere;
 }
 .share-modes {
@@ -1083,7 +1209,7 @@ tbody tr:hover {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 18px;
+  margin-top: 20px;
 }
 .ask-modal {
   max-width: 440px;
@@ -1091,7 +1217,7 @@ tbody tr:hover {
 .ask-message {
   margin: 0 0 4px;
   color: var(--muted);
-  font-size: 13.5px;
+  font-size: var(--fs-md);
   line-height: 1.5;
   white-space: pre-line;
   overflow-wrap: anywhere;
@@ -1101,7 +1227,7 @@ tbody tr:hover {
 }
 .dup-list {
   list-style: none;
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   padding: 0;
   max-height: min(320px, 50dvh);
   overflow-y: auto;
@@ -1115,7 +1241,7 @@ tbody tr:hover {
   gap: 4px;
 }
 .dup-from {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
   overflow-wrap: anywhere;
 }
@@ -1127,8 +1253,8 @@ tbody tr:hover {
 
 .share-card {
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 32px 26px;
+  border-radius: var(--r-lg);
+  padding: 32px 28px;
   text-align: center;
   background: var(--panel);
   display: flex;
@@ -1150,10 +1276,10 @@ tbody tr:hover {
 
 .footer {
   margin-top: 32px;
-  padding-top: 14px;
+  padding-top: 16px;
   border-top: 1px solid var(--border-soft);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-align: center;
 }
 
@@ -1164,7 +1290,7 @@ tbody tr:hover {
   height: 30px;
   flex: none;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--panel-2);
 }
@@ -1200,7 +1326,7 @@ tbody tr:hover {
 .preview-title {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 .preview-name {
@@ -1222,7 +1348,7 @@ tbody tr:hover {
   max-height: 72vh;
   background: var(--bg);
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: auto;
 }
 .preview-media {
@@ -1249,7 +1375,7 @@ tbody tr:hover {
   padding: 8px 0;
 }
 .html-preview .layout-toggle button {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 4px 12px;
 }
 .preview-html {
@@ -1267,8 +1393,8 @@ tbody tr:hover {
 }
 .html-note {
   margin: 0;
-  padding: 0 10px;
-  font-size: 11.5px;
+  padding: 0 12px;
+  font-size: var(--fs-xs);
   text-align: center;
 }
 .pdf-viewer {
@@ -1299,26 +1425,26 @@ tbody tr:hover {
   display: grid;
   place-items: center;
   color: #555;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .pdf-counter {
   position: absolute;
   right: 10px;
   bottom: 10px;
-  padding: 3px 9px;
-  border-radius: 999px;
+  padding: 4px 8px;
+  border-radius: var(--r-pill);
   background: rgba(0, 0, 0, 0.65);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   pointer-events: none;
 }
 .preview-text {
   align-self: stretch;
   width: 100%;
   margin: 0;
-  padding: 14px 16px;
+  padding: 16px 16px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1327,13 +1453,13 @@ tbody tr:hover {
 .preview-loading {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .preview-note {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .spinner {
   width: 16px;
@@ -1353,16 +1479,17 @@ tbody tr:hover {
 
 .layout-toggle {
   display: inline-flex;
+  gap: 2px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-md);
   padding: 2px;
-  background: var(--panel);
+  background: var(--panel-2);
 }
 .layout-toggle button {
   background: none;
   border: none;
-  border-radius: 999px;
-  padding: 4px 9px;
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
   color: var(--muted);
   cursor: pointer;
   display: flex;
@@ -1372,8 +1499,8 @@ tbody tr:hover {
   color: var(--text);
 }
 .layout-toggle button.active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--panel-3);
+  color: var(--text);
 }
 .layout-toggle svg {
   width: 15px;
@@ -1388,15 +1515,15 @@ tbody tr:hover {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 12px;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 .grid-select-all {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-height: 28px;
-  margin-top: 6px;
-  font-size: 12.5px;
+  margin-top: 8px;
+  font-size: var(--fs-sm);
   color: var(--muted);
   cursor: pointer;
   user-select: none;
@@ -1412,7 +1539,7 @@ tbody tr:hover {
   position: relative;
   background: var(--panel);
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1456,10 +1583,10 @@ tbody tr:hover {
   bottom: 8px;
   width: 24px;
   height: 24px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: rgba(10, 10, 12, 0.72);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1477,21 +1604,21 @@ tbody tr:hover {
   opacity: 1;
 }
 .tile-info {
-  padding: 8px 10px 6px;
+  padding: 8px 12px 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
 .tile-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .tile-meta {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1503,8 +1630,8 @@ tbody tr:hover {
   flex-wrap: wrap;
 }
 .tile-actions .btn {
-  padding: 3px 9px;
-  font-size: 11.5px;
+  padding: 4px 8px;
+  font-size: var(--fs-xs);
 }
 @media (hover: hover) {
   .tile-actions {
@@ -1526,8 +1653,8 @@ tbody tr:hover {
 /* ── Action buttons (icon + label) ──────────────────── */
 
 .btn-ico {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex: none;
 }
 .row-actions .btn,
@@ -1535,20 +1662,38 @@ tbody tr:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   vertical-align: middle;
 }
-/* file actions are icon-only (named by title and aria-label): square */
+/* file actions are icon-only (named by title and aria-label): square,
+   borderless; red only when pointed at */
+.row-actions .btn,
+.tile-actions .btn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.row-actions .btn:hover:not(:disabled),
+.tile-actions .btn:hover:not(:disabled) {
+  background: var(--panel-3);
+  border-color: transparent;
+  color: var(--text);
+}
+.row-actions .btn.danger:hover:not(:disabled),
+.tile-actions .btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
 .row-actions .btn {
   padding: 0;
-  width: 30px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   min-height: 0;
 }
 .tile-actions .btn {
   padding: 0;
   width: 28px;
-  height: 26px;
+  height: 28px;
   min-height: 0;
 }
 .fname-sub {
@@ -1579,7 +1724,7 @@ tbody tr:hover {
   display: none;
   background: none;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   color: var(--text);
   width: 38px;
   height: 38px;
@@ -1603,13 +1748,13 @@ tbody tr:hover {
 @media (pointer: coarse) {
   .btn.small {
     min-height: 34px;
-    padding: 6px 12px;
+    padding: 8px 12px;
   }
   .move-opt {
     min-height: 44px;
   }
   .nav-item {
-    padding: 10px 12px;
+    padding: 12px 12px;
   }
   .tree-label {
     padding-top: 8px;
@@ -1628,7 +1773,7 @@ tbody tr:hover {
     height: 20px;
   }
   .layout-toggle button {
-    padding: 7px 11px;
+    padding: 8px 12px;
   }
 }
 
@@ -1647,7 +1792,7 @@ tbody tr:hover {
       max(12px, env(safe-area-inset-left));
   }
   .header {
-    padding: calc(10px + env(safe-area-inset-top)) 0 10px;
+    padding: calc(12px + env(safe-area-inset-top)) 0 12px;
     flex-wrap: nowrap;
   }
   .nav-toggle {
@@ -1700,7 +1845,7 @@ tbody tr:hover {
   }
 
   .dropzone {
-    padding: 18px 12px;
+    padding: 20px 12px;
   }
   .q-name {
     max-width: 55vw;
@@ -1711,7 +1856,7 @@ tbody tr:hover {
     display: none;
   }
   td {
-    padding: 8px 6px;
+    padding: 8px 4px;
   }
   .fname {
     /* the rest of the row: checkbox + five 34 px actions take ~250 px */
@@ -1727,7 +1872,7 @@ tbody tr:hover {
   }
   .fname-sub {
     display: block;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     font-weight: 400;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1753,7 +1898,7 @@ tbody tr:hover {
   }
 
   .hero {
-    padding: 36px 18px 40px;
+    padding: 36px 20px 40px;
   }
   .activity ul {
     max-height: 160px;
@@ -1761,7 +1906,7 @@ tbody tr:hover {
 
   /* iOS zooms into inputs under 16px */
   .key-input {
-    font-size: 16px;
+    font-size: var(--fs-lg);
     width: 100%;
   }
 }
@@ -1771,7 +1916,7 @@ tbody tr:hover {
     display: none;
   }
   .brand-name {
-    font-size: 16px;
+    font-size: var(--fs-lg);
   }
 
   /* modals become bottom sheets */
@@ -1780,10 +1925,10 @@ tbody tr:hover {
     padding: 0;
   }
   .modal {
-    border-radius: 18px 18px 0 0;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
     max-height: 92dvh;
     overflow-y: auto;
-    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
     border-bottom: none;
   }
   .modal-actions {
@@ -1812,7 +1957,7 @@ tbody tr:hover {
     border-radius: 0;
     display: flex;
     flex-direction: column;
-    padding: calc(10px + env(safe-area-inset-top)) 10px calc(10px + env(safe-area-inset-bottom));
+    padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
   }
   .preview-head {
     margin-bottom: 8px;
@@ -1854,8 +1999,8 @@ tbody tr:hover {
   gap: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 14px;
+  border-radius: var(--r-pill);
+  padding: 0 16px;
   height: 40px;
   transition: border-color 0.12s;
 }
@@ -1879,7 +2024,7 @@ tbody tr:hover {
   outline: none;
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 .searchbox input::-webkit-search-cancel-button {
   filter: invert(0.6);
@@ -1887,9 +2032,9 @@ tbody tr:hover {
 .searchbox-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1902,7 +2047,7 @@ tbody tr:hover {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 10px 8px;
+  padding: 12px 8px;
   border-bottom: 1px solid var(--border-soft);
 }
 .result:hover {
@@ -1936,17 +2081,17 @@ tbody tr:hover {
   gap: 1px;
 }
 .result-meta {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .result-folder {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 0 4px;
 }
 .result-excerpt {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1969,15 +2114,15 @@ tbody tr:hover {
 .suggest {
   border: 1px solid var(--accent-strong);
   background: var(--accent-soft);
-  border-radius: var(--radius);
-  padding: 12px 14px;
+  border-radius: var(--r-md);
+  padding: 12px 16px;
   margin-bottom: 12px;
 }
 .suggest-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .suggest-list {
   list-style: none;
@@ -1992,7 +2137,7 @@ tbody tr:hover {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   min-width: 0;
 }
 .suggest-list input {
@@ -2007,15 +2152,15 @@ tbody tr:hover {
 }
 .suggest-dest {
   color: var(--accent);
-  font-weight: 550;
+  font-weight: 500;
   white-space: nowrap;
 }
 .suggest-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 12px;
+  margin-top: 12px;
 }
 .sec-toggle {
   display: flex;
@@ -2029,7 +2174,7 @@ tbody tr:hover {
 
 @media (max-width: 760px) {
   .searchbox input {
-    font-size: 16px; /* no iOS zoom */
+    font-size: var(--fs-lg); /* no iOS zoom */
   }
   .result .row-actions .btn {
     padding: 0;
@@ -2054,11 +2199,11 @@ tbody tr:hover {
   flex: none;
   background: none;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   color: var(--muted);
   font: inherit;
-  font-size: 11.5px;
-  padding: 3px 10px;
+  font-size: var(--fs-xs);
+  padding: 4px 12px;
   cursor: pointer;
 }
 .searchbox-retry:hover {
@@ -2086,7 +2231,7 @@ tbody tr:hover {
   margin-top: 4px;
 }
 .small-print {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   margin: 8px 0 0;
   text-align: right;
 }
@@ -2102,9 +2247,9 @@ tbody tr:hover {
   align-items: center;
   gap: 8px;
   height: 44px;
-  padding: 0 18px 0 14px;
+  padding: 0 20px 0 16px;
   border: 1px solid var(--accent-strong);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--accent-strong);
   color: #fff;
   font: inherit;
@@ -2113,7 +2258,7 @@ tbody tr:hover {
   cursor: pointer;
 }
 .assist-fab:hover {
-  background: #a21cf0;
+  background: var(--primary-hover);
 }
 .assist-fab svg {
   width: 20px;
@@ -2149,7 +2294,7 @@ tbody tr:hover {
 
 /* a control the assistant points at */
 .guide-pulse {
-  border-radius: 8px;
+  border-radius: var(--r-md);
   animation: guide-pulse 1.4s ease-out 3;
 }
 @keyframes guide-pulse {
@@ -2198,7 +2343,7 @@ tbody tr:hover {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .wallet-option {
   display: flex;
@@ -2209,10 +2354,10 @@ tbody tr:hover {
   padding: 8px 12px;
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   color: var(--text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-md);
   text-align: left;
   cursor: pointer;
 }
@@ -2225,7 +2370,7 @@ tbody tr:hover {
 .wallet-icon-blank {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   flex: none;
 }
 .wallet-icon-blank {
@@ -2240,13 +2385,13 @@ tbody tr:hover {
 }
 .wallet-hint {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .wallet-last {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--accent);
   flex: none;
 }
@@ -2271,7 +2416,7 @@ tbody tr:hover {
   width: min(280px, 100%);
   aspect-ratio: 1;
   margin: 0 auto;
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .wc-waiting {
   color: var(--accent);
@@ -2287,12 +2432,12 @@ tbody tr:hover {
   gap: 12px;
   width: max-content;
   max-width: calc(100vw - 32px);
-  padding: 10px 14px;
+  padding: 12px 16px;
   background: var(--panel);
   border: 1px solid var(--accent);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   box-shadow: var(--shadow);
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 /* ?debug=wc: WalletConnect's log, for a phone without a console */
 .wc-debug {
@@ -2306,21 +2451,21 @@ tbody tr:hover {
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 .wc-debug-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 8px 12px;
+  font-size: var(--fs-xs);
 }
 .wc-debug pre {
   margin: 0;
-  padding: 6px 10px 10px;
+  padding: 8px 12px 12px;
   overflow: auto;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   line-height: 1.4;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2354,8 +2499,8 @@ tbody tr:hover {
 }
 .welcome h1 {
   margin: 0 0 12px;
-  font-size: clamp(24px, 4vw, 34px);
-  font-weight: 700;
+  font-size: clamp(var(--fs-xl), 4vw, var(--fs-2xl));
+  font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.15;
   background: linear-gradient(90deg, var(--text), var(--accent));
@@ -2367,24 +2512,24 @@ tbody tr:hover {
   max-width: 520px;
   margin: 0 auto 24px;
   color: var(--text-dim);
-  font-size: 15px;
+  font-size: var(--fs-lg);
   line-height: 1.55;
 }
 .welcome-cta {
   min-height: 44px;
-  padding: 0 26px;
-  font-size: 15px;
+  padding: 0 28px;
+  font-size: var(--fs-lg);
   margin-bottom: 12px;
 }
 .welcome-error {
   max-width: 520px;
   margin: 0 auto 12px;
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 .welcome-start-over {
   margin: 0 auto 12px;
   color: var(--text-dim);
-  font-size: 14px;
+  font-size: var(--fs-md);
 }
 .welcome-start-over .btn {
   min-height: 40px;
@@ -2394,7 +2539,7 @@ tbody tr:hover {
     padding: 40px 16px 36px;
   }
   .welcome-sub {
-    font-size: 14px;
+    font-size: var(--fs-md);
   }
   .welcome-cta {
     width: 100%;
@@ -2410,16 +2555,16 @@ tbody tr:hover {
   text-align: center;
 }
 .crash h1 {
-  font-size: 20px;
+  font-size: var(--fs-xl);
   margin-bottom: 8px;
 }
 .crash-detail {
   margin: 16px 0;
-  padding: 10px 12px;
+  padding: 12px 12px;
   background: var(--panel);
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
-  font-size: 12px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
   text-align: left;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2434,7 +2579,7 @@ tbody tr:hover {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   max-width: 420px;
 }
@@ -2463,15 +2608,15 @@ tbody tr:hover {
 }
 .tile-badge-pdf {
   width: auto;
-  padding: 0 7px;
+  padding: 0 8px;
   background: #ef4444;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.04em;
 }
 
 .trash-note {
-  margin: -4px 0 10px;
-  font-size: 12.5px;
+  margin: -4px 0 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ── Progress line and toasts ───────────────────────── */
@@ -2526,12 +2671,12 @@ tbody tr:hover {
   gap: 4px;
   min-height: 48px;
   max-width: 440px;
-  padding: 6px 6px 6px 16px;
+  padding: 8px 8px 8px 16px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--panel-2);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-md);
   box-shadow: var(--shadow);
   animation: toast-in 0.18s ease-out;
 }
@@ -2548,7 +2693,7 @@ tbody tr:hover {
   flex: none;
   width: 18px;
   height: 18px;
-  margin-right: 6px;
+  margin-right: 8px;
   fill: none;
   stroke: var(--danger);
   stroke-width: 2;
@@ -2565,7 +2710,7 @@ tbody tr:hover {
   min-height: 36px;
   padding: 0 12px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--accent);
   font: inherit;
@@ -2583,7 +2728,7 @@ tbody tr:hover {
   width: 36px;
   height: 36px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;

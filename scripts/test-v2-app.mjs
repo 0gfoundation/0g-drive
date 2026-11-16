@@ -112,12 +112,12 @@ async function uploadAndWait(page, files) {
   await page.waitForFunction(
     (names) => {
       const rows = [...document.querySelectorAll('.queue-item')]
-      return names.every((n) => rows.some((r) => r.textContent.includes(n) && /in your drive|✗/.test(r.textContent)))
+      return names.every((n) => rows.some((r) => r.textContent.includes(n) && (/in your drive/.test(r.textContent) || r.classList.contains('q-error'))))
     },
     files.map((f) => f.name),
     { timeout: 8 * 60_000, polling: 1000 }
   )
-  const failed = await page.$$eval('.queue-item', (rows) => rows.filter((r) => r.textContent.includes('✗')).map((r) => r.textContent))
+  const failed = await page.$$eval('.queue-item', (rows) => rows.filter((r) => r.classList.contains('q-error')).map((r) => r.textContent))
   if (failed.length) throw new Error(`upload failed: ${failed.join(' | ')}`)
   for (const f of files) await row(page, f.name).waitFor({ timeout: 3 * 60_000 })
 }
@@ -144,7 +144,7 @@ try {
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   check('drive created: 3 signatures, 1 deposit transaction', prompts.sign === 3 && prompts.tx === 1, `${prompts.sign} signatures, ${prompts.tx} tx`)
   check('…though the RPC failed a receipt query on the way', receiptErrors === 1)
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
@@ -153,7 +153,7 @@ try {
   check('storage balance shown after setup', firstBalance > 0.05 && firstBalance <= 0.1, `${firstBalance} 0G`)
 
   let p0 = { ...prompts }
-  await page.getByRole('button', { name: '+ New folder' }).click()
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).waitFor({ timeout: 2 * 60_000 })
   await page.locator('.sidebar .tree-name', { hasText: 'Recipes' }).click()
   await page.locator('.breadcrumb', { hasText: 'Recipes' }).waitFor()

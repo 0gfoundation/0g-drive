@@ -345,7 +345,7 @@ try {
     const text = await err.textContent()
     check(`${name}: drive setup refused before any transaction (${wantSigs} signature${wantSigs > 1 ? 's' : ''}), no drive opened`,
       w.count('personal_sign') === wantSigs && w.count('eth_sendTransaction') === 0 &&
-        (await page.getByRole('button', { name: '+ New folder' }).count()) === 0 &&
+        (await page.getByRole('button', { name: 'New folder', exact: true }).count()) === 0 &&
         (await page.getByRole('button', { name: /Create my drive|Finish setup/ }).count()) === 1,
       JSON.stringify({ sign: w.count('personal_sign'), tx: w.count('eth_sendTransaction'), text: text.slice(0, 120) }))
 
@@ -365,7 +365,7 @@ try {
       ? `${name}: a recovery password is offered; with it, 1 more signature, then the deposit, refused for lack of 0G in words`
       : `${name}: a recovery password is offered, but an undeployed smart account is refused before the deposit`,
       w.count('personal_sign') === wantSigs + 1 && (sign === 'random' ? depositTried() > 0 : depositTried() === 0) &&
-        (await page.getByRole('button', { name: '+ New folder' }).count()) === 0,
+        (await page.getByRole('button', { name: 'New folder', exact: true }).count()) === 0,
       JSON.stringify({ sign: w.count('personal_sign'), deposit: depositTried(), text: (await err2.textContent()).slice(0, 120) }))
     await context.close()
   }

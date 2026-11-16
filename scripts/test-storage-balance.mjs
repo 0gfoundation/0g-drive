@@ -230,7 +230,7 @@ try {
   // refuses the first 2 saves as one that hasn't seen the deposit yet
   refuseUploads = 2
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   const setupLog = await page.locator('.activity, .log').allTextContents().catch(() => [])
   check(
     'setup finishes though the relayer first refuses the save (“have 0 wei”) twice',

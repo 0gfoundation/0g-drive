@@ -7,6 +7,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/0g-webclip.png" />
     <meta name="theme-color" content="#0a0a0c" />
+    <script>
+      // the theme before anything draws (see src/theme.ts): the one chosen, else the system's
+      try {
+        var t = localStorage.getItem('0gdrive:theme')
+        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+        document.documentElement.dataset.theme = t
+        if (t === 'light') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#f6f6f8')
+      } catch (e) {}
+    </script>
     <title>0GDrive</title>
   </head>
   <body>

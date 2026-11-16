@@ -120,11 +120,11 @@ try {
   await page.reload()
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
 
   // New folder: the drive's own box, its field focused
-  await page.getByRole('button', { name: '+ New folder' }).click()
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await ask.waitFor({ timeout: 5000 })
   const look = await ask.evaluate((m) => ({
     title: m.querySelector('h2')?.textContent,
@@ -152,14 +152,14 @@ try {
   check('Escape closes it and creates nothing', !(await shown()) && (await treeRow('Never').count()) === 0)
 
   // Enter creates
-  await page.getByRole('button', { name: '+ New folder' }).click()
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await field.fill('Recipes')
   await field.press('Enter')
   await treeRow('Recipes').waitFor({ timeout: 5 * 60_000 })
   check('Enter with a good name creates the folder', !(await shown()))
 
   // a name already used here
-  await page.getByRole('button', { name: '+ New folder' }).click()
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await field.fill('recipes')
   const clash = (await ask.locator('.error-text').textContent({ timeout: 2000 }).catch(() => '')).trim()
   check('a folder name already here is refused before anything is sent', /already a folder named “Recipes”/.test(clash), JSON.stringify(clash))

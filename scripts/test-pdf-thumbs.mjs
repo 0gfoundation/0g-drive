@@ -201,7 +201,7 @@ try {
   await connectExtension(page)
   // setup: 3 signatures and the storage deposit (one transaction)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
 
   // as before PDF thumbnails: pdf.js's worker can't load, so no thumbnail is stored
@@ -216,7 +216,7 @@ try {
   check('without pdf.js: no thumbnail stored, the upload still went through', !list['old-scan.pdf'], JSON.stringify(list))
   await page.unroute('**/pdf.worker*')
   await page.reload() // reconnects by itself; pdf.js loads afresh
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 3 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 3 * 60_000 })
 
   await page.setInputFiles('.dropzone input[type=file]', [{ name: 'report.pdf', mimeType: 'application/pdf', buffer: pdf('1 0 0') }])
   await listed(['report.pdf'])

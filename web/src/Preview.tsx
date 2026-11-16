@@ -6,6 +6,7 @@ import { HtmlPreview } from './HtmlPreview'
 import { MarkdownPreview } from './MarkdownPreview'
 import { loadPdfjs } from './pdfjs'
 import { closeOnBackdrop } from './backdrop'
+import { Icon } from './icons'
 
 // ─── Thumbnails ───────────────────────────────────────────────────────
 //
@@ -501,7 +502,7 @@ export function PreviewModal({
   if (tooBig) {
     body = <p className="preview-note">Too large to preview ({fmtSize(meta.size)}) — download it instead.</p>
   } else if (error) {
-    body = <p className="error-text">⚠ {error}</p>
+    body = <p className="error-text"><Icon name="alert" />{error}</p>
   } else if (!data) {
     body = (
       <div className="preview-loading">
@@ -539,8 +540,8 @@ export function PreviewModal({
             <button className="btn small" disabled={!data} onClick={() => data && onDownload(data)}>
               Download
             </button>
-            <button className="btn small" onClick={onClose} aria-label="Close preview">
-              ✕
+            <button className="btn small icon-only" onClick={onClose} aria-label="Close preview">
+              <Icon name="close" />
             </button>
           </div>
         </div>
