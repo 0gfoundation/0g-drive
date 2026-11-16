@@ -23,6 +23,7 @@ import {
 import { rank, suggestMoves, type MoveSuggestion } from './ai/searchcore'
 import { addPendingSearch, pendingSearch, prunePendingSearch, subscribePendingSearch } from './searchPending'
 import { askConfirm } from './AskDialog'
+import { Icon } from './icons'
 
 export interface FileHit {
   meta: FileMeta
@@ -441,8 +442,8 @@ export function SuggestionsPanel({
   return (
     <section className="suggest">
       <div className="suggest-head">
-        <strong>✨ Organize suggestions</strong>
-        <button className="btn small" onClick={onDismiss} aria-label="Dismiss suggestions">✕</button>
+        <strong><Icon name="sparkles" /> Organize suggestions</strong>
+        <button className="btn small" onClick={onDismiss} aria-label="Dismiss suggestions"><Icon name="close" /></button>
       </div>
       {suggestions.length === 0 ? (
         <p className="muted">Everything here looks like it’s in the right place.</p>

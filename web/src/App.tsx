@@ -71,6 +71,8 @@ import {
 } from './v2drive'
 import { closeOnBackdrop } from './backdrop'
 import { askConfirm, askText } from './AskDialog'
+import { Icon, type IconName } from './icons'
+import { useTheme } from './theme'
 import { showDeleted, showMoved, showRenamed, showRestored, showTrashed, useChanges } from './changes'
 import { Toast, useToast } from './Toast'
 import { OpenInWallet, isTouchDevice } from './OpenInWallet'
@@ -406,7 +408,7 @@ function Welcome({ onConnect, busy, error }: { onConnect: () => void; busy: 'rec
       ) : (
         !isTouchDevice() && <p className="hero-hint">Install a wallet extension such as MetaMask or Rabby to start.</p>
       )}
-      {error && <p className="error-text welcome-error" role="alert">⚠ {error}</p>}
+      {error && <p className="error-text welcome-error" role="alert"><Icon name="alert" />{error}</p>}
       {offerStartOver && (
         <p className="welcome-start-over">
           {slow && !error ? 'Taking too long? ' : ''}
@@ -424,15 +426,6 @@ function Welcome({ onConnect, busy, error }: { onConnect: () => void; busy: 'rec
 
 // ─── Action icons (inline SVG, no deps; file-type icons: fileIcons.tsx) ──
 
-const ACTION_ICONS = {
-  download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
-  share: 'M15 5l5 5-5 5M20 10H10a6 6 0 00-6 6v3',
-  trash: 'M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13',
-  restore: 'M4 12a8 8 0 108-8 8 8 0 00-6 2.7M4 4v4h4',
-  close: 'M6 6l12 12M18 6L6 18',
-  rename: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
-  move: 'M3 6h6l2 2h10v11H3zM10 14h7M14 11l3 3-3 3',
-} as const
 
 /** Button content: icon always, label hidden on narrow screens. */
 /** Select-all checkbox: checked when every file is selected, a dash when
@@ -451,13 +444,8 @@ function SelectAllBox({ total, selected, onChange }: { total: number; selected: 
   )
 }
 
-function ActionLabel({ icon }: { icon: keyof typeof ACTION_ICONS }) {
-  return (
-    <svg className="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={ACTION_ICONS[icon]} />
-    </svg>
-  )
+function ActionLabel({ icon }: { icon: IconName }) {
+  return <Icon name={icon} className="btn-ico" />
 }
 
 function FolderGlyph({ open }: { open?: boolean }) {
@@ -488,13 +476,13 @@ function TreeRow({
   const isSelected = currentPath === node.path
   return (
     <div>
-      <div className={`tree-row${isSelected ? ' selected' : ''}`} style={{ paddingLeft: 6 + depth * 14 }}>
+      <div className={`tree-row${isSelected ? ' selected' : ''}`} style={{ paddingLeft: 4 + depth * 16 }}>
         <button
           className={`tree-caret${node.children.length === 0 ? ' spacer' : ''}`}
           onClick={() => node.children.length > 0 && onToggle(node.path)}
           aria-label={isOpen ? 'collapse' : 'expand'}
         >
-          {node.children.length > 0 ? (isOpen ? '▾' : '▸') : ''}
+          {node.children.length > 0 && <Icon name="chevron" className={`ico tree-chevron${isOpen ? ' open' : ''}`} />}
         </button>
         <button className="tree-label" onClick={() => onSelect(node.path)} title={node.path}>
           <FolderGlyph open={isOpen} />
@@ -502,21 +490,15 @@ function TreeRow({
         </button>
         <button className="tree-act tree-rename" disabled={disabled} onClick={() => onRename(node.path)}
           title="Rename folder" aria-label="Rename folder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d={ACTION_ICONS.rename} />
-          </svg>
+          <Icon name="rename" />
         </button>
         <button className="tree-act tree-move" disabled={disabled} onClick={() => onMove(node.path)}
           title="Move folder" aria-label="Move folder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d={ACTION_ICONS.move} />
-          </svg>
+          <Icon name="move" />
         </button>
         <button className="tree-act tree-remove" disabled={disabled} onClick={() => onRemove(node.path)}
-          title="Move folder (and contents) to trash">
-          🗑
+          title="Move folder (and contents) to trash" aria-label="Trash folder">
+          <Icon name="trash" />
         </button>
       </div>
       {isOpen &&
@@ -613,7 +595,7 @@ function ShareView({
       </header>
       <main className="main">
         <section className="share-card">
-          <h2>📄 {p.n}</h2>
+          <h2><Icon name="file" /> {p.n}</h2>
           <p className="muted">
             {fmtSize(p.z)} · {p.m} · shared via {mode === 'link' ? 'secret link' : 'encrypted link'}
           </p>
@@ -633,7 +615,7 @@ function ShareView({
               />
             </div>
           )}
-          {error && <p className="error-text">⚠ {error}</p>}
+          {error && <p className="error-text"><Icon name="alert" />{error}</p>}
           <button
             className="btn primary"
             disabled={busy !== null || (mode === 'encrypted' && !viaWallet && !/^0x[0-9a-fA-F]{64}$/.test(keyInput.trim()))}
@@ -780,6 +762,7 @@ export default function App() {
   /** the rename and move dialogs wait only for their own (folder) change */
   const dialogBusy = busyText !== null || folderSaving
   const { toast, show: showToast, close: closeToast } = useToast()
+  const [theme, toggleTheme] = useTheme()
 
   const log = useCallback((msg: string, percent?: number) => {
     setActivities((prev) =>
@@ -1438,7 +1421,7 @@ export default function App() {
           if (!r.ok) log(`${files[i].name} failed: ${isShortfall(r.error) ? 'your storage balance ran out — deposit, then upload it again' : r.error}`)
         })
         if (res.recordsStored) {
-          setAll({ state: 'done', message: 'in your drive ✓' }, (i) => okIdx.includes(i))
+          setAll({ state: 'done', message: 'in your drive' }, (i) => okIdx.includes(i))
           log(`${n} file${n === 1 ? '' : 's'} stored in your drive.`)
         } else if (okIdx.length > 0) {
           // some files failed (or the batched record didn't store): register
@@ -1449,7 +1432,7 @@ export default function App() {
             return r.ok ? { ...metas[i], ...r.ref } : metas[i]
           })
           await store.putFileRecords(path, stored, replace)
-          setAll({ state: 'done', message: 'in your drive ✓' }, (i) => okIdx.includes(i))
+          setAll({ state: 'done', message: 'in your drive' }, (i) => okIdx.includes(i))
         }
         await reloadDrive()
         refreshBalance(hexToBytes(masterKeyHex))
@@ -1654,7 +1637,7 @@ export default function App() {
             onProgress: (msg, pct) => log(`${meta.name}: ${msg}`, pct),
           })
           if (meta.encryption !== 'none' && !decrypted) {
-            log(`⚠ ${meta.name}: decryption failed (wrong key?) — saved ciphertext.`)
+            log(`${meta.name}: decryption failed (wrong key?) — saved ciphertext.`)
           }
           await saveBytes(data, meta.name, meta.mime)
           log(`${meta.name} downloaded.`)
@@ -2425,6 +2408,14 @@ export default function App() {
               {reconnecting ? 'Connecting…' : 'Connect wallet'}
             </button>
           )}
+          <button
+            className="btn small ghost icon-only theme-switch"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            title={theme === 'dark' ? 'Light theme' : 'Dark theme'}
+          >
+            <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+          </button>
         </div>
       </header>
 
@@ -2477,7 +2468,7 @@ export default function App() {
                   Cancel
                 </button>
               </form>
-              {lostError && <p className="error-text">⚠ {lostError}</p>}
+              {lostError && <p className="error-text"><Icon name="alert" />{lostError}</p>}
             </div>
           )}
         </div>
@@ -2532,7 +2523,7 @@ export default function App() {
                   {restoreBusy ?? 'Restore my drive'}
                 </button>
               </form>
-              {restoreError && <p className="error-text">⚠ {restoreError}</p>}
+              {restoreError && <p className="error-text"><Icon name="alert" />{restoreError}</p>}
               <details>
                 <summary className="muted">advanced: import a key file</summary>
                 <div className="banner-actions">
@@ -2575,7 +2566,7 @@ export default function App() {
                   </button>
                 </div>
               )}
-              {restoreError && <p className="error-text">⚠ {restoreError}</p>}
+              {restoreError && <p className="error-text"><Icon name="alert" />{restoreError}</p>}
               <details>
                 <summary className="muted">advanced: import a key file</summary>
                 <div className="banner-actions">
@@ -2612,7 +2603,7 @@ export default function App() {
                   </>
                 )}
               </div>
-              {restoreError && <p className="error-text">⚠ {restoreError}</p>}
+              {restoreError && <p className="error-text"><Icon name="alert" />{restoreError}</p>}
               {unstableFor === wallet.address && (
                 <form
                   className="password-setup"
@@ -2800,7 +2791,7 @@ export default function App() {
                       }
                     />
                   </div>
-                  {restoreError && !readOnly && <p className="error-text sec-error">⚠ {restoreError}</p>}
+                  {restoreError && !readOnly && <p className="error-text sec-error"><Icon name="alert" />{restoreError}</p>}
                 </SideSection>
               )}
               <SideSection
@@ -2941,7 +2932,8 @@ export default function App() {
               )}
               {view === 'drive' && !readOnly && (
                 <button className="btn small" disabled={busyText !== null} onClick={newFolder} data-guide="new-folder">
-                  + New folder
+                  <Icon name="folderPlus" />
+                  New folder
                 </button>
               )}
               {view === 'trash' && !readOnly && (drive?.trash?.files.length ?? 0) > 0 && (
@@ -2955,7 +2947,8 @@ export default function App() {
                 onClick={() => void reloadDrive().then((ok) => ok && showToast({ text: 'Your drive is up to date' }))}
                 data-guide="sync"
               >
-                ⟳ Sync
+                <Icon name="sync" />
+                Sync
               </button>
               <div className="layout-toggle" role="group" aria-label="Layout">
                 <button
@@ -2993,10 +2986,11 @@ export default function App() {
                 <span className="q-size">{fmtSize(q.size)}</span>
                 <span className={`q-state s-${q.state}`}>
                   {q.state === 'uploading' && (q.percent !== undefined ? `${q.percent}%` : 'uploading')}
-                  {q.state === 'sealing' && '⏳ sealing'}
-                  {q.state === 'registering' && '📝 saving to your drive'}
-                  {q.state === 'done' && `✓ ${q.message ?? 'stored'}`}
-                  {q.state === 'error' && `✗ ${q.message ?? 'failed'}`}
+                  {(q.state === 'sealing' || q.state === 'registering') && <Icon name="clock" />}
+                  {q.state === 'sealing' && 'sealing'}
+                  {q.state === 'registering' && 'saving to your drive'}
+                  {q.state === 'done' && <><Icon name="check" />{q.message ?? 'stored'}</>}
+                  {q.state === 'error' && <><Icon name="alert" />{q.message ?? 'failed'}</>}
                   {q.state === 'queued' && 'queued'}
                 </span>
                 {q.state === 'uploading' && q.message && (
@@ -3088,7 +3082,8 @@ export default function App() {
           {view === 'drive' && drive && smart.enabled && shownFiles.length > 0 && !readOnly && (
             <div className="ai-bar">
               <button className="btn small" disabled={busy !== null || smart.suggesting} onClick={smart.findSuggestions}>
-                {smart.suggesting ? 'Thinking…' : '✨ Suggest organization'}
+                <Icon name="sparkles" />
+                {smart.suggesting ? 'Thinking…' : 'Suggest organization'}
               </button>
             </div>
           )}
@@ -3142,7 +3137,7 @@ export default function App() {
                         hiRes
                         fallback={<span className="tile-icon"><FileIcon meta={f} large /></span>}
                       />
-                      {f.mime.startsWith('video/') && <span className="tile-badge" aria-hidden="true">▶</span>}
+                      {f.mime.startsWith('video/') && <span className="tile-badge" aria-hidden="true"><Icon name="play" /></span>}
                     </button>
                     <input
                       type="checkbox"
@@ -3291,7 +3286,7 @@ export default function App() {
               onChange={(e) => setPw2(e.target.value)}
               autoComplete="new-password"
             />
-            {pwError && <p className="error-text">⚠ {pwError}</p>}
+            {pwError && <p className="error-text"><Icon name="alert" />{pwError}</p>}
             <div className="modal-actions">
               <button className="btn" type="button" onClick={() => setPwDialog(false)} disabled={restoreBusy !== null}>
                 Cancel
@@ -3366,7 +3361,7 @@ export default function App() {
                         spellCheck={false}
                         autoComplete="off"
                       />
-                      {problems[j] && <p className="error-text">⚠ {problems[j]}</p>}
+                      {problems[j] && <p className="error-text"><Icon name="alert" />{problems[j]}</p>}
                     </li>
                   ))}
                 </ul>
@@ -3447,7 +3442,7 @@ export default function App() {
                 spellCheck={false}
                 autoComplete="off"
               />
-              {problem && name !== oldName && <p className="error-text">⚠ {problem}</p>}
+              {problem && name !== oldName && <p className="error-text"><Icon name="alert" />{problem}</p>}
               {extChanged && (
                 <p className="muted">
                   {ext(name)
@@ -3456,7 +3451,7 @@ export default function App() {
                   0GDrive keeps opening it as the type it was uploaded as; other apps may treat it differently after download.
                 </p>
               )}
-              {renameError && <p className="error-text">⚠ {renameError}</p>}
+              {renameError && <p className="error-text"><Icon name="alert" />{renameError}</p>}
               <div className="modal-actions">
                 <button className="btn" type="button" onClick={() => setRenameFor(null)} disabled={dialogBusy}>
                   Cancel
@@ -3537,7 +3532,7 @@ export default function App() {
                       role="option"
                       aria-selected={moveDest === p}
                       className={`move-opt${moveDest === p ? ' selected' : ''}`}
-                      style={{ paddingLeft: 10 + depth * 16 }}
+                      style={{ paddingLeft: 12 + depth * 16 }}
                       disabled={disabled || dialogBusy}
                       onClick={() => setMoveDest(p)}
                     >
@@ -3576,9 +3571,9 @@ export default function App() {
                   </button>
                 </div>
               )}
-              {newProblem && <p className="error-text">⚠ {newProblem}</p>}
-              {problem && <p className="error-text">⚠ {problem}</p>}
-              {moveError && <p className="error-text">⚠ {moveError}</p>}
+              {newProblem && <p className="error-text"><Icon name="alert" />{newProblem}</p>}
+              {problem && <p className="error-text"><Icon name="alert" />{problem}</p>}
+              {moveError && <p className="error-text"><Icon name="alert" />{moveError}</p>}
               <div className="modal-actions">
                 <button className="btn" type="button" onClick={() => setMoveFor(null)} disabled={dialogBusy}>
                   Cancel
@@ -3624,7 +3619,7 @@ export default function App() {
                 onChange={(e) => setShareRecipient(e.target.value)}
               />
             )}
-            {shareError && <p className="error-text">⚠ {shareError}</p>}
+            {shareError && <p className="error-text"><Icon name="alert" />{shareError}</p>}
             {shareLink && (
               <div className="share-link-box">
                 <input className="key-input wide" readOnly value={shareLink} onFocus={(e) => e.currentTarget.select()} />

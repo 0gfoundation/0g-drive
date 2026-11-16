@@ -137,7 +137,7 @@ try {
   await page.reload()
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   await page.waitForFunction(() => /[0-9]/.test(document.querySelector('.sec-row[data-row="storage"] .sec-status')?.textContent ?? ''), null, { timeout: 60_000 })
 
@@ -158,7 +158,7 @@ try {
   )
 
   await page.reload() // reconnects by itself
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 3 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 3 * 60_000 })
   await page.waitForFunction(() => /0G/.test(document.querySelector('[data-guide="storage"] .sec-summary')?.textContent ?? ''), null, { timeout: 60_000 })
   s = byId(await sections())
   check('after a reload the sections are still folded', IDS.every((id) => s[id].expanded === 'false' && !s[id].bodyShown), JSON.stringify(s))

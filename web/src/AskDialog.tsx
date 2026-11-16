@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { closeOnBackdrop } from './backdrop'
+import { Icon } from './icons'
 
 /**
  * The drive's own confirm and prompt boxes, in place of window.confirm and
@@ -119,7 +120,7 @@ function AskBox({ q }: { q: Question }) {
               spellCheck={false}
               autoComplete="off"
             />
-            {problem && (touched || answer !== '') && <p className="error-text">⚠ {problem}</p>}
+            {problem && (touched || answer !== '') && <p className="error-text"><Icon name="alert" />{problem}</p>}
           </>
         )}
         <div className="modal-actions">

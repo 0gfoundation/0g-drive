@@ -132,7 +132,7 @@ page.on('console', (m) => {
 answerAsks(page, (q) => (q.prompt && q.title === 'New folder' ? promptAnswer : true))
 const newFolder = async (name) => {
   promptAnswer = name
-  await page.getByRole('button', { name: '+ New folder' }).click()
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await treeRow(name).first().waitFor({ timeout: 5 * 60_000 })
 }
 const openFolder = async (name) => {
@@ -147,7 +147,7 @@ try {
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 120_000 })
   await upload([['A.TXT', 'root file']])
   await newFolder('Docs')
   await newFolder('Work')

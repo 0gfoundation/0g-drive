@@ -115,12 +115,12 @@ async function uploadAndWait(page, files) {
   await page.waitForFunction(
     (names) => {
       const rows = [...document.querySelectorAll('.queue-item')]
-      return names.every((n) => rows.some((r) => r.textContent.includes(n) && /in your drive|✗/.test(r.textContent)))
+      return names.every((n) => rows.some((r) => r.textContent.includes(n) && (/in your drive/.test(r.textContent) || r.classList.contains('q-error'))))
     },
     files.map((f) => f.name),
     { timeout: 8 * 60_000, polling: 1000 }
   )
-  const failed = await page.$$eval('.queue-item', (rows) => rows.filter((r) => r.textContent.includes('✗')).map((r) => r.textContent))
+  const failed = await page.$$eval('.queue-item', (rows) => rows.filter((r) => r.classList.contains('q-error')).map((r) => r.textContent))
   if (failed.length) throw new Error(`upload failed: ${failed.join(' | ')}`)
   for (const f of files) await row(page, f.name).waitFor({ timeout: 3 * 60_000 })
 }
@@ -148,7 +148,7 @@ try {
 
   await form.locator('input').nth(1).fill(PASSWORD)
   await form.getByRole('button', { name: 'Create with password' }).click()
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   check('drive created with the password: 1 signature, 1 deposit transaction', prompts.sign === p0.sign + 1 && prompts.tx === p0.tx + 1, `${prompts.sign - p0.sign} signature(s), ${prompts.tx - p0.tx} tx`)
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
 
@@ -191,7 +191,7 @@ try {
   await banner.getByRole('button', { name: 'Restore my drive' }).click()
   await row(d2.page, 'tea.txt').waitFor({ timeout: 3 * 60_000 })
   check('…the right one restores the drive with no wallet prompt, and its files', prompts.sign === p0.sign && prompts.tx === p0.tx, JSON.stringify(prompts))
-  check('…with uploads allowed (not read-only)', (await d2.page.getByRole('button', { name: '+ New folder' }).count()) === 1 && !(await d2.page.textContent('body')).includes('Read-only.'))
+  check('…with uploads allowed (not read-only)', (await d2.page.getByRole('button', { name: 'New folder', exact: true }).count()) === 1 && !(await d2.page.textContent('body')).includes('Read-only.'))
   await d2.context.close()
 } catch (err) {
   check('run completed', false, err.message.split('\n')[0])

@@ -121,7 +121,7 @@ const row = (page, name) => page.locator('table tr', { has: page.locator('.fname
 let folderName = ''
 async function newFolder(page, name) {
   folderName = name
-  await page.getByRole('button', { name: '+ New folder' }).click()
+  await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await treeRow(page, name).waitFor({ timeout: 5 * 60_000 })
 }
 async function upload(page, name) {
@@ -143,7 +143,7 @@ try {
   await A.page.goto(base)
   await connectExtension(A.page)
   await A.page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await A.page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await A.page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   masterKeyHex = await A.page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   await newFolder(A.page, 'Work')
   step('device A: drive and folder Work')
@@ -196,7 +196,7 @@ try {
   check('A renames the folder B has open: B follows it to the new name', sRen !== null, `${sRen}s`)
 
   // a dialog open on B: no update under it
-  await B.page.getByRole('button', { name: '+ New folder' }).click()
+  await B.page.getByRole('button', { name: 'New folder', exact: true }).click()
   await B.page.locator('.ask-modal').waitFor()
   await newFolder(A.page, 'During')
   await B.page.waitForTimeout(SYNC_WAIT)

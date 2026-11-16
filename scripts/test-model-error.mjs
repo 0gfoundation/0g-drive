@@ -122,7 +122,7 @@ try {
   await connectExtension(page)
   // setup: 3 signatures and the storage deposit (the one transaction this test approves)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 5 * 60_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   masterKeyHex = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
   const line = page.locator('.sec-item', { hasText: 'Models failed to load' })
   await line.waitFor({ timeout: 4 * 60_000 })

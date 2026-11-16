@@ -221,7 +221,8 @@ try {
     r.boxes.join() === 'true,false' && r.cells === '4/8' && r.code && r.inlineCode && r.quote === 'Bring comfortable shoes, the hills are steep.',
     JSON.stringify({ boxes: r.boxes, cells: r.cells, code: r.code, inlineCode: r.inlineCode, quote: r.quote })
   )
-  check('the page uses the app’s dark background', r.bg === 'rgb(10, 10, 12)', r.bg)
+  const appBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
+  check('the page uses the app’s background (its theme’s)', r.bg === appBg, `${r.bg} vs ${appBg}`)
   check('the inline image shows; the remote one shows as its alt text', r.inline && r.alts.includes('[image: Hotel logo]'), JSON.stringify({ inline: r.inline, alts: r.alts }))
   check(
     'raw HTML: the script and event handlers never run, and none are left in the page',

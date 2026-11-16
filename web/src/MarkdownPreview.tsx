@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { HTML_PREVIEW_CSP, inertHtml } from './HtmlPreview'
+import { currentTheme, type Theme } from './theme'
 
 // Markdown preview: the text formatted, or its source.
 //
@@ -10,35 +11,44 @@ import { HTML_PREVIEW_CSP, inertHtml } from './HtmlPreview'
 // sandbox anyway), and an image from the internet shows as its alt text
 // rather than a broken image. The parser loads on the first Markdown file.
 
-/** The page's look: the app's dark palette, readable line length, wide blocks scroll on their own. */
-const MD_CSS = `
-:root { color-scheme: dark; }
-body { margin: 0; padding: 16px 20px 24px; background: #0a0a0c; color: #dcdfe4;
+/** The page's colors, as the app's (theme.ts). */
+const MD_COLORS = {
+  dark: { scheme: 'dark', bg: '#0a0a0c', text: '#e7e8ec', head: '#ffffff', line: '#26262f', link: '#c084ff', code: '#18181e', pre: '#111115', quote: '#b5b6be', bar: '#4932c4', alt: '#8b8d98' },
+  light: { scheme: 'light', bg: '#f6f6f8', text: '#16161b', head: '#000000', line: '#e2e2e9', link: '#7a00c2', code: '#e9e9ef', pre: '#ffffff', quote: '#42434c', bar: '#8200d1', alt: '#686a75' },
+}
+
+/** The page's look: the app's palette, readable line length, wide blocks scroll on their own. */
+function mdCss(theme: Theme): string {
+  const c = MD_COLORS[theme]
+  return `
+:root { color-scheme: ${c.scheme}; }
+body { margin: 0; padding: 16px 20px 24px; background: ${c.bg}; color: ${c.text};
   font: 15px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif; overflow-wrap: anywhere; }
 main { max-width: 760px; margin: 0 auto; }
-h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 1.4em 0 0.5em; color: #fff; }
+h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 1.4em 0 0.5em; color: ${c.head}; }
 h1 { font-size: 1.7em; } h2 { font-size: 1.35em; } h3 { font-size: 1.15em; } h4, h5, h6 { font-size: 1em; }
-h1, h2 { padding-bottom: 0.25em; border-bottom: 1px solid #26262e; }
+h1, h2 { padding-bottom: 0.25em; border-bottom: 1px solid ${c.line}; }
 main > :first-child { margin-top: 0; }
 p, ul, ol, blockquote, pre, table { margin: 0 0 1em; }
 ul, ol { padding-left: 1.6em; }
 li > ul, li > ol { margin: 0.2em 0 0; }
 li:has(> input[type=checkbox]) { list-style: none; margin-left: -1.4em; }
 input[type=checkbox] { margin: 0 0.4em 0 0; vertical-align: -1px; }
-a { color: #b75fff; text-decoration: underline; cursor: help; }
+a { color: ${c.link}; text-decoration: underline; cursor: help; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.88em;
-  background: #1b1b22; padding: 0.15em 0.35em; border-radius: 4px; }
-pre { background: #141419; border: 1px solid #26262e; border-radius: 8px; padding: 12px 14px; overflow-x: auto; overflow-wrap: normal; }
+  background: ${c.code}; padding: 0.15em 0.35em; border-radius: 4px; }
+pre { background: ${c.pre}; border: 1px solid ${c.line}; border-radius: 8px; padding: 12px 14px; overflow-x: auto; overflow-wrap: normal; }
 pre code { background: none; padding: 0; font-size: 0.85em; line-height: 1.5; }
-blockquote { margin-left: 0; padding: 0.1em 1em; border-left: 3px solid #4932c4; color: #b8b8c0; }
-hr { border: 0; border-top: 1px solid #26262e; margin: 1.5em 0; }
+blockquote { margin-left: 0; padding: 0.1em 1em; border-left: 3px solid ${c.bar}; color: ${c.quote}; }
+hr { border: 0; border-top: 1px solid ${c.line}; margin: 1.5em 0; }
 .table-wrap { overflow-x: auto; margin: 0 0 1em; }
 table { border-collapse: collapse; margin: 0; }
-th, td { border: 1px solid #26262e; padding: 6px 10px; text-align: left; vertical-align: top; overflow-wrap: normal; }
-th { background: #141419; }
+th, td { border: 1px solid ${c.line}; padding: 6px 10px; text-align: left; vertical-align: top; overflow-wrap: normal; }
+th { background: ${c.pre}; }
 img { max-width: 100%; height: auto; }
-.img-alt { color: #7c7e89; font-style: italic; }
+.img-alt { color: ${c.alt}; font-style: italic; }
 `
+}
 
 /** Markdown → a page for the sandbox: no scripts, no handlers, remote images as their alt text. */
 export function markdownPage(bodyHtml: string, title: string): string {
@@ -62,7 +72,7 @@ export function markdownPage(bodyHtml: string, title: string): string {
   })
   doc.title = title
   const style = doc.createElement('style')
-  style.textContent = MD_CSS
+  style.textContent = mdCss(currentTheme())
   doc.head.append(style)
   return inertHtml('<!doctype html>\n' + doc.documentElement.outerHTML)
 }

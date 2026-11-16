@@ -152,7 +152,7 @@ try {
   await page.goto(base)
   await connectExtension(page)
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
-  await page.getByRole('button', { name: '+ New folder' }).waitFor({ timeout: 120_000 })
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 120_000 })
   await page.setInputFiles('.dropzone input[type=file]', [
     { name: FILE_NAME, mimeType: 'text/plain', buffer: Buffer.from('private notes ' + Date.now()) },
   ])
