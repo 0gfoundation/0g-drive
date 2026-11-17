@@ -11,7 +11,8 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
-import { V2Backend, RelayerClient, V2_TESTNET, HOT_MIN_BYTES, depositForUser } from '../core/dist/index.js'
+import { V2Backend, RelayerClient, V2_TESTNET, HOT_MIN_BYTES } from '../core/dist/index.js'
+import { depositSeen } from './lib/deposit.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const privateKey =
@@ -81,11 +82,9 @@ const funder = new ethers.Wallet(privateKey, provider)
 const account = ethers.Wallet.createRandom()
 console.log(`Storage account: ${account.address}`)
 const DEPOSIT = ethers.parseEther(process.env.V2_DEPOSIT ?? '0.05')
-await depositForUser(V2_TESTNET, funder, account.address, DEPOSIT)
+await depositSeen(V2_TESTNET, funder, account.address, DEPOSIT)
 console.log(`${stamp()} deposited ${ethers.formatEther(DEPOSIT)} 0G`)
 const standing = async (a) => (await realFetch(`${V2_TESTNET.relayer}/v1/users/${a}/standing`)).json()
-// the relayer sees a deposit a moment after it lands
-for (let i = 0; i < 30 && BigInt((await standing(account.address)).balance) === 0n; i++) await sleep(5000)
 
 const masterKey = crypto.getRandomValues(new Uint8Array(32))
 const backend = (acct = account, opts = {}) => new V2Backend(new RelayerClient(V2_TESTNET), acct, masterKey, opts)
