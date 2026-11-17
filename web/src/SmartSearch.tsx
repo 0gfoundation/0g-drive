@@ -57,7 +57,7 @@ function searchOf(meta: FileMeta): SearchEntry | undefined {
 }
 
 /** Every file in the drive (not the trash), with this device's unsaved search entries filled in. */
-function allFiles(drive: DriveState): { meta: FileMeta; folder: string }[] {
+export function allFiles(drive: DriveState): { meta: FileMeta; folder: string }[] {
   const out: { meta: FileMeta; folder: string }[] = []
   for (const [path, folder] of drive.folders) {
     for (const meta of folder?.files ?? []) {

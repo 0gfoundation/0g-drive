@@ -8,7 +8,8 @@ import type { FileMeta } from './types.js'
  * Key layout (hex, 96 bytes; first used as V1 transaction tags, kept so
  * keys stay the same):
  *   [0..32)   domain: keccak256("0GDRIVE:v1")
- *   [32..33)  purpose: 0x01 = drive index, 0x02 = folder manifest
+ *   [32..33)  purpose: 0x01 = drive index, 0x02 = folder manifest,
+ *             0x05 = categories
  *   [33..64)  folder key hash: keccak256(key) — zeroed for the index
  *
  * A folder's key is its permanent id (see FolderNode). Folders made before
@@ -20,6 +21,8 @@ export const MANIFEST_DOMAIN = ethers.id('0GDRIVE:v1')
 
 const PURPOSE_INDEX = '01'
 const PURPOSE_FOLDER = '02'
+// 0x03 and 0x04 were V1's profile and backup tags
+const PURPOSE_CATEGORIES = '05'
 
 /** Reserved folder path holding trashed file records. */
 export const TRASH_PATH = '__trash__'
@@ -57,6 +60,20 @@ export interface FolderManifest {
   version: number
 }
 
+/**
+ * The user's own categories, and files put in or taken out of a category by
+ * hand (over what the on-device AI finds). One listing for the drive.
+ * Category ids: 'own:' + random hex for the user's; the built-in ones'
+ * ids (web/src/ai/categories.ts) for the rest.
+ */
+export interface DriveCategories {
+  v: 1
+  own: { id: string; name: string }[]
+  /** by hand: `file` (its id) is in (`in`) or out of category `cat` */
+  pins: { file: string; cat: string; in: boolean }[]
+  updatedAt: number
+}
+
 export function folderPathHash(key: string): string {
   return ethers.keccak256(ethers.toUtf8Bytes(key))
 }
@@ -64,6 +81,11 @@ export function folderPathHash(key: string): string {
 /** Tag hex for a drive-index manifest upload. */
 export function indexTag(): string {
   return MANIFEST_DOMAIN + PURPOSE_INDEX + '00'.repeat(32)
+}
+
+/** Tag hex for the categories listing. */
+export function categoriesTag(): string {
+  return MANIFEST_DOMAIN + PURPOSE_CATEGORIES + '00'.repeat(32)
 }
 
 /** Tag hex for a folder-manifest upload, by folder key. */

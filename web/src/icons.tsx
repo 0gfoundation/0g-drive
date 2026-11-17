@@ -22,6 +22,8 @@ const PATHS = {
   play: 'M8 5.5v13l10.5-6.5z',
   sun: 'M12 8a4 4 0 110 8 4 4 0 010-8zM12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4',
   moon: 'M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z',
+  tag: 'M3.5 12.5V4h8.5l8.5 8.5-8 8zM8 8.5h.01',
+  minus: 'M5 12h14',
 } as const
 
 export type IconName = keyof typeof PATHS

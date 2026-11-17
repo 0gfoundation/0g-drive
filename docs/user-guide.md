@@ -147,6 +147,18 @@ Sidebar → **On-device AI → Smart search & organize**. When on, AI models run
 - **✨ Suggest organization** proposes moving files to better-matching folders; the moves you pick are made in one change, with no wallet prompt.
 - When off, search matches file names only.
 
+## Categories
+
+Sidebar → **Categories** shows your files grouped, from every folder:
+
+- **Topics** — Finance, Work, Research papers, Contracts & legal, Travel, Health, Study, Recipes, and for photos Screenshots, People, Pets & animals, Food, Nature & places. Found by the on-device AI from what search already knows about each file (with smart search on); a file gets at most two, and one it isn't sure about gets none rather than a wrong one. A file known by its name alone (too big to read, or no text in it) needs a clear name.
+- **Types** — Photos, Videos, Audio, PDFs, Documents, Spreadsheets, Presentations, Code, Archives. By file name and type, smart search on or off.
+- **Your categories** — **New category** and give it a name, e.g. *Blockchain*: files that fit the name are gathered in it (smart search on). To put files in one by hand, select them in a folder and use **Add to category** (a topic works too). **Take out** (−) in a category's list removes a file from it, a topic or your own. Rename or delete your categories from their list; deleting one leaves its files where they are.
+
+Tap a category to see its files, each with the folder it's in. In a folder, **Group by category** (next to its name) shows its files in sections — each file once, under one of your categories, else its topic, else its type — in the list and the grid; this browser remembers it.
+
+What you make by hand — your categories and the files put in or taken out — is saved in your drive, encrypted like the rest (no wallet prompt), so your other devices see it. The grouping itself is worked out on each device and never stored.
+
 ## Assistant (this help panel)
 
 The assistant answers questions about 0GDrive and 0G. It runs in a separate, isolated part of the page: it **cannot see your files, file names, keys, or wallet address** — only on/off facts such as "recovery is on" or "no recovery password" — and it never asks for passwords or keys. It uses your own 0G Private Computer API key (create one at https://pc.0g.ai → Dashboard → API Keys), stored only in the assistant's part of this browser (on iPhones and in Safari, asked again if you haven't used the assistant for a week); you pay 0G directly per question — usually 0.05–0.25 0G (a few US cents), shown under each answer. Questions go to the GLM-5.3 model running in a secure enclave (TEE) via the 0G Router. Open it with **Ask** (bottom right; on phones the round button). It can point at controls on the page: the control pulses. Answers link to their sources; check them, answers can be wrong.

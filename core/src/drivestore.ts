@@ -2,8 +2,10 @@ import type { FileMeta, SearchEntry } from './types.js'
 import {
   ROOT_ID,
   TRASH_PATH,
+  categoriesTag,
   folderTag,
   indexTag,
+  type DriveCategories,
   type DriveIndex,
   type FolderManifest,
 } from './manifest.js'
@@ -17,7 +19,11 @@ export interface DriveState {
   /** Folder manifests by path ('' = root); null = no files yet. */
   folders: Map<string, FolderManifest | null>
   trash: FolderManifest | null
+  /** the user's categories and pins; null = none made yet */
+  categories?: DriveCategories | null
 }
+
+export const emptyCategories = (): DriveCategories => ({ v: 1, own: [], pins: [], updatedAt: 0 })
 
 /** A file given a new name on the way (see uniqueName). */
 export interface Renamed {
@@ -180,6 +186,8 @@ export class DriveStore {
     const paths = tree.paths()
     // folders are independent downloads: fetch them a few at a time
     const keys = [ROOT_ID, ...paths.map((p) => tree.idOf(p)!), TRASH_PATH]
+    const categories = this.readManifest<DriveCategories>(categoriesTag())
+    categories.catch(() => undefined) // awaited below, after the folders
     const loaded: (FolderManifest | null)[] = new Array(keys.length)
     let next = 0
     const worker = async () => {
@@ -197,11 +205,18 @@ export class DriveStore {
       const now = tree.has(originFolder(rec)) ? tree.pathOf(originFolder(rec)) : null
       if (now !== null) rec.originalPath = now
     }
-    return { paths, tree, folders, trash }
+    return { paths, tree, folders, trash, categories: await categories }
   }
 
   private async writeIndex(index: LoadedIndex): Promise<void> {
     await this.writeManifests([], [this.indexItem(index)], '')
+  }
+
+  /** Change the categories listing: `edit` gets it as stored now (a copy) and returns it changed. One change. */
+  async updateCategories(edit: (c: DriveCategories) => DriveCategories): Promise<void> {
+    const now = (await this.readManifest<DriveCategories>(categoriesTag())) ?? emptyCategories()
+    const next = { ...edit(now), updatedAt: Date.now() }
+    await this.writeManifests([], [this.manifestItem(next, categoriesTag())], '')
   }
 
   /** Add or update a file record in a folder (creates the folder if new). */
