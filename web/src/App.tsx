@@ -23,7 +23,9 @@ import {
   timed,
   uniqueName,
   folderNameProblem,
+  emptyCategories,
   type AccountCard,
+  type DriveCategories,
   type V2Backend,
   type DriveState,
   type FileMeta,
@@ -83,6 +85,8 @@ import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
 import { AssistantPanel, highlight, isNarrow, type DriveStatus } from './Assistant'
 import { SearchBox, SearchResults, SuggestionsPanel, useSmartDrive } from './SmartSearch'
+import { CategoriesView, CategorizeDialog, useCategories } from './Categories'
+import { addOwn, pin, removeOwn, renameOwn, sectionsOf, TOPICS, type Category } from './ai/categories'
 import { openPendingSearch, pendingSearch } from './searchPending'
 import { describeModelStatus, entryForRename, getModelStatus, modelErrorReason, indexFile, isPhone, isPhoto, modelEta, modelsLoading, smartSearchEnabled, subscribeModelStatus } from './ai/client'
 
@@ -686,7 +690,19 @@ export default function App() {
   /** the drive as last loaded; `drive` (below) is what's shown: it with the changes not stored yet */
   const [loadedDrive, setDrive] = useState<DriveState | null>(null)
   const [currentPath, setCurrentPath] = useState('')
-  const [view, setView] = useState<'drive' | 'trash'>('drive')
+  const [view, setView] = useState<'drive' | 'trash' | 'categories'>('drive')
+  /** the category shown in the Categories view */
+  const [catSel, setCatSel] = useState<string | null>(null)
+  /** files being put in a category (the dialog) */
+  const [categorizeFor, setCategorizeFor] = useState<string[] | null>(null)
+  /** a folder's files in sections by category (this browser's choice) */
+  const [groupBy, setGroupBy] = useState(() => {
+    try {
+      return localStorage.getItem('0gdrive:group-by') === 'category'
+    } catch {
+      return false
+    }
+  })
   const [activities, setActivities] = useState<Activity[]>([])
   /** something running that the change queue doesn't run (a download, a sync, …) */
   const [busyText, setBusy] = useState<string | null>(null)
@@ -2198,6 +2214,114 @@ export default function App() {
     drive, storeRef, currentPath, loadBytes, reloadDrive: smartReload, log, setBusy, readOnly,
     paused: busy !== null || uploading || previewFor !== null,
   })
+  const cats = useCategories(drive, smart.enabled, !smart.model.loading && !smart.model.error)
+
+  // ─── Categories (D35): what's made by hand, stored like any change ───
+
+  const editCategories = useCallback(
+    (label: string, edit: (c: DriveCategories) => DriveCategories, done: string, what: string) => {
+      const store = storeRef.current
+      if (!store) return
+      const queued = changes.add({
+        label,
+        shows: (d) => ({ ...d, categories: edit(d.categories ?? emptyCategories()) }),
+        run: () => store.updateCategories(edit),
+        failed: failed(`Couldn’t ${what}`),
+      })
+      queued.done.catch(() => undefined)
+      showToast({ text: done })
+    },
+    [changes, failed, showToast]
+  )
+
+  const ownNameProblem = useCallback(
+    (name: string, except?: string) => {
+      const n = name.trim().toLowerCase()
+      if (!n) return 'Give it a name.'
+      const own = drive?.categories?.own ?? []
+      const taken = [...own.filter((c) => c.id !== except), ...TOPICS].some((c) => c.name.toLowerCase() === n)
+      return taken ? 'There’s a category with that name.' : null
+    },
+    [drive]
+  )
+
+  /** A new own category, with `fileIds` put in it. */
+  const createCategory = useCallback(
+    (name: string, fileIds: string[]) => {
+      const id = 'own:' + bytesToHex(crypto.getRandomValues(new Uint8Array(8)))
+      const keep = new Set(cats?.files.keys() ?? [])
+      const edit = (c: DriveCategories) => {
+        const made = addOwn(id, name)(c)
+        return fileIds.length ? pin(fileIds, id, true, keep)(made) : made
+      }
+      editCategories(`Creating ${name}…`, edit, fileIds.length ? `Added to ${name}` : `${name} created`, `create ${name}`)
+      setCatSel(id)
+    },
+    [cats, editCategories]
+  )
+
+  const newCategory = useCallback(async () => {
+    const name = await askText({
+      title: 'New category',
+      message: 'Files that fit its name are gathered in it by the on-device AI (with smart search on); you can also add files by hand.',
+      action: 'Create',
+      input: { label: 'Name', placeholder: 'e.g. Blockchain', check: (v) => ownNameProblem(v) },
+    })
+    if (name) createCategory(name, [])
+  }, [createCategory, ownNameProblem])
+
+  const renameCategory = useCallback(
+    async (c: Category) => {
+      const name = await askText({
+        title: 'Rename category',
+        action: 'Rename',
+        input: { label: 'Name', value: c.name, check: (v) => (v.trim() === c.name ? 'That’s its name now.' : ownNameProblem(v, c.id)) },
+      })
+      if (name) editCategories(`Renaming ${c.name}…`, renameOwn(c.id, name), `Renamed to ${name}`, `rename ${c.name}`)
+    },
+    [editCategories, ownNameProblem]
+  )
+
+  const deleteCategory = useCallback(
+    async (c: Category) => {
+      const ok = await askConfirm({
+        title: `Delete ${c.name}?`,
+        message: 'Only the category goes: its files stay where they are.',
+        action: 'Delete category',
+        danger: true,
+      })
+      if (!ok) return
+      editCategories(`Deleting ${c.name}…`, removeOwn(c.id), `${c.name} deleted`, `delete ${c.name}`)
+      setCatSel(null)
+    },
+    [editCategories]
+  )
+
+  const putInCategory = useCallback(
+    (fileIds: string[], id: string, name: string) => {
+      const keep = new Set(cats?.files.keys() ?? [])
+      const what = fileIds.length === 1 ? cats?.files.get(fileIds[0])?.meta.name ?? '1 file' : `${fileIds.length} files`
+      editCategories(`Adding ${what} to ${name}…`, pin(fileIds, id, true, keep), `Added ${what} to ${name}`, `add ${what} to ${name}`)
+    },
+    [cats, editCategories]
+  )
+
+  const takeOutOfCategory = useCallback(
+    (meta: FileMeta, c: Category) => {
+      const keep = new Set(cats?.files.keys() ?? [])
+      editCategories(`Taking ${meta.name} out of ${c.name}…`, pin([meta.id], c.id, false, keep), `Took ${meta.name} out of ${c.name}`, `take ${meta.name} out of ${c.name}`)
+    },
+    [cats, editCategories]
+  )
+
+  const chooseGroupBy = (on: boolean) => {
+    setGroupBy(on)
+    try {
+      localStorage.setItem('0gdrive:group-by', on ? 'category' : 'none')
+    } catch {
+      // per-browser convenience only
+    }
+  }
 
   /** what the assistant may know about this drive: on/off facts only — no address, names or keys */
   const assistantStatus = (): DriveStatus => ({
@@ -2210,7 +2334,7 @@ export default function App() {
     password: hasPassword ? 'set' : hasPassword === false ? 'not-set' : 'unknown',
     shareKey: card?.shareKey ? 'published' : hasBackup === false ? 'not-published' : hasBackup === null ? 'checking' : 'unknown',
     onDeviceAi: !smart.enabled ? 'off' : smart.model.loading ? 'loading' : smart.model.error ? 'error' : 'ready',
-    view,
+    view: view === 'trash' ? 'trash' : 'drive',
     uploading: queue.some((q) => q.state !== 'done' && q.state !== 'error'),
     // the storage balance pays for the drive; the wallet only for deposits
     lowBalance: !!wallet && !readOnly && balance !== null && balance < 10n ** 16n,
@@ -2320,7 +2444,85 @@ export default function App() {
   const shownFiles =
     view === 'trash'
       ? drive?.trash?.files ?? []
-      : drive?.folders.get(currentPath)?.files ?? []
+      : view === 'categories'
+        ? []
+        : drive?.folders.get(currentPath)?.files ?? []
+  /** the folder's files in sections by category, when chosen */
+  const sections = view === 'drive' && groupBy && cats && shownFiles.length > 0 ? sectionsOf(shownFiles, cats.grouping) : null
+  const renderTile = (f: FileMeta) => {
+    const selected = selectedIds.includes(f.id)
+    const previewable = canPreview(f)
+    return (
+      <div key={f.id} className={`tile${selected ? ' tile-selected' : ''}`}>
+        <button
+          className="tile-media"
+          onClick={() => (previewable ? setPreviewFor(f) : toggleSelected(f.id))}
+          title={previewable ? `Preview ${f.name}` : f.name}
+        >
+          <FileThumb
+            meta={f}
+            load={loadBytes}
+            className="tile-thumb"
+            hiRes
+            fallback={<span className="tile-icon"><FileIcon meta={f} large /></span>}
+          />
+          {f.mime.startsWith('video/') && <span className="tile-badge" aria-hidden="true"><Icon name="play" /></span>}
+        </button>
+        <input
+          type="checkbox"
+          className="tile-check"
+          checked={selected}
+          onChange={() => toggleSelected(f.id)}
+          aria-label={`select ${f.name}`}
+        />
+        <div className="tile-info">
+          <span className="tile-name" title={f.name}>{f.name}</span>
+          <span className="tile-meta muted">
+            {fmtSize(f.size)} · {(view === 'trash' && trashNote(f)) || fmtDate(f.uploadedAt)}
+          </span>
+        </div>
+        <div className="tile-actions">{fileActions(f)}</div>
+      </div>
+    )
+  }
+
+  const renderRow = (f: FileMeta) => (
+    <tr key={f.id} className={selectedIds.includes(f.id) ? 'row-selected' : ''}>
+      <td className="td-check">
+        <input
+          type="checkbox"
+          checked={selectedIds.includes(f.id)}
+          onChange={() => toggleSelected(f.id)}
+          aria-label={`select ${f.name}`}
+        />
+      </td>
+      <td className="fname">
+        <FileThumb meta={f} load={loadBytes} fallback={<FileIcon meta={f} />} />
+        <span className="fname-text">
+          {canPreview(f) ? (
+            <button className="fname-btn" onClick={() => setPreviewFor(f)} title="Preview">
+              {f.name}
+            </button>
+          ) : (
+            f.name
+          )}
+          {view === 'trash' && trashNote(f) && (
+            <span className="muted"> ({trashNote(f)})</span>
+          )}
+          <span className="fname-sub muted">
+            {fmtSize(f.size)} · {fmtDate(f.uploadedAt)}
+          </span>
+        </span>
+      </td>
+      <td className="col-wide">{fmtSize(f.size)}</td>
+      <td className="col-wide">{fmtDate(f.uploadedAt)}</td>
+      <td className="col-wide">
+        <span title={f.rootHashes[0]}>{shortHash(f.rootHashes[0])}</span>
+      </td>
+      <td className="row-actions">{fileActions(f)}</td>
+    </tr>
+  )
+
   const toggleAll = () =>
     setSelectedIds(selectedIds.length === shownFiles.length ? [] : shownFiles.map((f) => f.id))
 
@@ -2704,6 +2906,13 @@ export default function App() {
                   />
                 ))}
                 <button
+                  className={`nav-item${view === 'categories' ? ' active' : ''}`}
+                  onClick={() => { smart.clearSearch(); setView('categories') }}
+                >
+                  <Icon name="tag" className="tree-folder-ico" />
+                  <span>Categories</span>
+                </button>
+                <button
                   className={`nav-item${view === 'trash' ? ' active' : ''}`}
                   onClick={() => setView('trash')}
                   data-guide="trash"
@@ -2913,6 +3122,7 @@ export default function App() {
                 </span>
               ))}
               {view === 'trash' && <span className="crumb-sep">/ Trash</span>}
+              {view === 'categories' && <span className="crumb-sep">/ Categories</span>}
             </nav>
             <div className="toolbar-actions">
               {selectedIds.length > 0 && !readOnly && (
@@ -2939,6 +3149,10 @@ export default function App() {
                             : `${selectedIds.length} files`,
                         })}>
                         Move to…
+                      </button>
+                      <button className="btn small" disabled={busyText !== null} onClick={() => setCategorizeFor(selectedIds)}>
+                        <Icon name="tag" />
+                        Add to category
                       </button>
                       <button className="btn small danger" disabled={busyText !== null} onClick={trashSelected}>
                         Trash selected
@@ -3021,7 +3235,7 @@ export default function App() {
 
         {wallet && !readOnly && (
         <section
-          className={`dropzone ${dragOver ? 'over' : ''} ${!wallet || view === 'trash' || !masterKeyHex ? 'disabled' : ''}`}
+          className={`dropzone ${dragOver ? 'over' : ''} ${!wallet || view !== 'drive' || !masterKeyHex ? 'disabled' : ''}`}
           onDragOver={(e) => {
             e.preventDefault()
             setDragOver(true)
@@ -3030,14 +3244,14 @@ export default function App() {
           onDrop={(e) => {
             e.preventDefault()
             setDragOver(false)
-            if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files)
+            if (e.dataTransfer.files.length && view !== 'categories') uploadFiles(e.dataTransfer.files)
           }}
         >
           <label className="upload-label">
             <input
               type="file"
               multiple
-              disabled={!wallet || view === 'trash' || !masterKeyHex}
+              disabled={!wallet || view !== 'drive' || !masterKeyHex}
               onChange={(e) => {
                 if (e.target.files?.length) uploadFiles(e.target.files)
                 e.target.value = ''
@@ -3047,7 +3261,9 @@ export default function App() {
               <div className="dropzone-title">
                 {view === 'trash'
                   ? 'Trash view — switch to My drive to upload'
-                  : (
+                  : view === 'categories'
+                    ? 'Categories view — open a folder to upload'
+                    : (
                     <>
                       <span className="dz-pointer">Drop files here or click to upload</span>
                       <span className="dz-touch">Tap to upload files</span>
@@ -3095,6 +3311,48 @@ export default function App() {
             )}
             onClear={smart.clearSearch}
           />
+        ) : view === 'categories' && cats ? (
+          <CategoriesView
+            data={cats}
+            selected={catSel}
+            onSelect={setCatSel}
+            hint={
+              !smart.enabled
+                ? 'Turn on smart search (sidebar → On-device AI) to group files by topic and by your categories’ names; for now, by type and by hand.'
+                : !cats.topics
+                  ? 'Topics show once the on-device search model is ready.'
+                  : smart.index.remaining > 0
+                    ? `${smart.index.remaining} file${smart.index.remaining === 1 ? ' isn’t' : 's aren’t'} indexed yet: they join their topics as they are.`
+                    : null
+            }
+            canEdit={!readOnly}
+            onNew={() => void newCategory()}
+            onRename={(c) => void renameCategory(c)}
+            onDelete={(c) => void deleteCategory(c)}
+            onTakeOut={takeOutOfCategory}
+            renderThumb={(m) => <FileThumb meta={m} load={loadBytes} fallback={<FileIcon meta={m} />} />}
+            onOpen={(m) => (canPreview(m) ? setPreviewFor(m) : void download(m))}
+            onGoToFolder={(p) => {
+              setView('drive')
+              setCurrentPath(p)
+            }}
+            actions={(m) => (
+              <>
+                <button className="btn small" disabled={busy !== null} onClick={() => download(m)} title="Download" aria-label="Download">
+                  <ActionLabel icon="download" />
+                </button>
+                <button
+                  className="btn small"
+                  disabled={busy !== null || !m.wrappedKey}
+                  title={m.wrappedKey ? 'Share this file' : 'Legacy file — re-upload to enable sharing'}
+                  onClick={() => openShare(m)}
+                  aria-label="Share"
+                >
+                  <ActionLabel icon="share" />
+                </button>
+              </>
+            )}
+          />
         ) : (
         <section className="files">
           {view === 'drive' && drive && smart.enabled && shownFiles.length > 0 && !readOnly && (
@@ -3113,10 +3371,18 @@ export default function App() {
               onDismiss={smart.dismissSuggestions}
             />
           )}
-          <h2>
-            {view === 'trash' ? 'Trash' : currentPath === '' ? 'My drive' : currentPath}{' '}
-            <span className="count">{shownFiles.length}</span>
-          </h2>
+          <div className="files-head">
+            <h2>
+              {view === 'trash' ? 'Trash' : currentPath === '' ? 'My drive' : currentPath}{' '}
+              <span className="count">{shownFiles.length}</span>
+            </h2>
+            {view === 'drive' && shownFiles.length > 0 && (
+              <label className="group-toggle">
+                <input type="checkbox" checked={groupBy} onChange={(e) => chooseGroupBy(e.target.checked)} />
+                Group by category
+              </label>
+            )}
+          </div>
           {view === 'trash' && !readOnly && <p className="trash-note muted">Files in trash are deleted forever after {TRASH_DAYS} days.</p>}
           {shownFiles.length === 0 && view === 'drive' && drive ? (
             <div className="hero">
@@ -3137,43 +3403,15 @@ export default function App() {
               <SelectAllBox total={shownFiles.length} selected={selectedIds.length} onChange={toggleAll} />
               <span>Select all</span>
             </label>
-            <div className="grid">
-              {shownFiles.map((f) => {
-                const selected = selectedIds.includes(f.id)
-                const previewable = canPreview(f)
-                return (
-                  <div key={f.id} className={`tile${selected ? ' tile-selected' : ''}`}>
-                    <button
-                      className="tile-media"
-                      onClick={() => (previewable ? setPreviewFor(f) : toggleSelected(f.id))}
-                      title={previewable ? `Preview ${f.name}` : f.name}
-                    >
-                      <FileThumb
-                        meta={f}
-                        load={loadBytes}
-                        className="tile-thumb"
-                        hiRes
-                        fallback={<span className="tile-icon"><FileIcon meta={f} large /></span>}
-                      />
-                      {f.mime.startsWith('video/') && <span className="tile-badge" aria-hidden="true"><Icon name="play" /></span>}
-                    </button>
-                    <input
-                      type="checkbox"
-                      className="tile-check"
-                      checked={selected}
-                      onChange={() => toggleSelected(f.id)}
-                      aria-label={`select ${f.name}`}
-                    />
-                    <div className="tile-info">
-                      <span className="tile-name" title={f.name}>{f.name}</span>
-                      <span className="tile-meta muted">
-                        {fmtSize(f.size)} · {(view === 'trash' && trashNote(f)) || fmtDate(f.uploadedAt)}
-                      </span>
-                    </div>
-                    <div className="tile-actions">{fileActions(f)}</div>
-                  </div>
-                )
-              })}
+            <div className={sections ? 'grid-sections' : 'grid'}>
+              {sections
+                ? sections.map((sec) => (
+                    <section key={sec.id} className="group-sec" aria-label={sec.name}>
+                      <h3 className="group-title">{sec.name} <span className="count">{sec.items.length}</span></h3>
+                      <div className="grid">{sec.items.map(renderTile)}</div>
+                    </section>
+                  ))
+                : shownFiles.map(renderTile)}
             </div>
             </>
           ) : (
@@ -3190,44 +3428,20 @@ export default function App() {
                   <th></th>
                 </tr>
               </thead>
-              <tbody>
-                {shownFiles.map((f) => (
-                  <tr key={f.id} className={selectedIds.includes(f.id) ? 'row-selected' : ''}>
-                    <td className="td-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(f.id)}
-                        onChange={() => toggleSelected(f.id)}
-                        aria-label={`select ${f.name}`}
-                      />
-                    </td>
-                    <td className="fname">
-                      <FileThumb meta={f} load={loadBytes} fallback={<FileIcon meta={f} />} />
-                      <span className="fname-text">
-                        {canPreview(f) ? (
-                          <button className="fname-btn" onClick={() => setPreviewFor(f)} title="Preview">
-                            {f.name}
-                          </button>
-                        ) : (
-                          f.name
-                        )}
-                        {view === 'trash' && trashNote(f) && (
-                          <span className="muted"> ({trashNote(f)})</span>
-                        )}
-                        <span className="fname-sub muted">
-                          {fmtSize(f.size)} · {fmtDate(f.uploadedAt)}
-                        </span>
-                      </span>
-                    </td>
-                    <td className="col-wide">{fmtSize(f.size)}</td>
-                    <td className="col-wide">{fmtDate(f.uploadedAt)}</td>
-                    <td className="col-wide">
-                      <span title={f.rootHashes[0]}>{shortHash(f.rootHashes[0])}</span>
-                    </td>
-                    <td className="row-actions">{fileActions(f)}</td>
-                  </tr>
-                ))}
-              </tbody>
+              {sections ? (
+                sections.map((sec) => (
+                  <tbody key={sec.id} className="group-body">
+                    <tr className="group-row">
+                      <th colSpan={6} scope="rowgroup">
+                        {sec.name} <span className="count">{sec.items.length}</span>
+                      </th>
+                    </tr>
+                    {sec.items.map(renderRow)}
+                  </tbody>
+                ))
+              ) : (
+                <tbody>{shownFiles.map(renderRow)}</tbody>
+              )}
             </table>
           )}
         </section>
@@ -3252,6 +3466,24 @@ export default function App() {
         </div>
         </div>
       </main>
+
+      {categorizeFor && (
+        <CategorizeDialog
+          count={categorizeFor.length}
+          own={drive?.categories?.own ?? []}
+          onPick={(id, name) => {
+            putInCategory(categorizeFor, id, name)
+            setCategorizeFor(null)
+            setSelectedIds([])
+          }}
+          onNew={(name) => {
+            createCategory(name, categorizeFor)
+            setCategorizeFor(null)
+            setSelectedIds([])
+          }}
+          onClose={() => setCategorizeFor(null)}
+        />
+      )}
 
       {previewFor && (
         <PreviewModal
