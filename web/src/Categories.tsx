@@ -236,6 +236,7 @@ function SuggestionsList({
                     value={name}
                     maxLength={40}
                     onChange={(e) => setNames((n) => ({ ...n, [s.key]: e.target.value }))}
+                    placeholder="Name this group"
                     aria-label="Category name"
                   />
                   <p className="cat-suggest-files muted">

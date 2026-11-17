@@ -197,5 +197,54 @@ check('a category not kept from a suggestion doesn’t grow', still.size === 0)
 const outPin = { v: 1, own: [{ id: 'own:g', name: 'kept', grow: true }], pins: [...agents.fileIds.slice(1).map((file) => ({ file, cat: 'own:g', in: true })), { file: agents.fileIds[0], cat: 'own:g', in: false }], updatedAt: 0 }
 check('a file taken out of it doesn’t come back by resemblance', !C.growJoins(files.map((f) => ({ ...f, mime: 'text/plain' })), outPin).get(agents.fileIds[0])?.includes('own:g'))
 
+// [subject, name, the file's opening as the index reads it]
+const NOISY = [
+  ['agents', 'memskill.pdf', 'MemSkill: Reusable Skills for LLM Agents\nMing Zeng¹, Xiang Li², Wei Chen¹\n¹Tsinghua University ²Peking University\n{zengming, xli}@tsinghua.edu.cn\nAbstract—Large language model agents struggle to retain skills across tasks. We introduce a memory of reusable skills for agents and evaluate it on agent benchmarks.'],
+  ['agents', 'agentmem_camera_ready.pdf', 'Hierarchical Memory for Language Model Agents\nXiang Li*, Ming Zeng, and Yu Zhang\nPeking University, Tsinghua University\nxiang.li@pku.edu.cn\nAbstract. Agents built on large language models forget what they learned. We give LLM agents a hierarchical memory and show gains on long-horizon agent tasks.'],
+  ['agents', 'osdi23-final274.pdf', 'Serving LLM Agents at Scale\nMing Zeng, Wei Chen, Xiang Li, Hao Wu\nTsinghua University\nAbstract: Language model agents issue many tool calls per task. We build a serving system for LLM agents that batches agent tool calls and cuts latency.'],
+  ['agents', "#274 - OSDI '23.pdf", "OSDI '23 Artifact #274: Agent Tool Use Benchmarks\nWei Chen¹, Ming Zeng¹\n¹Tsinghua University\nThis artifact evaluates language model agents on tool use. Agents call search and calculators; we report agent success rates."],
+  ['agents', '2405.12345v2.pdf', 'arXiv:2405.12345v2 [cs.CL] 3 Jun 2024\nPlanning with LLM Agents\nYu Zhang, Xiang Li\nAbstract: We study how language model agents plan, act and revise plans; agents with reflection finish more interactive tasks.'],
+  ['chain', 'dag-bft.pdf', 'Narrow: DAG-Based BFT Consensus\nMing Zeng¹, Hao Wu², Wei Chen¹\n¹Tsinghua University ²Ant Group\n{zengming, wchen}@tsinghua.edu.cn\nAbstract—We present a Byzantine fault tolerant consensus protocol for blockchains that separates data dissemination from ordering.'],
+  ['chain', 'da-sampling-sosp.pdf', 'Data Availability Sampling for Blockchain Light Clients\nHao Wu, Ming Zeng, and Wei Chen\nAnt Group, Tsinghua University\nAbstract. Blockchain light clients cannot download full blocks; erasure-coded blocks and sampling let them check data availability.'],
+  ['chain', 'storage-proofs-v3-final.pdf', 'Proofs of Storage for Decentralized Blockchain Storage\nWei Chen*, Hao Wu\nTsinghua University\nwchen@tsinghua.edu.cn\nAbstract: Decentralized storage on a blockchain must verify providers keep the data; we design proofs of replication.'],
+  ['chain', 'consensus-mev.pdf', 'Fair Ordering in Blockchain Consensus\nMing Zeng, Hao Wu\nTsinghua University, Ant Group\nAbstract—Validators reorder transactions for profit. We add order fairness to blockchain consensus and measure front-running.'],
+  ['letters', 'letter-to-chen-1.txt', 'Dear Ms. Chen,\nThank you for the quote for the kitchen renovation. We would like the renovation to start in March; please confirm the cabinets and the tiles.\nBest regards,\nJohn Smith'],
+  ['letters', 'letter-to-chen-2.txt', 'Dear Ms. Chen,\nAbout the kitchen renovation: the plumber found an old pipe behind the cabinets. Can the renovation schedule move by a week?\nBest regards,\nJohn Smith'],
+  ['letters', 'letter-to-chen-3.txt', 'Dear Ms. Chen,\nThe renovation is done and the kitchen looks great. The final invoice for the renovation is attached; the tiles came out well.\nKind regards,\nJohn Smith'],
+  ['code', 'Button.tsx', '/**\n * Copyright 2024 Google LLC\n * Licensed under the Apache License, Version 2.0\n */\nimport React from "react"\nexport function Button({ label, onClick }) { return <button className="btn" onClick={onClick}>{label}</button> }'],
+  ['code', 'Dialog.tsx', '/**\n * Copyright 2024 Google LLC\n * Licensed under the Apache License, Version 2.0\n */\nimport React, { useState } from "react"\nexport function Dialog({ title, children }) { const [open, setOpen] = useState(false); return open ? <div role="dialog">{children}</div> : null }'],
+  ['code', 'Menu.tsx', '/**\n * Copyright 2024 Google LLC\n * Licensed under the Apache License, Version 2.0\n */\nimport React, { useState } from "react"\nexport function Menu({ items }) { const [open, setOpen] = useState(false); return <ul role="menu">{items.map((i) => <li>{i}</li>)}</ul> }'],
+  ['meetings', 'standup-mon.md', '# Standup, Monday\nAttendees: Ming Zeng, Xiang Li, Wei Chen, Hao Wu\nRoadmap: the Q3 roadmap slips a week; the release checklist needs owners. Roadmap review on Friday.'],
+  ['meetings', 'standup-wed.md', '# Standup, Wednesday\nAttendees: Ming Zeng, Xiang Li, Wei Chen\nRoadmap: release checklist has owners now; roadmap risks are the migration and hiring. Release next Tuesday.'],
+  ['meetings', 'standup-fri.md', '# Standup, Friday\nAttendees: Ming Zeng, Wei Chen, Hao Wu\nRoadmap review: Q3 roadmap agreed; release checklist done; the release ships Tuesday.'],
+  ['zh', '区块链存储-会议版.pdf', '区块链去中心化存储的数据可用性证明\n张明¹, 李翔², 王伟¹\n¹清华大学 ²北京大学\n摘要:本文提出区块链去中心化存储中基于纠删码的数据可用性证明方法。'],
+  ['zh', '区块链共识.pdf', '区块链共识协议的公平排序\n王伟, 张明, 李翔\n清华大学\n摘要:区块链验证者可以重排交易获利,本文为区块链共识协议加入公平排序。'],
+  ['zh', '存储证明.pdf', '去中心化存储的复制证明\n李翔、张明、王伟\n清华大学\n摘要:区块链去中心化存储需要验证存储节点保存了数据,本文设计复制证明。'],
+]
+const PEOPLE = /\b(ming|zeng|xiang|li|wei|chen|hao|wu|yu|zhang|john|smith)\b|张明|李翔|王伟|清华|北京大学/
+
+// ── names from files as they open (D39): papers with author lists, letters, code with license headers,
+// meeting notes with attendees, Chinese papers with Chinese authors. No person, email, ID or boilerplate
+// word becomes a name; each group is named for its subject, or not named at all.
+{
+  const nf = []
+  let t = Date.now()
+  for (const [subject, name, text] of NOISY) nf.push({ id: name, name, subject, uploadedAt: t--, search: await indexText(name, text) })
+  const groups = D.discover(nf, () => [], () => 0)
+  const rows = []
+  for (const g of groups) {
+    const vecs = await Promise.all(g.candidates.map((c) => embedPassage(c)))
+    const subj = [...new Set(g.fileIds.map((id) => nf.find((f) => f.id === id).subject))]
+    rows.push({ subj, name: D.nameFrom(g, vecs), n: g.fileIds.length, fits: D.candidateFits(g, vecs) })
+  }
+  for (const r of rows) console.log(`  [${r.subj.join('+')}] “${r.name}” (${r.n} files) — ${r.fits.slice(0, 8).map((x) => `${x.t} ${x.fit.toFixed(2)}`).join(' | ')}`)
+  const bad = rows.filter((r) => PEOPLE.test(r.name.toLowerCase()) || /\d|@|google|llc|licen|copyright|universit|osdi|final|camera|arxiv/i.test(r.name))
+  check('files as they open: no person, email, ID or boilerplate word in any name', bad.length === 0, bad.map((r) => r.name).join(' / '))
+  const named = (subj, re) => rows.find((r) => r.subj.includes(subj) && re.test(r.name))
+  check('…the agents papers (shared authors) are named for agents', !!named('agents', /agent/i), rows.map((r) => r.name).join(' / '))
+  check('…the blockchain papers for blockchain', !!named('chain', /blockchain|consensus|storage|chain/i))
+  check('…the Chinese papers in Chinese', !!rows.find((r) => r.subj.includes('zh') && /\p{Script=Han}/u.test(r.name)) || !rows.some((r) => r.subj.includes('zh')))
+}
+
 console.log(failed ? `${failed} FAILED` : 'DISCOVER TEST PASSED ✓')
 process.exitCode = failed ? 1 : 0

@@ -22,6 +22,10 @@ export const DISCOVER = {
   maxFiles: 800,
   /** name candidates weighed for meaning */
   candidates: 12,
+  /** a name word is in at least this share of the group's files (and 2) */
+  nameShare: 0.4,
+  /** and its meaning at least this close to the group's centre (subjects ≥ 0.39 on the test samples; noise up to 0.35) */
+  nameFit: 0.36,
 }
 
 export interface DiscoverFile {
@@ -125,40 +129,103 @@ export function discover(all: DiscoverFile[], inCategory: (id: string) => string
 }
 
 // ─── Names ────────────────────────────────────────────────────────────
+//
+// A file's opening is often not about its subject: a paper's author list
+// and affiliations, a letter's greeting and signature, a code file's
+// license header, an invoice's IDs and dates. Its words are distinctive (a
+// group of papers by the same people shares the names), so they'd win on
+// distinctiveness alone. Three rules, the same for every kind of file:
+// noise is cleaned out of the text first (emails, URLs, words with digits,
+// lists of personal names, greetings and signatures, affiliation,
+// boilerplate and code words); a name word must be in a good share of the
+// group's files (a co-author is in some, the subject in most); and it must
+// mean something close to what the group is about (its embedding near the
+// group's centre). When nothing passes, no name is made up: the user names it.
 
 const STOP = new Set(
   (
+    // English function words, and words every paper or document has
     'a an the of for and or to in on with by from at as is are be we our this that these those it its into via than over under ' +
     'using use used based new novel paper abstract propose proposes proposed present presents show shows study studies results ' +
     'method methods approach approaches evaluate evaluation analysis analyze work task tasks across between without within while ' +
     'such how what which can only more most less high low large small two three first one per us also not no all each other ' +
     'their they them then there here had has have was were will would should could may might do does did make made get find ' +
     'found report reports describe describes design designs compare compares final draft copy notes note file files document ' +
-    'pdf txt md doc docx page pages version v1 v2 arxiv preprint university introduction'
+    'pdf txt md doc docx page pages version arxiv preprint introduction et al ' +
+    // affiliations, venues
+    'university universities institute institution department dept school college lab labs laboratory laboratories inc ltd llc ' +
+    'corp corporation company gmbh academy faculty proceedings conference symposium workshop journal vol volume issue pp ' +
+    'submitted accepted camera ready ' +
+    // letters, emails, meetings, dates
+    'dear hello regards sincerely thanks thank cheers best wishes subject sent received forwarded wrote reply attached ' +
+    'attendees attendee agenda minutes monday tuesday wednesday thursday friday saturday sunday january february march april ' +
+    'may june july august september october november december today tomorrow yesterday ' +
+    // boilerplate
+    'copyright rights reserved licensed license licence apache mit gpl permission permissions conditions warranty warranties ' +
+    'confidential proprietary software distributed ' +
+    // code
+    'import export const let var function return def class public private protected static void include package module ' +
+    'require async await self true false null none undefined'
   ).split(' ')
 )
 
-/** A file's words and word pairs (Chinese: its 2-character pieces, alone). */
-function termsOf(f: DiscoverFile): Set<string> {
-  const text = `${f.name} ${f.search?.t ?? ''}`
-    .toLowerCase()
-    .replace(/\.(pdf|txt|md|docx?|html?)\b/g, ' ')
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-  const words: string[] = []
-  for (const w of text.split(/\s+/).filter(Boolean)) {
-    if (/\p{Script=Han}/u.test(w)) for (let i = 0; i + 2 <= w.length; i++) words.push(w.slice(i, i + 2))
-    else if (w.length > 2 && !STOP.has(w) && !/^[\d.%x-]+$/.test(w)) words.push(w)
-  }
-  const pairs = words.slice(1).map((w, i) => `${words[i]} ${w}`).filter((p) => !/\p{Script=Han}/u.test(p))
-  return new Set([...words, ...pairs])
+const NAME = String.raw`\p{Lu}[\p{Ll}'’]+(?:[ -]\p{Lu}\.?(?:[\p{Ll}'’]+)?){1,2}`
+const MARKS = String.raw`[\d*†‡§¶¹²³⁴⁵⁶⁷⁸⁹⁰,]*`
+/** two or more personal names in a row: "Ming Zeng¹, Xiang Li*, and Wei Chen" */
+const NAME_LIST = new RegExp(String.raw`${NAME}${MARKS}(?:\s*(?:,|;|\band\b|&)\s*${NAME}${MARKS})+`, 'gu')
+/** Chinese names in a row: "张明, 李翔、王伟" */
+const HAN_NAME_LIST = /\p{Script=Han}{2,3}(?:\s*[,，、]\s*\p{Script=Han}{2,3}){2,}/gu
+/** a name after a greeting, a sign-off, a title or an email header: "Dear Ms. Chen", "Best regards, John Smith", "From: Li Wei" */
+const cased = (words: string) => words.split(' ').map((w) => `[${w[0].toUpperCase()}${w[0]}]${w.slice(1)}`).join('|')
+const ADDRESSED = new RegExp(
+  // no i flag: with it \p{Lu} matches lowercase too ("best results" isn't a name)
+  String.raw`(?:\b(?:${cased('dear hi hello regards sincerely thanks cheers best mr ms mrs dr prof')})\b[.,]?|(?:^|\s)(?:${cased('from to cc')})\s*:)\s+(?:(?:${cased('mr ms mrs dr prof')})\.?\s+)?${NAME.replace('{1,2}', '{0,1}')}`,
+  'gmu'
+)
+
+/** Chinese institutions: "清华大学", "计算技术研究所"; and what every Chinese paper says ("摘要", "本文") */
+const HAN_INSTITUTION = /\p{Script=Han}{0,8}(?:大学|学院|研究院|研究所|研究中心|实验室|公司|集团)|摘要|本文|提出/gu
+
+/** license headers: "Copyright 2024 Google LLC.", "Licensed under the Apache License…", "SPDX-License-Identifier: MIT" */
+const LICENSE = /\b(?:copyright|\(c\)|©|licensed under|spdx-license-identifier)[^.\n]*(?:[.\n]|$)/giu
+
+/** The text with what isn't about the subject taken out. */
+export function cleanText(raw: string): string {
+  return raw
+    .replace(LICENSE, ' ')
+    .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, ' ')
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ')
+    .replace(NAME_LIST, ' ')
+    .replace(HAN_NAME_LIST, ' ')
+    .replace(HAN_INSTITUTION, ' ')
+    .replace(ADDRESSED, ' ')
 }
 
-/** A group's most distinctive terms (in it often, elsewhere rarely), best first. */
+/** A file's words and word pairs; Chinese runs as their 2- to 4-character pieces. */
+function termsOf(f: DiscoverFile): Set<string> {
+  const stem = f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ')
+  const text = cleanText(`${stem}. ${f.search?.t ?? ''}`)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+  const words: string[] = []
+  const han: string[] = []
+  for (const w of text.split(/\s+/).filter(Boolean)) {
+    if (/\p{Script=Han}/u.test(w)) {
+      for (const run of w.match(/\p{Script=Han}+/gu) ?? [])
+        for (let n = 2; n <= 4; n++) for (let i = 0; i + n <= run.length; i++) han.push(run.slice(i, i + n))
+    } else if (w.length > 2 && !STOP.has(w) && !/\d/.test(w) && !/^-|-$/.test(w)) words.push(w)
+  }
+  const pairs = words.slice(1).map((w, i) => `${words[i]} ${w}`)
+  return new Set([...words, ...pairs, ...han])
+}
+
+/** A group's terms in a good share of its files and rare elsewhere, best first. */
 function candidates(group: number[], terms: Set<string>[], df: Map<string, number>, n: number): string[] {
   const tf = new Map<string, number>()
   for (const i of group) for (const t of terms[i]) tf.set(t, (tf.get(t) ?? 0) + 1)
+  const need = Math.max(2, Math.ceil(group.length * DISCOVER.nameShare))
   return [...tf]
-    .filter(([t, k]) => k >= 2 && !/\p{Script=Han}/u.test(t))
+    .filter(([, k]) => k >= need)
     .map(([t, k]) => ({ t, s: (k / group.length) * Math.log(n / df.get(t)!) }))
     .sort((a, b) => b.s - a.s)
     .slice(0, DISCOVER.candidates)
@@ -167,12 +234,15 @@ function candidates(group: number[], terms: Set<string>[], df: Map<string, numbe
 
 /**
  * A name from the candidates: the two closest in meaning to the group's
- * centre (`vecs`: the candidates' embeddings, same order), neither part of
- * the other; first letter capitalized ("Model agents · llm agents").
+ * centre (`vecs`: the candidates' embeddings, same order), each close
+ * enough (DISCOVER.nameFit), neither part of the other; first letter
+ * capitalized ("Agents · language models"). '' when none is: the user
+ * names the group.
  */
 export function nameFrom(found: Found, vecs: ArrayLike<number>[]): string {
   const ranked = found.candidates
     .map((t, i) => ({ t, fit: vecs[i] ? dot(found.centre, unit(vecs[i])) : -1 }))
+    .filter((x) => x.fit >= DISCOVER.nameFit)
     .sort((a, b) => b.fit - a.fit)
   const picked: string[] = []
   for (const { t } of ranked) {
@@ -180,6 +250,11 @@ export function nameFrom(found: Found, vecs: ArrayLike<number>[]): string {
     picked.push(t)
     if (picked.length === 2) break
   }
-  const name = picked.join(' · ') || 'Untitled'
+  const name = picked.join(' · ')
   return name.charAt(0).toUpperCase() + name.slice(1)
+}
+
+/** For tuning: each candidate's closeness to the group's centre. */
+export function candidateFits(found: Found, vecs: ArrayLike<number>[]): { t: string; fit: number }[] {
+  return found.candidates.map((t, i) => ({ t, fit: vecs[i] ? dot(found.centre, unit(vecs[i])) : -1 })).sort((a, b) => b.fit - a.fit)
 }
