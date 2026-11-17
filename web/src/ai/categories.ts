@@ -166,8 +166,8 @@ export const GROW = {
   k: 3,
   /** of them, at least this many put in the category by hand */
   need: 2,
-  /** and its average likeness to those files at least this */
-  floor: 0.37,
+  /** and its average likeness to those files at least this (0.37 on v1 embeddings; v2, D41: 0.35) */
+  floor: 0.35,
   /** the files compared at most (newest first) */
   maxFiles: 800,
 }

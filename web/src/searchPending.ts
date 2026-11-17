@@ -8,7 +8,7 @@
 // only while the drive is open. One record per account in IndexedDB;
 // without IndexedDB (private mode) they live for the page only.
 
-import type { DriveState, PendingSearchEntry } from '@0gdrive/core'
+import { newerSearch, type DriveState, type PendingSearchEntry, type SearchEntry } from '@0gdrive/core'
 
 const DB_NAME = '0gdrive-search'
 const STORE = 'pending'
@@ -116,16 +116,17 @@ export function addPendingSearch(id: string, p: PendingSearchEntry): void {
  */
 export function prunePendingSearch(drive: DriveState): void {
   if (entries.size === 0) return
-  const where = new Map<string, { name: string; hasEntry: boolean; folder: string }>()
+  const where = new Map<string, { name: string; entry?: SearchEntry; folder: string }>()
   for (const [path, folder] of drive.folders) {
     const id = path === '' ? '' : drive.tree.idOf(path)
     if (id === null) continue
-    for (const f of folder?.files ?? []) where.set(f.id, { name: f.name, hasEntry: !!f.search, folder: id })
+    for (const f of folder?.files ?? []) where.set(f.id, { name: f.name, entry: f.search, folder: id })
   }
   let changed = false
   for (const [id, p] of entries) {
     const now = where.get(id)
-    if (!now || now.hasEntry || now.name !== p.name) {
+    // gone, renamed, or the drive has an entry as new as this one
+    if (!now || now.name !== p.name || !newerSearch(p.entry, now.entry)) {
       entries.delete(id)
       changed = true
     } else if (now.folder !== p.folder) {

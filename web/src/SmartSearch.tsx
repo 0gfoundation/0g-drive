@@ -4,7 +4,7 @@
 // folder-manifest updates the user approves.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { DriveState, DriveStore, FileMeta, SearchEntry } from '@0gdrive/core'
+import { newerSearch, type DriveState, type DriveStore, type FileMeta, type SearchEntry } from '@0gdrive/core'
 import {
   embedSearchQuery,
   embedTexts,
@@ -20,7 +20,7 @@ import {
   modelErrorReason,
   type ModelStatus,
 } from './ai/client'
-import { rank, suggestMoves, type MoveSuggestion } from './ai/searchcore'
+import { outdatedSearch, rank, suggestMoves, type MoveSuggestion } from './ai/searchcore'
 import { addPendingSearch, pendingSearch, prunePendingSearch, subscribePendingSearch } from './searchPending'
 import { askConfirm } from './AskDialog'
 import { Icon } from './icons'
@@ -51,9 +51,9 @@ const lastSegment = (path: string) => path.split('/').pop() ?? path
 
 /** A file's search entry: its saved one, else one made on this device and not saved yet. */
 function searchOf(meta: FileMeta): SearchEntry | undefined {
-  if (meta.search) return meta.search
   const p = pendingSearch().get(meta.id)
-  return p && p.name === meta.name ? p.entry : undefined
+  const made = p && p.name === meta.name ? p.entry : undefined
+  return made && newerSearch(made, meta.search) ? made : meta.search
 }
 
 /** Every file in the drive (not the trash), with this device's unsaved search entries filled in. */
@@ -179,7 +179,10 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
   useEffect(() => {
     if (!runIndexer || !drive) return
     const pending = pendingSearch()
-    const next = allFiles(drive).find((f) => !f.meta.search && !pending.has(f.meta.id) && !failed.current.has(f.meta.id))
+    // no entry, or one made the old way from its text (v1: indexed again, D41)
+    const next = allFiles(drive).find(
+      (f) => (!f.meta.search || outdatedSearch(f.meta.search)) && !pending.has(f.meta.id) && !failed.current.has(f.meta.id)
+    )
     if (!next) return
     let alive = true
     const timer = setTimeout(async () => {
@@ -216,8 +219,8 @@ export function useSmartDrive({ drive, storeRef, currentPath, loadBytes, reloadD
   for (const folder of drive?.folders.values() ?? []) {
     for (const f of folder?.files ?? []) {
       const e = searchOf(f)
-      if (e && !f.search) index.unsaved++ // indexed on this device, not saved in the drive yet
-      if (!e && enabled && !failed.current.has(f.id)) index.remaining++ // the indexer works through these
+      if (e && e !== f.search) index.unsaved++ // indexed on this device, not saved in the drive yet
+      if ((!e || outdatedSearch(e)) && enabled && !failed.current.has(f.id)) index.remaining++ // the indexer works through these
       if (e && nameOnly(f, e)) index.nameOnly++
     }
   }

@@ -9,11 +9,19 @@
 
 import type { SearchEntry } from '@0gdrive/core'
 import { dequantize } from './searchcore'
+import { cleanText } from './subject'
+
+export { cleanText }
 
 /** Tuned on a sample of papers and everyday files (scripts/test-discover.mjs). */
 export const DISCOVER = {
-  /** groups merge while their files are, on average, at least this similar */
-  link: 0.35,
+  /**
+   * groups merge while their files are, on average, at least this similar
+   * (0.35 for embeddings of openings as read, v1; 0.33 for embeddings of
+   * what files are about, v2 (D41): less in common between papers now that
+   * "Abstract:" and the authors are out)
+   */
+  link: 0.33,
   /** a group needs this many files */
   minFiles: 3,
   /** skip a group that is nearly a category already: shared files / files in either, at least this */
@@ -26,7 +34,26 @@ export const DISCOVER = {
   nameShare: 0.4,
   /** and its meaning at least this close to the group's centre (subjects ≥ 0.39 on the test samples; noise up to 0.35) */
   nameFit: 0.36,
+  /**
+   * a name word that reads like a person's name is dropped: its average
+   * likeness to the 3 closest of PEOPLE at least this, or more than its
+   * likeness to the group (names from real author lists: pinyin ≥ 0.52,
+   * others 0.36–0.65; subject words ≤ 0.41, institutions ≤ 0.49)
+   */
+  personLike: 0.5,
 }
+
+/**
+ * Names in many languages and orders, embedded once: what a person's name
+ * reads like to the model. An author list in a PDF's text has no commas to
+ * go by ("Timo Schick Jane Dwivedi-Yu Roberto Dessì † …"), and a group of
+ * papers by the same people has their names in its meaning too, so the
+ * model is asked instead: is this word more a person than the subject?
+ */
+export const PEOPLE = [
+  'John Smith', 'Maria Garcia', 'Wei Chen', 'Zhang Wei', 'Ahmed Khan', 'Anna Müller', 'Hiroshi Tanaka', 'Priya Sharma',
+  'Olga Ivanova', 'Kim Min-jun', 'Li Na', 'David Johnson', 'Liu Yang', 'Fatima Ali', 'Pierre Dubois', 'Nguyen Van An',
+]
 
 export interface DiscoverFile {
   id: string
@@ -169,42 +196,11 @@ const STOP = new Set(
   ).split(' ')
 )
 
-const NAME = String.raw`\p{Lu}[\p{Ll}'’]+(?:[ -]\p{Lu}\.?(?:[\p{Ll}'’]+)?){1,2}`
-const MARKS = String.raw`[\d*†‡§¶¹²³⁴⁵⁶⁷⁸⁹⁰,]*`
-/** two or more personal names in a row: "Ming Zeng¹, Xiang Li*, and Wei Chen" */
-const NAME_LIST = new RegExp(String.raw`${NAME}${MARKS}(?:\s*(?:,|;|\band\b|&)\s*${NAME}${MARKS})+`, 'gu')
-/** Chinese names in a row: "张明, 李翔、王伟" */
-const HAN_NAME_LIST = /\p{Script=Han}{2,3}(?:\s*[,，、]\s*\p{Script=Han}{2,3}){2,}/gu
-/** a name after a greeting, a sign-off, a title or an email header: "Dear Ms. Chen", "Best regards, John Smith", "From: Li Wei" */
-const cased = (words: string) => words.split(' ').map((w) => `[${w[0].toUpperCase()}${w[0]}]${w.slice(1)}`).join('|')
-const ADDRESSED = new RegExp(
-  // no i flag: with it \p{Lu} matches lowercase too ("best results" isn't a name)
-  String.raw`(?:\b(?:${cased('dear hi hello regards sincerely thanks cheers best mr ms mrs dr prof')})\b[.,]?|(?:^|\s)(?:${cased('from to cc')})\s*:)\s+(?:(?:${cased('mr ms mrs dr prof')})\.?\s+)?${NAME.replace('{1,2}', '{0,1}')}`,
-  'gmu'
-)
-
-/** Chinese institutions: "清华大学", "计算技术研究所"; and what every Chinese paper says ("摘要", "本文") */
-const HAN_INSTITUTION = /\p{Script=Han}{0,8}(?:大学|学院|研究院|研究所|研究中心|实验室|公司|集团)|摘要|本文|提出/gu
-
-/** license headers: "Copyright 2024 Google LLC.", "Licensed under the Apache License…", "SPDX-License-Identifier: MIT" */
-const LICENSE = /\b(?:copyright|\(c\)|©|licensed under|spdx-license-identifier)[^.\n]*(?:[.\n]|$)/giu
-
-/** The text with what isn't about the subject taken out. */
-export function cleanText(raw: string): string {
-  return raw
-    .replace(LICENSE, ' ')
-    .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, ' ')
-    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ')
-    .replace(NAME_LIST, ' ')
-    .replace(HAN_NAME_LIST, ' ')
-    .replace(HAN_INSTITUTION, ' ')
-    .replace(ADDRESSED, ' ')
-}
-
 /** A file's words and word pairs; Chinese runs as their 2- to 4-character pieces. */
 function termsOf(f: DiscoverFile): Set<string> {
   const stem = f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ')
-  const text = cleanText(`${stem}. ${f.search?.t ?? ''}`)
+  // the text the embedding was made from (D41), else the opening as read
+  const text = cleanText(`${stem}. ${f.search?.s ?? f.search?.t ?? ''}`)
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
   const words: string[] = []
@@ -239,11 +235,9 @@ function candidates(group: number[], terms: Set<string>[], df: Map<string, numbe
  * capitalized ("Agents · language models"). '' when none is: the user
  * names the group.
  */
-export function nameFrom(found: Found, vecs: ArrayLike<number>[]): string {
-  const ranked = found.candidates
-    .map((t, i) => ({ t, fit: vecs[i] ? dot(found.centre, unit(vecs[i])) : -1 }))
-    .filter((x) => x.fit >= DISCOVER.nameFit)
-    .sort((a, b) => b.fit - a.fit)
+export function nameFrom(found: Found, vecs: ArrayLike<number>[], people: ArrayLike<number>[] = []): string {
+  const ranked = candidateFits(found, vecs, people)
+    .filter((x) => x.fit >= DISCOVER.nameFit && x.person < DISCOVER.personLike && x.person <= x.fit)
   const picked: string[] = []
   for (const { t } of ranked) {
     if (picked.some((p) => p.includes(t) || t.includes(p))) continue
@@ -254,7 +248,20 @@ export function nameFrom(found: Found, vecs: ArrayLike<number>[]): string {
   return name.charAt(0).toUpperCase() + name.slice(1)
 }
 
-/** For tuning: each candidate's closeness to the group's centre. */
-export function candidateFits(found: Found, vecs: ArrayLike<number>[]): { t: string; fit: number }[] {
-  return found.candidates.map((t, i) => ({ t, fit: vecs[i] ? dot(found.centre, unit(vecs[i])) : -1 })).sort((a, b) => b.fit - a.fit)
+/**
+ * Each candidate's closeness to the group's centre (`fit`) and how much it
+ * reads like a person's name (`person`: its average likeness to the 3
+ * closest of PEOPLE's vectors, `people`), best fit first.
+ */
+export function candidateFits(found: Found, vecs: ArrayLike<number>[], people: ArrayLike<number>[] = []): { t: string; fit: number; person: number }[] {
+  const pv = people.map(unit)
+  return found.candidates
+    .map((t, i) => {
+      if (!vecs[i]) return { t, fit: -1, person: 1 }
+      const v = unit(vecs[i])
+      const sims = pv.map((p) => dot(v, p)).sort((a, b) => b - a)
+      const person = sims.length ? sims.slice(0, 3).reduce((a, b) => a + b, 0) / Math.min(3, sims.length) : 0
+      return { t, fit: dot(found.centre, v), person }
+    })
+    .sort((a, b) => b.fit - a.fit)
 }

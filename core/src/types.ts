@@ -77,9 +77,16 @@ export interface FileMeta {
  * L2-normalized embeddings, base64-encoded.
  */
 export interface SearchEntry {
-  v: 1
+  /** 2: the embedding is made from `s`, what the file is about (D41); 1: from its opening as read */
+  v: 1 | 2
   /** Leading extracted text (≤280 chars) — shown in results, matched by name search. */
   t?: string
+  /**
+   * What the file is about, as embedded (≤280 chars; v2): a paper's title
+   * and abstract, other text cleaned of authors, greetings, boilerplate.
+   * Absent when it's the same as `t`. A rename re-embeds from it.
+   */
+  s?: string
   /** Photo tags (CLIP zero-shot), English. */
   g?: string[]
   /** paraphrase-multilingual-MiniLM-L12-v2 passage embedding (384-d). */

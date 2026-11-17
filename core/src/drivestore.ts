@@ -25,6 +25,9 @@ export interface DriveState {
 
 export const emptyCategories = (): DriveCategories => ({ v: 1, own: [], pins: [], updatedAt: 0 })
 
+/** Whether search entry `a` should replace `b`: there's none, or `a` is made a newer way (D41: v2 replaces v1). */
+export const newerSearch = (a: SearchEntry, b: SearchEntry | undefined): boolean => !b || (a.v ?? 1) > (b.v ?? 1)
+
 /** A file given a new name on the way (see uniqueName). */
 export interface Renamed {
   id: string
@@ -642,14 +645,14 @@ export class DriveStore {
     return { key, value: JSON.parse(JSON.stringify(value)) }
   }
 
-  /** Give `files` that have no search entry this device's pending one; how many got one. */
+  /** Give `files` this device's pending search entry where they have none, or an older one; how many got one. */
   private fillSearch(files: FileMeta[]): number {
     const pending = this.opts.pendingSearch?.()
     if (!pending?.size) return 0
     let n = 0
     for (const f of files) {
-      const p = f.search ? undefined : pending.get(f.id)
-      if (p && p.name === f.name) {
+      const p = pending.get(f.id)
+      if (p && p.name === f.name && newerSearch(p.entry, f.search)) {
         f.search = p.entry
         n++
       }

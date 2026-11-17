@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { DriveState, FileMeta } from '@0gdrive/core'
 import { embedTexts } from './ai/client'
 import { groupFiles, topicPhrases, TOPICS, type Category, type Grouping, type TopicVecs } from './ai/categories'
-import { discover, groupable, nameFrom, type Found } from './ai/discover'
+import { discover, groupable, nameFrom, PEOPLE, type Found } from './ai/discover'
 import { allFiles } from './SmartSearch'
 import { closeOnBackdrop } from './backdrop'
 import { Icon } from './icons'
@@ -116,6 +116,8 @@ export function useSuggestions(data: DriveGrouping | null) {
   const seen = useRef<Set<string> | null>(null)
   /** groups dismissed this visit */
   const dismissed = useRef(new Set<string>())
+  /** PEOPLE as the model reads them (embedded on the first look) */
+  const peopleVecs = useRef<Float32Array[] | null>(null)
   const open = useRef(false)
   open.current = list !== null
 
@@ -125,14 +127,15 @@ export function useSuggestions(data: DriveGrouping | null) {
     setError(null)
     try {
       const found = findGroups(data, dismissed.current)
-      // every group's name candidates in one call to the model
+      // every group's name candidates in one call to the model (what a person's name reads like, once)
       const all = found.flatMap((g) => g.candidates)
+      if (all.length && !peopleVecs.current) peopleVecs.current = await embedTexts(PEOPLE)
       const vecs = all.length ? await embedTexts(all) : []
       let at = 0
       setList(
         found.map((g) => {
           const mine = vecs.slice(at, (at += g.candidates.length))
-          return { key: g.key, name: nameFrom(g, mine), fileIds: g.fileIds }
+          return { key: g.key, name: nameFrom(g, mine, peopleVecs.current ?? []), fileIds: g.fileIds }
         })
       )
       seen.current = new Set([...(seen.current ?? []), ...found.map((g) => g.key)])

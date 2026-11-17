@@ -25,6 +25,7 @@ import {
   quantize,
   type SearchEntry,
 } from './searchcore'
+import { subjectText } from './subject'
 import { FULL_TEXT_MODEL, SMALL_TEXT_MODEL } from './modelOn0g'
 
 // Chosen over multilingual-e5-small/-base after scripts/test-search.mjs:
@@ -189,10 +190,18 @@ export async function indexPhoto(name: string, image: RawImage): Promise<SearchE
   return { v: SEARCH_ENTRY_VERSION, g: tags.length ? tags : undefined, e, c: quantize(vec) }
 }
 
-export async function indexText(name: string, text: string | undefined): Promise<SearchEntry> {
-  const passage = passageText(name, undefined, text)
+/**
+ * A text file's entry: embedded from what it's about (a paper's title and
+ * abstract; other text cleaned of authors, greetings, boilerplate: D41),
+ * kept as `s`; its opening as read kept as `t`, for results and exact words.
+ */
+export async function indexText(name: string, text: string | undefined, title?: string): Promise<SearchEntry> {
+  const subject = subjectText(text, title)
+  const passage = passageText(name, undefined, subject)
   const e = passage ? quantize(await embedPassage(passage)) : undefined
-  return { v: SEARCH_ENTRY_VERSION, t: makeExcerpt(text), e }
+  const t = makeExcerpt(text)
+  const s = makeExcerpt(subject)
+  return { v: SEARCH_ENTRY_VERSION, t, ...(s && s !== t ? { s } : {}), e }
 }
 
 /**
@@ -202,7 +211,7 @@ export async function indexText(name: string, text: string | undefined): Promise
  * so the new embedding leans slightly more on the name).
  */
 export async function renameEntry(name: string, entry: SearchEntry): Promise<SearchEntry> {
-  const passage = passageText(name, entry.g, entry.t)
+  const passage = passageText(name, entry.g, entry.s ?? entry.t)
   const e = passage ? quantize(await embedPassage(passage)) : undefined
   return { ...entry, e }
 }

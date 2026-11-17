@@ -20,7 +20,7 @@ if (env.backends.onnx.wasm) env.backends.onnx.wasm.numThreads = 1
 
 export type AiRequest =
   | { id: number; op: 'indexPhoto'; name: string; image: Blob }
-  | { id: number; op: 'indexText'; name: string; text?: string }
+  | { id: number; op: 'indexText'; name: string; text?: string; title?: string }
   | { id: number; op: 'renameEntry'; name: string; entry: SearchEntry }
   | { id: number; op: 'query'; text: string; photos: boolean }
   | { id: number; op: 'embed'; texts: string[] }
@@ -109,7 +109,7 @@ self.onmessage = (e: MessageEvent<AiRequest | PageReply>) => {
           result = await indexPhoto(req.name, await toRawImage(req.image))
           break
         case 'indexText':
-          result = await indexText(req.name, req.text)
+          result = await indexText(req.name, req.text, req.title)
           break
         case 'renameEntry':
           result = await renameEntry(req.name, req.entry)
