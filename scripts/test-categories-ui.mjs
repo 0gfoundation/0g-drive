@@ -10,7 +10,9 @@
 // second device (a 390 px phone with touch) sees the user's category, with
 // chips that fit and scroll sideways; Suggest categories finds the papers on
 // LLM agents as a group (D37), named for agents: renamed and kept, it's a
-// category of the user's with them in it, stored, and isn't suggested again; a folder's "Group by category" puts
+// category of the user's with them in it, stored, and isn't suggested again;
+// it grows (D38): a 4th agents paper uploaded later joins it by itself; 3
+// vision papers uploaded later show as "1 new" suggestion, sidebar and chip; a folder's "Group by category" puts
 // its files in sections (list and grid), each file once, kept after a
 // reload.
 //
@@ -134,6 +136,21 @@ const FILES = {
 }
 const AGENTS = ['agent-memory.txt', 'agent-planning.txt', 'agent-tools.txt']
 const names = Object.keys(FILES)
+// uploaded later: a 4th agents paper (the kept category grows by it) and 3 vision papers (a new subject: a new suggestion)
+const LATER = {
+  'agent-benchmark.txt': 'Benchmarking Web Agents. Abstract: We release a benchmark of 800 realistic web tasks for language model agents and find that the best LLM agents complete fewer than half, failing at long-horizon planning.',
+  'diffusion-images.txt': 'Denoising Diffusion Models for Image Synthesis. Abstract: We generate high quality images with diffusion probabilistic models trained by denoising, and report FID on CIFAR-10 and LSUN image benchmarks.',
+  'vision-transformer.txt': 'Transformers for Image Recognition. Abstract: We apply a pure transformer to sequences of image patches and match convolutional networks on ImageNet image classification.',
+  'object-detection.txt': 'Real-Time Object Detection in Images. Abstract: We frame object detection as one regression from image pixels to bounding boxes and class probabilities, at 45 frames per second.',
+}
+const VISION = ['diffusion-images.txt', 'object-detection.txt', 'vision-transformer.txt']
+const ALL = [...names, ...Object.keys(LATER)]
+const uploadLater = async (list) => {
+  await page.locator('.sidebar .nav-item', { hasText: 'My Drive' }).click()
+  await page.setInputFiles('.dropzone input[type=file]', list.map((name) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(LATER[name]) })))
+  await page.waitForFunction((n) => n.every((x) => [...document.querySelectorAll('table tbody tr')].some((r) => r.textContent.includes(x))), list, { timeout: 5 * 60_000, polling: 500 })
+  await settled(page)
+}
 const row = (p, name) => p.locator('table tbody tr', { hasText: name }).first()
 const settled = (p) => p.waitForFunction(() => !document.querySelector('.progress-line.on'), null, { timeout: 3 * 60_000, polling: 200 })
 const chips = (p, group) =>
@@ -250,6 +267,34 @@ try {
   check('…and isn’t suggested again', !again.some((f) => AGENTS.every((n) => f.includes(n))), JSON.stringify(again))
   await page.getByRole('button', { name: 'Close suggestions' }).click()
 
+  // ── a kept category grows (D38): a new agents paper joins it, not put in by hand
+  await uploadLater(['agent-benchmark.txt'])
+  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
+  const grew = await page.waitForFunction(() => [...document.querySelectorAll('.categories .chip')].some((c) => c.querySelector('.chip-name')?.textContent === 'AI agents' && c.querySelector('.chip-count')?.textContent === '4'), null, { timeout: 60_000, polling: 500 }).then(() => true, () => false)
+  await chip(page, 'AI agents').click().catch(() => undefined)
+  if ((await chip(page, 'AI agents').getAttribute('aria-pressed')) !== 'true') await chip(page, 'AI agents').click()
+  const grown = await listed(page)
+  s = await stored()
+  const keptId = s.own.find((o) => o.name === 'AI agents')?.id
+  check('a kept category grows: a new agents paper joins “AI agents” by itself (not put in by hand)',
+    grew && grown.includes('agent-benchmark.txt') && s.own.find((o) => o.id === keptId)?.grow === true && s.pins.filter((p) => p.cat === keptId).length === 3,
+    JSON.stringify({ grown, pins: s.pins.filter((p) => p.cat === keptId).length }))
+
+  // ── new suggestions after uploads: 3 vision papers, a new subject
+  await uploadLater(VISION)
+  const badge = await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).locator('.nav-fresh').textContent({ timeout: 60_000 }).catch(() => null)
+  check('after uploads, the sidebar says there are new suggested categories', badge === '1 new', String(badge))
+  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
+  const chipSays = await page.locator('.categories .chip', { hasText: 'Suggest categories' }).textContent()
+  await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
+  await page.locator('.cat-suggest').waitFor({ timeout: 60_000 })
+  await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })
+  const visionCard = await page.$$eval('.cat-suggest-card .cat-suggest-files', (cs) => cs.map((c) => c.textContent))
+  const cleared = await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).locator('.nav-fresh').count()
+  check('…the chip too; looking shows the vision papers as a group, and the count goes',
+    /1 new/.test(chipSays) && visionCard.some((f) => VISION.every((n) => f.includes(n))) && cleared === 0, JSON.stringify({ chipSays, visionCard, cleared }))
+  await page.getByRole('button', { name: 'Close suggestions' }).click()
+
   // ── a second device, a 390 px phone: the user's category is there
   const phone = await walletContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const pp = await phone.newPage()
@@ -315,7 +360,7 @@ try {
   const groups = async () => page.$$eval('tbody.group-body', (bs) => bs.map((b) => ({ name: b.querySelector('.group-row th').childNodes[0].textContent.trim(), rows: b.querySelectorAll('tr:not(.group-row)').length })))
   let g = await groups()
   const total = g.reduce((n, x) => n + x.rows, 0)
-  check('Group by category: the folder in sections, each file once', g.length >= 4 && total === names.length && g.some((x) => x.name === 'Recipes'), JSON.stringify(g))
+  check('Group by category: the folder in sections, each file once', g.length >= 4 && total === ALL.length && g.some((x) => x.name === 'Recipes'), JSON.stringify(g))
   const inDocs = await page.$$eval('tbody.group-body', (bs) => bs.filter((b) => b.querySelector('.group-row th').textContent.startsWith('Documents')).flatMap((b) => [...b.querySelectorAll('tr:not(.group-row)')].map((r) => r.textContent)))
   check('…the file taken out of Finance is under its type instead', inDocs.some((r) => r.includes('invoice-031.txt')), JSON.stringify(g))
   await page.reload()
@@ -324,7 +369,7 @@ try {
   await topicSections()
   await page.getByRole('button', { name: 'Grid view' }).click()
   const grid = await page.$$eval('.grid-sections .group-sec', (ss) => ss.map((x) => x.querySelectorAll('.tile').length))
-  check('…and in the grid: sections of tiles', grid.length === g.length && grid.reduce((a, b) => a + b, 0) === names.length, JSON.stringify(grid))
+  check('…and in the grid: sections of tiles', grid.length === g.length && grid.reduce((a, b) => a + b, 0) === ALL.length, JSON.stringify(grid))
 
   // ── 390 px with topics: their row scrolls sideways, the page doesn't
   await page.setViewportSize({ width: 390, height: 844 })

@@ -58,7 +58,7 @@ const dot = (a: ArrayLike<number>, b: ArrayLike<number>) => {
 }
 
 /** Text files with their own text read (not photos, not known by name alone). */
-const groupable = (f: DiscoverFile) => !!f.search?.e && !!f.search.t && !f.search.c
+export const groupable = (f: DiscoverFile) => !!f.search?.e && !!f.search.t && !f.search.c
 
 /**
  * Groups of files close in meaning. `inCategory(id)`: the categories a file

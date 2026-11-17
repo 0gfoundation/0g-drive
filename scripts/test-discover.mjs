@@ -8,7 +8,9 @@
 // one: the small model doesn't separate its sub-areas), most papers are in
 // a group, the agents and retrieval groups are found and named for what
 // they are, a group the built-in topics already hold (travel) isn't
-// suggested, and the same files give the same groups.
+// suggested, and the same files give the same groups. Kept categories grow
+// (D38): with each group kept but one paper, the held-out paper rejoins it
+// and nothing else joins.
 //
 //   node scripts/test-discover.mjs
 // The text model is the trimmed one users get, fetched once from 0G Storage
@@ -157,6 +159,43 @@ check('groups inside a broad category (all papers in Research papers) are still 
 const kept = new Set(agents?.fileIds ?? [])
 const afterKeep = D.discover(files, (id) => (kept.has(id) ? ['own:agents', ...inCategory(id)] : inCategory(id)), (c) => (c === 'own:agents' ? kept.size : sizeOf(c)))
 check('a group kept as a category isn’t suggested again', afterKeep.length === found.length - 1 && !afterKeep.some((g) => g.key === agents?.key))
+
+if (process.env.SWEEP) {
+  for (const [need, floor] of [[2, 0.35], [2, 0.37], [2, 0.38], [2, 0.4], [3, 0.3], [3, 0.35]]) {
+    C.GROW.need = need
+    C.GROW.floor = floor
+    let r = 0, h = 0, w = []
+    for (const g of found) for (const m of g.fileIds) {
+      const user = { v: 1, own: [{ id: 'own:g', name: 'kept', grow: true }], pins: g.fileIds.filter((x) => x !== m).map((file) => ({ file, cat: 'own:g', in: true })), updatedAt: 0 }
+      const j = C.growJoins(files.map((f) => ({ ...f, mime: 'text/plain' })), user)
+      h++
+      if (j.get(m)?.includes('own:g')) r++
+      for (const [id, cs] of j) if (id !== m && cs.includes('own:g')) w.push(id)
+    }
+    console.log(`SWEEP need ${need} floor ${floor}: rejoined ${r}/${h}, wrong ${w.length} ${[...new Set(w)].join(' ')}`)
+  }
+  process.exit(0)
+}
+// ── kept categories grow by resemblance (D38): each group kept with one paper held out
+let rejoined = 0
+let held = 0
+const wrongJoins = []
+for (const g of found) {
+  for (const m of g.fileIds) {
+    const user = { v: 1, own: [{ id: 'own:g', name: 'kept', grow: true }], pins: g.fileIds.filter((x) => x !== m).map((file) => ({ file, cat: 'own:g', in: true })), updatedAt: 0 }
+    const joins = C.growJoins(files.map((f) => ({ ...f, mime: 'text/plain' })), user)
+    held++
+    if (joins.get(m)?.includes('own:g')) rejoined++
+    for (const [id, cs] of joins) if (id !== m && cs.includes('own:g')) wrongJoins.push(`${id}→[${g.fileIds[0]}]`)
+  }
+}
+console.log(`grow: held out one at a time, ${rejoined}/${held} rejoined; wrong joins ${wrongJoins.length} (GROW ${JSON.stringify(C.GROW)})`)
+check('a kept group grows: held-out papers rejoin it (≥ 80%)', rejoined / held >= 0.8, `${rejoined}/${held}`)
+check('…and nothing else joins (other subjects’ papers, everyday files)', wrongJoins.length === 0, wrongJoins.slice(0, 6).join(' '))
+const still = C.growJoins(files.map((f) => ({ ...f, mime: 'text/plain' })), { v: 1, own: [{ id: 'own:x', name: 'x' }], pins: found[0].fileIds.slice(1).map((file) => ({ file, cat: 'own:x', in: true })), updatedAt: 0 })
+check('a category not kept from a suggestion doesn’t grow', still.size === 0)
+const outPin = { v: 1, own: [{ id: 'own:g', name: 'kept', grow: true }], pins: [...agents.fileIds.slice(1).map((file) => ({ file, cat: 'own:g', in: true })), { file: agents.fileIds[0], cat: 'own:g', in: false }], updatedAt: 0 }
+check('a file taken out of it doesn’t come back by resemblance', !C.growJoins(files.map((f) => ({ ...f, mime: 'text/plain' })), outPin).get(agents.fileIds[0])?.includes('own:g'))
 
 console.log(failed ? `${failed} FAILED` : 'DISCOVER TEST PASSED ✓')
 process.exitCode = failed ? 1 : 0

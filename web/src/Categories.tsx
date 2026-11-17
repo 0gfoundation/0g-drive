@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { DriveState, FileMeta } from '@0gdrive/core'
 import { embedTexts } from './ai/client'
 import { groupFiles, topicPhrases, TOPICS, type Category, type Grouping, type TopicVecs } from './ai/categories'
-import { discover, nameFrom } from './ai/discover'
+import { discover, groupable, nameFrom, type Found } from './ai/discover'
 import { allFiles } from './SmartSearch'
 import { closeOnBackdrop } from './backdrop'
 import { Icon } from './icons'
@@ -86,24 +86,45 @@ export interface Suggestion {
   fileIds: string[]
 }
 
+/** Groups of files no category holds yet (types aren't about meaning: a group of PDFs is still new); not the dismissed. */
+function findGroups(data: DriveGrouping, dismissed: Set<string>): Found[] {
+  const { grouping, files } = data
+  const inCategory = (id: string) => (grouping.of.get(id) ?? []).filter((c) => !c.startsWith('type:'))
+  return discover([...files.values()].map(({ meta }) => meta), inCategory, (c) => grouping.files.get(c)?.length ?? 0).filter(
+    (g) => !dismissed.has(g.key)
+  )
+}
+
+/** After a change, the drive is looked at again this long after (a batch of uploads lands as one). */
+const RECHECK_MS = 1500
+
 /**
- * Categories found in the files themselves, on request: groups of files
- * close in meaning (ai/discover.ts) that no category holds yet, each named
- * by its most distinctive words. Nothing is stored until one is kept.
+ * Categories found in the files themselves: groups of files close in
+ * meaning (ai/discover.ts) that no category holds yet, each named by its
+ * most distinctive words. Nothing is stored until one is kept. Looked for
+ * on request, and again (quietly) when the files change (D38): groups new
+ * or grown since the user last looked are counted in `fresh`, and an open
+ * list is refreshed in place. The groups there when the drive opened count
+ * as seen.
  */
 export function useSuggestions(data: DriveGrouping | null) {
   const [list, setList] = useState<Suggestion[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fresh, setFresh] = useState(0)
+  /** groups the user has seen (or that were there when the drive opened); null until the first look */
+  const seen = useRef<Set<string> | null>(null)
+  /** groups dismissed this visit */
+  const dismissed = useRef(new Set<string>())
+  const open = useRef(false)
+  open.current = list !== null
+
   const run = async () => {
     if (!data) return
     setBusy(true)
     setError(null)
     try {
-      const { grouping, files } = data
-      // types aren't about meaning: a group of PDFs is still new
-      const inCategory = (id: string) => (grouping.of.get(id) ?? []).filter((c) => !c.startsWith('type:'))
-      const found = discover([...files.values()].map(({ meta }) => meta), inCategory, (c) => grouping.files.get(c)?.length ?? 0)
+      const found = findGroups(data, dismissed.current)
       // every group's name candidates in one call to the model
       const all = found.flatMap((g) => g.candidates)
       const vecs = all.length ? await embedTexts(all) : []
@@ -114,18 +135,57 @@ export function useSuggestions(data: DriveGrouping | null) {
           return { key: g.key, name: nameFrom(g, mine), fileIds: g.fileIds }
         })
       )
+      seen.current = new Set([...(seen.current ?? []), ...found.map((g) => g.key)])
+      setFresh(0)
     } catch (err) {
       setError(`Couldn’t look for categories: ${(err as Error).message}`)
     } finally {
       setBusy(false)
     }
   }
+
+  // the files that can be grouped, as they are now: a change here is worth another look
+  const shape = useMemo(() => {
+    if (!data?.topics) return null
+    return [...data.files.values()]
+      .filter(({ meta }) => groupable(meta))
+      .map(({ meta }) => `${meta.id}:${meta.search!.e!.slice(0, 12)}`)
+      .sort()
+      .join(',')
+  }, [data])
+  const latest = useRef(data)
+  latest.current = data
+  const runRef = useRef(run)
+  runRef.current = run
+  useEffect(() => {
+    if (shape === null) return
+    const timer = setTimeout(() => {
+      const d = latest.current
+      if (!d) return
+      const found = findGroups(d, dismissed.current)
+      if (seen.current === null) {
+        seen.current = new Set(found.map((g) => g.key)) // the drive as opened: nothing is new
+        return
+      }
+      if (open.current) return void runRef.current()
+      setFresh(found.filter((g) => !seen.current!.has(g.key)).length)
+    }, RECHECK_MS)
+    return () => clearTimeout(timer)
+  }, [shape])
+
   return {
     list,
     busy,
     error,
+    /** groups new or grown since the user last looked */
+    fresh,
     run,
-    drop: (key: string) => setList((l) => l?.filter((s) => s.key !== key) ?? null),
+    drop: (key: string) => {
+      dismissed.current.add(key)
+      setList((l) => l?.filter((s) => s.key !== key) ?? null)
+    },
+    /** a group kept: it isn't new any more */
+    kept: (key: string) => setList((l) => l?.filter((s) => s.key !== key) ?? null),
     close: () => {
       setList(null)
       setError(null)
@@ -199,7 +259,7 @@ function SuggestionsList({
                       disabled={problem !== null}
                       onClick={() => {
                         onKeep(name.trim(), s.fileIds)
-                        sug.drop(s.key)
+                        sug.kept(s.key)
                       }}
                     >
                       Keep
@@ -292,6 +352,7 @@ export function CategoriesView({
                 <button className="chip chip-new" onClick={() => void suggest.run()} disabled={suggest.busy}>
                   <Icon name="sparkles" />
                   {suggest.busy ? 'Looking…' : 'Suggest categories'}
+                  {!suggest.busy && suggest.fresh > 0 && <span className="chip-count chip-fresh">{suggest.fresh} new</span>}
                 </button>
               )}
             </div>
