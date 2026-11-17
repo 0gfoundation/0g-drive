@@ -84,11 +84,90 @@ const TYPES = {
     { name: 'dataHash', type: 'bytes32' },
     { name: 'signedAt', type: 'uint64' },
   ],
+  // asks for a hot-node ticket, which bills the signer per byte served
+  HotDownload: [
+    { name: 'dataHash', type: 'bytes32' },
+    { name: 'signedAt', type: 'uint64' },
+  ],
 }
 
 /** Statements are good for 15 minutes either side; sign again well before. */
 const RESIGN_AFTER_S = 10 * 60
 const MAX_TRIES = 6
+
+/**
+ * The relayer serves downloads free but paced: at most 2 in flight per
+ * client address (a third is refused 429) and 5 MiB/s. Every free read
+ * from this page waits for one of these slots; small reads (a root's first
+ * bytes, a listing) go before whole files, so a big download never holds
+ * up opening the drive behind it for long.
+ */
+const FREE_IN_FLIGHT = 2
+/** a read of at most this many bytes goes before larger ones */
+const SMALL_READ = 1024 * 1024
+
+class Slots {
+  private free: number
+  private waiting: { small: (() => void)[]; large: (() => void)[] } = { small: [], large: [] }
+
+  constructor(n: number) {
+    this.free = n
+  }
+
+  /** Resolves with a release once a slot is ours. */
+  async take(small: boolean): Promise<() => void> {
+    if (this.free > 0) this.free--
+    else await new Promise<void>((r) => this.waiting[small ? 'small' : 'large'].push(r))
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      const next = this.waiting.small.shift() ?? this.waiting.large.shift()
+      if (next) next()
+      else this.free++
+    }
+  }
+}
+
+const freeReads = new Slots(FREE_IN_FLIGHT)
+
+/** A free read refused for the address's reads in flight passes once one ends. */
+const freeTransient = (e: unknown) => (e instanceof RelayerError ? e.retry || e.status === 429 : e instanceof TypeError)
+
+/** A hot ticket: the URL a hot node serves the file at, billed to the signer. */
+export interface HotTicket {
+  url: string
+  providerId: string
+  fileSize: number
+  chunkSize: number
+  /** ms since the epoch */
+  expiresAt: number
+}
+
+/**
+ * A hot download that can't be made: the account's storage balance is under
+ * the hot minimum (402), no hot node is free, or the nodes tried failed it.
+ * The free path still serves the file. `pauseMs`: how long to leave hot
+ * downloads alone before trying again.
+ */
+export class HotUnavailable extends Error {
+  constructor(
+    message: string,
+    readonly pauseMs: number
+  ) {
+    super(message)
+    this.name = 'HotUnavailable'
+  }
+}
+
+/** hot nodes tried for one download before it is left to the free path */
+const HOT_PROVIDERS = 3
+/** a hot node's headers, and then each piece of its stream, come within this: else the stream is cut (and resumed) */
+const HOT_IDLE_TIMEOUT_MS = 30_000
+/** after a 402 (balance under the hot minimum), hot downloads are left alone this long */
+const HOT_PAUSE_UNFUNDED_MS = 10 * 60_000
+/** after no hot node could serve, at least this long */
+const HOT_PAUSE_BUSY_MS = 60_000
 
 const STORAGEKEY_INFO = '0gdrive/storagekey/v2'
 const VAULT_ABI = [
@@ -314,7 +393,7 @@ export class RelayerClient {
   }
 
   /** The headers carrying a signed statement; V normalized to 0/1. */
-  async sign(signer: StatementSigner, kind: 'Upload' | 'Delete', value: Record<string, unknown>) {
+  async sign(signer: StatementSigner, kind: keyof typeof TYPES, value: Record<string, unknown>) {
     const signedAt = this.now()
     const sig = await signer.signTypedData(this.domain(), { [kind]: TYPES[kind] }, { ...value, signedAt })
     const v = parseInt(sig.slice(130), 16) % 27
@@ -459,6 +538,7 @@ export class RelayerClient {
     let resumes = 0
     const etag = `"${dataHash}"`
     for (let attempt = 0; ; attempt++) {
+      const release = await freeReads.take(total >= 0 && total - got <= SMALL_READ)
       try {
         const res = await fetch(`${this.net.relayer}/v1/files/${dataHash}`, {
           headers: got ? { Range: `bytes=${got}-`, 'If-Match': etag } : {},
@@ -480,25 +560,150 @@ export class RelayerClient {
         if (got < total) throw new TypeError('download ended early')
         return { blob: new Blob(parts as BlobPart[]), resumes }
       } catch (e) {
-        const transient = e instanceof RelayerError ? e.retry : e instanceof TypeError
-        if (!transient || attempt + 1 >= MAX_TRIES) throw e
+        if (!freeTransient(e) || attempt + 1 >= MAX_TRIES) throw e
         if (got) resumes++
+        release()
         await sleep(backoff(attempt, e instanceof RelayerError ? e.retryAfterMs : 0))
+      } finally {
+        release()
       }
     }
   }
 
   /** A file's first `n` bytes (fewer when it is shorter). */
-  head(dataHash: string, n: number): Promise<Uint8Array> {
-    return this.retrying(async () => {
-      const res = await fetch(`${this.net.relayer}/v1/files/${dataHash}`, { headers: { Range: `bytes=0-${n - 1}` } })
-      this.noteDate(res)
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new RelayerError(res.status, body, Number(res.headers.get('retry-after') ?? 0) * 1000)
+  async head(dataHash: string, n: number): Promise<Uint8Array> {
+    for (let attempt = 0; ; attempt++) {
+      const release = await freeReads.take(true)
+      try {
+        const res = await fetch(`${this.net.relayer}/v1/files/${dataHash}`, { headers: { Range: `bytes=0-${n - 1}` } })
+        this.noteDate(res)
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new RelayerError(res.status, body, Number(res.headers.get('retry-after') ?? 0) * 1000)
+        }
+        return new Uint8Array(await res.arrayBuffer()).slice(0, n)
+      } catch (e) {
+        if (!freeTransient(e) || attempt + 1 >= MAX_TRIES) throw e
+        release()
+        await sleep(backoff(attempt, e instanceof RelayerError ? e.retryAfterMs : 0))
+      } finally {
+        release()
       }
-      return new Uint8Array(await res.arrayBuffer()).slice(0, n)
-    })
+    }
+  }
+
+  /**
+   * A ticket to the file on a hot node (not one of `avoid`'s providers),
+   * signed for: the signer pays for every byte the node serves on it.
+   */
+  async hotTicket(signer: StatementSigner, dataHash: string, avoid: string[] = []): Promise<HotTicket> {
+    const send = async () =>
+      this.call<{ url: string; providerId: string | number; fileSize: number; chunkSize: number; expiresAt: number }>('POST', `/v1/hot/0x${dataHash}`, {
+        headers: { ...(await this.sign(signer, 'HotDownload', { dataHash: '0x' + dataHash })).headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(avoid.length ? { avoid } : {}),
+      })
+    let t
+    try {
+      t = await this.retrying(async () => {
+        try {
+          return await send()
+        } catch (e) {
+          // expired: our clock was off, and noteDate has corrected it
+          if (e instanceof RelayerError && e.reason === 'AUTHORIZATION_EXPIRED') return send()
+          if (e instanceof RelayerError && e.reason === 'NO_HOT_NODE') throw new HotUnavailable('no hot node is free', Math.max(e.retryAfterMs, HOT_PAUSE_BUSY_MS))
+          throw e
+        }
+      })
+    } catch (e) {
+      if (e instanceof RelayerError && e.status === 402) throw new HotUnavailable(`storage balance under the hot minimum (${e.reason})`, HOT_PAUSE_UNFUNDED_MS)
+      throw e
+    }
+    const url = new URL(t.url)
+    if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error(`a hot ticket for ${url.protocol}: not https`)
+    return { url: t.url, providerId: String(t.providerId), fileSize: t.fileSize, chunkSize: t.chunkSize, expiresAt: t.expiresAt * 1000 }
+  }
+
+  /**
+   * Read a file from a hot node, paid per byte from the signer's storage
+   * balance: a ticket, then the node's stream, resumed where it was cut
+   * (the same ETag as the relayer's). A node that fails before sending
+   * anything is left for the next one in rank, up to HOT_PROVIDERS. The
+   * whole is checked against its data hash, since a hot node is run by a
+   * third party. What can't be done this way throws HotUnavailable (the
+   * free path still serves the file), or a 404 as RelayerError.
+   */
+  async hotDownload(
+    signer: StatementSigner,
+    dataHash: string,
+    opts: { onProgress?: (got: number, total: number) => void } = {}
+  ): Promise<{ blob: Blob; nodes: number }> {
+    const avoid: string[] = []
+    let ticket = await this.hotTicket(signer, dataHash)
+    const parts: Uint8Array[] = []
+    let got = 0
+    let cuts = 0
+    for (;;) {
+      const before = got
+      const abort = new AbortController()
+      let timer = setTimeout(() => abort.abort(), HOT_IDLE_TIMEOUT_MS)
+      const alive = () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => abort.abort(), HOT_IDLE_TIMEOUT_MS)
+      }
+      let refusal: RelayerError | null = null
+      try {
+        const res = await fetch(ticket.url, {
+          headers: got ? { Range: `bytes=${got}-`, 'If-Match': `"${dataHash}"` } : {},
+          signal: abort.signal,
+        })
+        alive()
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          refusal = new RelayerError(res.status, body, Number(res.headers.get('retry-after') ?? 0) * 1000)
+          throw refusal
+        }
+        const reader = res.body!.getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          alive()
+          parts.push(value)
+          got += value.length
+          opts.onProgress?.(got, ticket.fileSize)
+        }
+        clearTimeout(timer)
+        if (got < ticket.fileSize) throw new TypeError('hot download ended early')
+        break
+      } catch (e) {
+        clearTimeout(timer)
+        if (refusal?.status === 404) throw refusal
+        if (refusal && ![401, 429, 503].includes(refusal.status) && refusal.status < 500) throw new HotUnavailable(`hot node refused: ${refusal.message}`, HOT_PAUSE_BUSY_MS)
+        // a stream that brought bytes resumes at once on the same node
+        if (got > before && ++cuts <= MAX_TRIES) continue
+        // an expired ticket is renewed for the same node; anything else leaves the node
+        if (refusal?.reason !== 'TICKET_EXPIRED') {
+          avoid.push(ticket.providerId)
+          if (avoid.length >= HOT_PROVIDERS) throw new HotUnavailable(`hot nodes tried: ${avoid.length}, the last failing (${(e as Error).message})`, HOT_PAUSE_BUSY_MS)
+        }
+        const next = await this.hotTicket(signer, dataHash, avoid)
+        if (next.fileSize !== ticket.fileSize) throw new Error('hot tickets disagree on the file size')
+        ticket = next
+      }
+    }
+    const blob = new Blob(parts as BlobPart[])
+    if ((await hashBlob(blob, ticket.chunkSize)).dataHash !== dataHash) throw new HotUnavailable('a hot node served bytes that are not the file', HOT_PAUSE_BUSY_MS)
+    return { blob, nodes: avoid.length + 1 }
+  }
+
+  /**
+   * Have a hot node cache a file now (it fills the whole file on any read
+   * that misses), so a later hot read is fast: one byte, paid as one byte.
+   */
+  async warm(signer: StatementSigner, dataHash: string): Promise<void> {
+    const { url } = await this.hotTicket(signer, dataHash)
+    const res = await fetch(url, { headers: { Range: 'bytes=0-0' } })
+    await res.arrayBuffer().catch(() => undefined)
+    if (!res.ok) throw new HotUnavailable(`hot node answered ${res.status}`, HOT_PAUSE_BUSY_MS)
   }
 
   /** An account's available files, newest first. */

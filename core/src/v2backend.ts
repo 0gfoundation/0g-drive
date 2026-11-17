@@ -4,7 +4,7 @@ import { decryptDownloaded } from './storage.js'
 import { hexToBytes } from './keystore.js'
 import type { DownloadOpts, DownloadResult, EncryptionInput, FileMeta } from './types.js'
 import type { DriveBackend, FileUpload, ManifestWrite, StoredRef, UploadFilesOpts, UploadFilesResult } from './backend.js'
-import { RelayerClient, RelayerError, type ByteSource } from './v2relayer.js'
+import { HotUnavailable, RelayerClient, RelayerError, type ByteSource } from './v2relayer.js'
 
 /**
  * The drive's current listings: which stored version of each, by key. A
@@ -53,6 +53,8 @@ export interface V2BackendOpts {
   fileConcurrency?: number
   /** the account card to store with every root (v2account.ts); else the latest root's is kept */
   card?: unknown
+  /** read big files from hot nodes, paid per byte (default true; see HOT_MIN_BYTES) */
+  hot?: boolean
 }
 
 /**
@@ -71,6 +73,18 @@ const CARD_LOOKAHEAD = 8
 /** bytes encrypted at a time on reads of an EncryptedSource */
 const ENC_PIECE = 4 * 1024 * 1024
 
+/**
+ * Files at least this big are read from a hot node, paid per byte from the
+ * storage balance (0.01 0G a GiB on testnet), when the account can: a
+ * cached file comes about three times faster than the relayer's free 5 MiB/s.
+ * Smaller ones stay free: each hot read needs a ticket of its own (most of
+ * a second, and a couple a second at most), which a small file doesn't
+ * repay. Uploads this big are warmed, so the first open is fast too.
+ */
+export const HOT_MIN_BYTES = 16 * 1024 * 1024
+/** a just-stored file may not be readable by hash for a moment: warming tries again after these */
+const WARM_RETRY_MS = [3000, 10_000, 30_000]
+
 /** after storing a root, look for one stored at the same time this long after */
 const VERIFY_AFTER_MS = 1000
 /** a root read this recently is the base of a change without reading again (the check after catches a newer one) */
@@ -78,6 +92,7 @@ const FRESH_MS = 10_000
 /** roots stored again over another device's, at most */
 const MERGE_ROUNDS = 3
 
+type Progress = (got: number, total: number) => void
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const strip0x = (h: string) => h.replace(/^0x/i, '').toLowerCase()
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i])
@@ -182,6 +197,8 @@ export class V2Backend implements DriveBackend {
   /** when refresh last read the newest root */
   private refreshedAt = 0
   private card: unknown
+  /** hot reads are left alone until then (no balance for them, or no node free) */
+  private hotPausedUntil = 0
 
   constructor(
     readonly relayer: RelayerClient,
@@ -396,11 +413,28 @@ export class V2Backend implements DriveBackend {
         const base = this.newer(await this.findRoot(), this.current)
         const kept = base !== null && Object.entries(refs).every(([key, ref]) => base.root.listings[key]?.h === ref.h)
         if (kept || round > MERGE_ROUNDS) return
+        refs = await this.renewRetired(refs, base)
         ours = await this.storeRoot(base, refs, ours)
       }
     } catch (err) {
       console.warn(`[drive] could not check the change against other devices': ${(err as Error).message}`)
     }
+  }
+
+  /**
+   * Our listings, laid again over another device's root: one that root
+   * retired (its change replaced the same listing) is deleted by whoever
+   * next stores over that root, so naming it again would leave the drive
+   * pointing at nothing. It is stored again (a new hash: a new nonce).
+   */
+  private async renewRetired(refs: Record<string, ListingRef>, base: FoundRoot | null): Promise<Record<string, ListingRef>> {
+    const retired = new Set(base?.root.retired ?? [])
+    const renewed = { ...refs }
+    for (const [key, ref] of Object.entries(refs)) {
+      const text = this.texts.get(ref.h)
+      if (retired.has(ref.h) && text !== undefined) renewed[key] = await this.storeListing({ key, value: JSON.parse(text) })
+    }
+    return renewed
   }
 
   /** `after`: the root's bytes are sent once it resolves (see change). */
@@ -471,6 +505,7 @@ export class V2Backend implements DriveBackend {
             onProgress: (sent, total) => opts.onItemProgress?.(i, 'sending', total ? sent / total : 1),
           })
           this.notRoots.add(strip0x(r.dataHash))
+          if (src.size >= HOT_MIN_BYTES) void this.warm(strip0x(r.dataHash))
           results[i] = { ok: true, ref: { rootHashes: ['0x' + r.dataHash], txHashes: [] } }
           opts.onItem?.(i, 'done')
         } catch (err) {
@@ -503,7 +538,41 @@ export class V2Backend implements DriveBackend {
   fixRecords(_files: FileMeta[]): void {}
 
   download(meta: FileMeta, opts: DownloadOpts = {}): Promise<DownloadResult> {
-    return downloadV2(this.relayer, meta.rootHashes, opts)
+    const read = meta.size >= HOT_MIN_BYTES && this.hotAllowed() ? (hash: string, onProgress: Progress) => this.readHot(hash, onProgress) : undefined
+    return downloadV2(this.relayer, meta.rootHashes, opts, read)
+  }
+
+  private hotAllowed(): boolean {
+    return this.opts.hot !== false && Date.now() >= this.hotPausedUntil
+  }
+
+  private hotFailed(err: unknown) {
+    if (err instanceof HotUnavailable) this.hotPausedUntil = Math.max(this.hotPausedUntil, Date.now() + err.pauseMs)
+    console.info(`[drive] hot download not made, reading free: ${(err as Error).message}`)
+  }
+
+  /** A file from a hot node, else (for any reason but a missing file) from the relayer's free path. */
+  private async readHot(hash: string, onProgress: Progress): Promise<Blob> {
+    try {
+      return (await this.relayer.hotDownload(this.account, hash, { onProgress })).blob
+    } catch (err) {
+      if (err instanceof RelayerError && (err.status === 404 || err.status === 410)) throw err
+      this.hotFailed(err)
+      return (await this.relayer.download(hash, { onProgress })).blob
+    }
+  }
+
+  /** Have a hot node cache a just-uploaded file, in the background: a failure only means a slower first read. */
+  private async warm(hash: string): Promise<void> {
+    for (let attempt = 0; this.hotAllowed(); attempt++) {
+      try {
+        return await this.relayer.warm(this.account, hash)
+      } catch (err) {
+        const notYet = err instanceof RelayerError && err.status === 404
+        if (!notYet || attempt >= WARM_RETRY_MS.length) return this.hotFailed(err)
+        await sleep(WARM_RETRY_MS[attempt])
+      }
+    }
   }
 
   /** Delete the files' bytes: rent stops. In the background; a failure only costs rent (until sweep). */
@@ -547,11 +616,17 @@ export class V2Backend implements DriveBackend {
  * A V2 file's bytes by its data hash (a record's rootHashes, or a share
  * link's): no account or key needed to read, only to decrypt.
  */
-export async function downloadV2(relayer: RelayerClient, rootHashes: string[], opts: DownloadOpts = {}): Promise<DownloadResult> {
+export async function downloadV2(
+  relayer: RelayerClient,
+  rootHashes: string[],
+  opts: DownloadOpts = {},
+  /** how to read the stored bytes: the relayer's free path unless given */
+  read?: (hash: string, onProgress: Progress) => Promise<Blob>
+): Promise<DownloadResult> {
   if (rootHashes.length !== 1) throw new Error('not a V2 file record')
-  const { blob } = await relayer.download(strip0x(rootHashes[0]), {
-    onProgress: (got, total) => opts.onProgress?.(`Downloading ${got} of ${total} bytes`, total > 0 ? Math.round((got / total) * 100) : undefined),
-  })
+  const onProgress: Progress = (got, total) => opts.onProgress?.(`Downloading ${got} of ${total} bytes`, total > 0 ? Math.round((got / total) * 100) : undefined)
+  const hash = strip0x(rootHashes[0])
+  const blob = read ? await read(hash, onProgress) : (await relayer.download(hash, { onProgress })).blob
   const stored = new Uint8Array(await blob.arrayBuffer())
   if (!opts.decryption) {
     opts.onPlainChunk?.(stored)

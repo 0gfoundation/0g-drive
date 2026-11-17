@@ -56,7 +56,8 @@
     "test:password-only": "npm run build -w core && node scripts/test-password-only.mjs",
     "test:rename": "npm run build -w core && node scripts/test-rename.mjs",
     "test:folder-rename": "npm run build -w core && node scripts/test-folder-rename.mjs",
-    "test:move": "npm run build -w core && node scripts/test-move.mjs"
+    "test:move": "npm run build -w core && node scripts/test-move.mjs",
+    "test:hot-downloads": "node scripts/test-hot-downloads.mjs"
   },
   "engines": {
     "node": ">=20"
