@@ -16,7 +16,6 @@ import {
   V2Backend,
   RelayerClient,
   V2_TESTNET,
-  depositForUser,
   deriveStorageKey,
   signForKeys,
   signBinding,
@@ -31,6 +30,7 @@ import {
   downloadV2,
   TRASH_PATH,
 } from '../core/dist/index.js'
+import { depositSeen } from './lib/deposit.mjs'
 import { refund } from './lib/refund.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -70,7 +70,7 @@ try {
   accounts.push(account)
   const { recoveryKey, shareKey } = await signForKeys(user, user.address, true)
   const binding = await signBinding(user, user.address, account.address)
-  await depositForUser(V2_TESTNET, user, account.address, DEPOSIT)
+  await depositSeen(V2_TESTNET, user, account.address, DEPOSIT)
   const card = await makeCard({ wallet: user.address, account: account.address, binding, masterKey, recoveryKey, password: 'correct horse', shareKey: shareKey.pubKey })
   const backend = new V2Backend(new RelayerClient(V2_TESTNET), account, masterKey, { card })
   await backend.saveCard(card)
@@ -136,7 +136,7 @@ try {
   const fakeKey = crypto.getRandomValues(new Uint8Array(32))
   const fakeAccount = deriveStorageKey(fakeKey)
   accounts.push(fakeAccount)
-  await depositForUser(V2_TESTNET, user, fakeAccount.address, DEPOSIT) // e.g. the user funded someone else's account
+  await depositSeen(V2_TESTNET, user, fakeAccount.address, DEPOSIT) // e.g. the user funded someone else's account
   const fakeCard = {
     v: 1,
     wallet: user.address.toLowerCase(),

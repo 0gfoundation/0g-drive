@@ -20,7 +20,8 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { RECOVERY_SIGN_MESSAGE } from '../core/dist/recovery.js'
-import { V2_TESTNET, deriveStorageKey, depositForUser, storageBalance } from '../core/dist/v2relayer.js'
+import { V2_TESTNET, deriveStorageKey, storageBalance } from '../core/dist/v2relayer.js'
+import { depositSeen } from './lib/deposit.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const MiB = Number(process.argv[2] ?? 16)
@@ -45,7 +46,7 @@ let balance = await storageBalance(V2_TESTNET, account)
 console.log(`${at()} storage account ${account}, balance ${ethers.formatEther(balance)} 0G`)
 if (balance < ethers.parseEther('0.01')) {
   console.log(`${at()} depositing 0.05 0G from ${wallet.address}`)
-  await depositForUser(V2_TESTNET, wallet, account, ethers.parseEther('0.05'))
+  await depositSeen(V2_TESTNET, wallet, account, ethers.parseEther('0.05'))
   balance = await storageBalance(V2_TESTNET, account)
   console.log(`${at()} balance now ${ethers.formatEther(balance)} 0G`)
 }

@@ -14,10 +14,10 @@ import {
   V2Backend,
   RelayerClient,
   V2_TESTNET,
-  depositForUser,
   storageBalance,
   TRASH_PATH,
 } from '../core/dist/index.js'
+import { depositSeen } from './lib/deposit.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const privateKey =
@@ -44,7 +44,7 @@ const relayer = new RelayerClient(V2_TESTNET)
 console.log(`Storage account: ${account.address}`)
 
 const DEPOSIT = ethers.parseEther(process.env.V2_DEPOSIT ?? '0.05')
-await depositForUser(V2_TESTNET, funder, account.address, DEPOSIT)
+await depositSeen(V2_TESTNET, funder, account.address, DEPOSIT)
 console.log(`${stamp()} deposited ${ethers.formatEther(DEPOSIT)} 0G`)
 
 const masterKey = crypto.getRandomValues(new Uint8Array(32))
