@@ -8,6 +8,8 @@ export interface ToastMsg {
   error?: boolean
   /** a button on it, e.g. Undo; the toast closes when it's pressed */
   action?: { label: string; run: () => void }
+  /** how long it shows, if not the usual */
+  ms?: number
 }
 
 const SHOW_MS = 6000
@@ -25,7 +27,7 @@ export function Toast({ toast, onClose, onDetails }: { toast: (ToastMsg & { id: 
   const [hover, setHover] = useState(false)
   useEffect(() => {
     if (!toast || hover) return
-    const timer = setTimeout(onClose, toast.error ? ERROR_MS : SHOW_MS)
+    const timer = setTimeout(onClose, toast.ms ?? (toast.error ? ERROR_MS : SHOW_MS))
     return () => clearTimeout(timer)
   }, [toast, hover, onClose])
   return (

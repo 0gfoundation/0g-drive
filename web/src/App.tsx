@@ -70,6 +70,7 @@ import {
   DepositError,
 } from './v2drive'
 import { closeOnBackdrop } from './backdrop'
+import { saveBytes, saveFile, fileOf, type Saved } from './saveFile'
 import { askConfirm, askText } from './AskDialog'
 import { Icon, type IconName } from './icons'
 import { useTheme } from './theme'
@@ -221,20 +222,6 @@ function subFolders(drive: DriveState, path: string): string[] {
   return drive.paths
     .filter((f) => f.startsWith(prefix) && f.slice(prefix.length).indexOf('/') === -1)
     .sort()
-}
-
-async function saveBytes(
-  data: Uint8Array,
-  name: string,
-  mime: string
-): Promise<void> {
-  const blob = new Blob([data as unknown as BlobPart], { type: mime })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  URL.revokeObjectURL(url)
 }
 
 /**
@@ -527,6 +514,8 @@ function ShareView({
   const [busy, setBusy] = useState<string | null>(null)
   const [keyInput, setKeyInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  /** downloaded, waiting for a tap to save (Chrome on iPhone's share sheet) */
+  const [ready, setReady] = useState<File | null>(null)
   const p = payload as SharePayload & EncryptedSharePayload
   /** opened with a wallet signature (derived sharing key) vs. a pasted raw key (legacy links) */
   const viaWallet = mode === 'encrypted' && p.d === 1
@@ -572,8 +561,9 @@ function ShareView({
         onProgress: (msg) => log(`${p.n}: ${msg}`),
       })
       if (!res.decrypted) throw new Error('decryption failed')
-      await saveBytes(res.data, p.n, p.m)
-      log(`shared file "${p.n}" downloaded.`)
+      const saved = await saveBytes(res.data, p.n, p.m)
+      if (saved === 'needs-tap') setReady(fileOf(res.data, p.n, p.m))
+      else log(`shared file "${p.n}" downloaded.`)
       setBusy(null)
     } catch (err) {
       setError((err as Error).message)
@@ -616,13 +606,22 @@ function ShareView({
             </div>
           )}
           {error && <p className="error-text"><Icon name="alert" />{error}</p>}
-          <button
-            className="btn primary"
-            disabled={busy !== null || (mode === 'encrypted' && !viaWallet && !/^0x[0-9a-fA-F]{64}$/.test(keyInput.trim()))}
-            onClick={() => void save()}
-          >
-            {busy ?? (viaWallet ? 'Unlock with wallet & download' : 'Download file')}
-          </button>
+          {ready ? (
+            <button
+              className="btn primary"
+              onClick={() => void saveFile(ready).then((saved) => saved === 'shared' && log(`shared file "${p.n}" downloaded.`))}
+            >
+              <Icon name="download" /> Save {p.n}
+            </button>
+          ) : (
+            <button
+              className="btn primary"
+              disabled={busy !== null || (mode === 'encrypted' && !viaWallet && !/^0x[0-9a-fA-F]{64}$/.test(keyInput.trim()))}
+              onClick={() => void save()}
+            >
+              {busy ?? (viaWallet ? 'Unlock with wallet & download' : 'Download file')}
+            </button>
+          )}
           <p className="muted">
             Files are fetched from 0G Storage and decrypted in your browser.
             {mode === 'encrypted' && ' This share is key-wrapped — only the recipient can decrypt.'}
@@ -1603,6 +1602,20 @@ export default function App() {
     [fileKeyFor, readFile]
   )
 
+  /** After a save: on Chrome on iPhone, past the tap that asked for it, a Save button opens the share sheet. */
+  const saved = useCallback(
+    (result: Saved, data: Uint8Array, meta: FileMeta) => {
+      if (result === 'needs-tap') {
+        showToast({
+          text: `${meta.name} is ready`,
+          action: { label: 'Save', run: () => void saveFile(fileOf(data, meta.name, meta.mime)) },
+          ms: 60_000,
+        })
+      } else log(result === 'cancelled' ? `${meta.name}: not saved.` : `${meta.name} downloaded.`)
+    },
+    [log, showToast]
+  )
+
   const download = useCallback(
     async (meta: FileMeta) => {
       if (!wallet) return
@@ -1639,8 +1652,7 @@ export default function App() {
           if (meta.encryption !== 'none' && !decrypted) {
             log(`${meta.name}: decryption failed (wrong key?) — saved ciphertext.`)
           }
-          await saveBytes(data, meta.name, meta.mime)
-          log(`${meta.name} downloaded.`)
+          saved(await saveBytes(data, meta.name, meta.mime), data, meta)
         }
       } catch (err) {
         log(`${meta.name} download failed: ${(err as Error).message}`)
@@ -1648,7 +1660,7 @@ export default function App() {
         setBusy(null)
       }
     },
-    [wallet, fileKeyFor, log, readFile]
+    [wallet, fileKeyFor, log, readFile, saved]
   )
 
   // ─── Sharing ────────────────────────────────────────────────────────
@@ -3246,8 +3258,8 @@ export default function App() {
           meta={previewFor}
           load={loadBytes}
           onDownload={(data) => {
-            void saveBytes(data, previewFor.name, previewFor.mime)
-            log(`${previewFor.name} downloaded.`)
+            const meta = previewFor
+            void saveBytes(data, meta.name, meta.mime).then((result) => saved(result, data, meta))
           }}
           onClose={() => setPreviewFor(null)}
         />
