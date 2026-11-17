@@ -85,7 +85,7 @@ import { FileThumb, PreviewModal, canPreview, makeThumbnail } from './Preview'
 import { setThumbSaving } from './thumbStore'
 import { AssistantPanel, highlight, isNarrow, type DriveStatus } from './Assistant'
 import { SearchBox, SearchResults, SuggestionsPanel, useSmartDrive } from './SmartSearch'
-import { CategoriesView, CategorizeDialog, useCategories } from './Categories'
+import { CategoriesView, CategorizeDialog, useCategories, useSuggestions } from './Categories'
 import { addOwn, pin, removeOwn, renameOwn, sectionsOf, TOPICS, type Category } from './ai/categories'
 import { openPendingSearch, pendingSearch } from './searchPending'
 import { describeModelStatus, entryForRename, getModelStatus, modelErrorReason, indexFile, isPhone, isPhoto, modelEta, modelsLoading, smartSearchEnabled, subscribeModelStatus } from './ai/client'
@@ -2217,6 +2217,7 @@ export default function App() {
     paused: busy !== null || uploading || previewFor !== null,
   })
   const cats = useCategories(drive, smart.enabled, !smart.model.loading && !smart.model.error)
+  const suggestions = useSuggestions(cats)
 
   // ─── Categories (D35): what's made by hand, stored like any change ───
 
@@ -3329,6 +3330,9 @@ export default function App() {
             }
             canEdit={!readOnly}
             onNew={() => void newCategory()}
+            suggest={cats.topics ? suggestions : undefined}
+            nameProblem={(n) => ownNameProblem(n)}
+            onKeep={(name, ids) => createCategory(name, ids)}
             onRename={(c) => void renameCategory(c)}
             onDelete={(c) => void deleteCategory(c)}
             onTakeOut={takeOutOfCategory}
