@@ -61,6 +61,8 @@
     "test:ios-download": "npm run build -w core && node scripts/test-ios-download.mjs",
     "test:categories": "node scripts/test-categories.mjs",
     "test:discover": "node scripts/test-discover.mjs",
+    "test:subject": "node scripts/test-subject.mjs",
+    "test:reindex": "npm run build -w core && node scripts/test-reindex.mjs",
     "test:categories-ui": "npm run build -w core && node scripts/test-categories-ui.mjs"
   },
   "engines": {

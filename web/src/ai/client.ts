@@ -7,6 +7,7 @@ import type { AiMessage, AiRequest, PageReply } from './ai.worker'
 import { TEXT_MODEL_ON_0G, type FileOn0g } from './modelOn0g'
 import type { QueryVectors } from './engine'
 import { loadPdfjs } from '../pdfjs'
+import { pdfTitle, type PdfItem } from './subject'
 
 export type { QueryVectors }
 
@@ -229,35 +230,38 @@ export function isPhoto(mime: string): boolean {
   return mime.startsWith('image/') && mime !== 'image/svg+xml'
 }
 
-async function pdfText(blob: Blob): Promise<string | undefined> {
+async function pdfText(blob: Blob): Promise<{ text?: string; title?: string }> {
   const pdfjs = await loadPdfjs()
   const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) })
   const doc = await task.promise
   try {
     const parts: string[] = []
+    let title: string | undefined
     for (let p = 1; p <= Math.min(PDF_PAGES, doc.numPages); p++) {
       const page = await doc.getPage(p)
       const content = await page.getTextContent()
-      parts.push(content.items.map((i) => ('str' in i ? i.str : '')).join(' '))
+      const items = content.items.filter((i): i is typeof i & PdfItem => 'str' in i)
+      if (p === 1) title = pdfTitle(items)
+      parts.push(items.map((i) => i.str).join(' '))
     }
     const text = parts.join('\n').replace(/\s+/g, ' ').trim()
-    return text || undefined
+    return { text: text || undefined, title }
   } finally {
     void task.destroy()
   }
 }
 
-async function extractText(blob: Blob, name: string, mime: string): Promise<string | undefined> {
+async function extractText(blob: Blob, name: string, mime: string): Promise<{ text?: string; title?: string }> {
   if (isTextLike(name, mime)) {
     const head = await blob.slice(0, TEXT_READ_BYTES).text()
-    return head.trim() || undefined
+    return { text: head.trim() || undefined }
   }
   if (isPdf(name, mime) && blob.size <= PDF_MAX_BYTES) {
     const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer())
-    if (String.fromCharCode(...head) !== '%PDF-') return undefined
+    if (String.fromCharCode(...head) !== '%PDF-') return {}
     return pdfText(blob)
   }
-  return undefined
+  return {}
 }
 
 function dataUrlToBlob(url: string): Blob {
@@ -296,8 +300,8 @@ export async function indexFile(
       console.warn('photo indexing failed for', name, '— indexing its name only', err)
       return await call<SearchEntry>({ op: 'indexText', name, text: undefined })
     }
-    const text = await extractText(blob, name, mime).catch(() => undefined)
-    return await call<SearchEntry>({ op: 'indexText', name, text })
+    const { text, title } = await extractText(blob, name, mime).catch(() => ({ text: undefined, title: undefined }))
+    return await call<SearchEntry>({ op: 'indexText', name, text, title })
   } catch (err) {
     console.warn('indexing failed for', name, err)
     return undefined

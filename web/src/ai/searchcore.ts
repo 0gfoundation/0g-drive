@@ -6,7 +6,11 @@ import type { SearchEntry } from '@0gdrive/core'
 
 export type { SearchEntry }
 
-export const SEARCH_ENTRY_VERSION = 1
+/** 2: embeddings made from what a file is about (subject.ts, D41); 1: from its opening as read */
+export const SEARCH_ENTRY_VERSION = 2
+
+/** An entry made the old way from a file's text (v1, D41): indexed again, from the file. Photos and names alone are the same either way. */
+export const outdatedSearch = (e: SearchEntry): boolean => (e.v ?? 1) < SEARCH_ENTRY_VERSION && !!e.t && !e.c
 /** Characters of extracted text kept in the (encrypted) manifest. */
 export const EXCERPT_CHARS = 280
 /** Characters of extracted text fed to the text embedder (it reads ≤128 tokens). */
