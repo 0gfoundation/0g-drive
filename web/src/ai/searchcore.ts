@@ -11,9 +11,19 @@ export const SEARCH_ENTRY_VERSION = 2
 
 /** An entry made the old way from a file's text (v1, D41): indexed again, from the file. Photos and names alone are the same either way. */
 export const outdatedSearch = (e: SearchEntry): boolean => (e.v ?? 1) < SEARCH_ENTRY_VERSION && !!e.t && !e.c
+/**
+ * Two files' text vectors made the old way (v1) are more alike than made
+ * from what the files are about, by about this: the authors, notices and
+ * "Abstract:" they share (D41: groups link at 0.35 on v1, 0.33 on v2). Taken
+ * off their likeness, half for each v1 file, so one bar serves a drive
+ * whose entries aren't all indexed again yet (D42).
+ */
+export const V1_LIKENESS = 0.02
+/** What a file's entry takes off its likeness to another file (see V1_LIKENESS). */
+export const likenessShift = (e: SearchEntry): number => (outdatedSearch(e) ? V1_LIKENESS / 2 : 0)
 /** Characters of extracted text kept in the (encrypted) manifest. */
 export const EXCERPT_CHARS = 280
-/** Characters of extracted text fed to the text embedder (it reads ≤128 tokens). */
+/** Characters of extracted text fed to the text embedder: ~128 tokens, what it was trained on (it takes 512 at most). */
 export const EMBED_TEXT_CHARS = 600
 
 // ─── int8 vectors ─────────────────────────────────────────────────────

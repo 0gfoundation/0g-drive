@@ -138,6 +138,18 @@ try {
   const s1 = await waitStatus(/1 indexed on this device/)
   check('the old entry is indexed again on this device, no wallet prompt', /1 indexed on this device/.test(s1) && txs === before.txs && signs === before.signs, JSON.stringify(s1))
 
+  // categories use it before it's saved (D42): its old entry gave it no topic (a blank vector), the new one does
+  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
+  const topics = await page
+    .waitForFunction(() => {
+      const g = [...document.querySelectorAll('.categories .cat-group')].find((x) => x.querySelector('.cat-group-title')?.textContent === 'Topics')
+      const names = g ? [...g.querySelectorAll('.chip:not(.chip-new) .chip-name')].map((c) => c.textContent) : []
+      return names.length ? names : null
+    }, null, { timeout: 30_000, polling: 500 })
+    .then((h) => h.jsonValue())
+    .catch(() => [])
+  check('…and categories regroup with it before it’s saved: it has a topic now', topics.length > 0 && /indexed on this device/.test((await status()) ?? ''), JSON.stringify(topics))
+
   await page.locator('.sidebar .search-index button', { hasText: 'Save' }).click()
   const s2 = await waitStatus(/^(?![\s\S]*indexed on this device)/, 5 * 60_000)
   const e = (await store().loadDrive()).folders.get('').files.find((f) => f.name === NAME).search

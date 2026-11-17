@@ -301,6 +301,14 @@ const PEOPLE_IN_NAMES = /\b(ming|zeng|xiang|li|wei|chen|hao|wu|yu|zhang|john|smi
   console.log(`  same people, 3 subjects × 3 papers — v1 (opening): ${JSON.stringify(before)}; v2 (title + abstract): ${JSON.stringify(after)}`)
   check('papers by the same people on different subjects are grouped by subject (v2), each group one subject',
     after.groups === 3 && after.grouped === 9 && after.mixed.length === 0, JSON.stringify({ before, after }))
+
+  // a drive not indexed again yet (D42): v1 entries are held to the bar they were tuned at (0.35), not v2's
+  const keys = (gs) => JSON.stringify(gs.map((g) => g.key).sort())
+  const link = D.DISCOVER.link
+  D.DISCOVER.link = link + 0.02
+  const asTuned = D.discover(files1.map((f) => ({ ...f, search: { ...f.search, v: 2 } })), () => [], () => 0)
+  D.DISCOVER.link = link
+  check('v1 entries group as at their own bar (0.35), not looser', keys(D.discover(files1, () => [], () => 0)) === keys(asTuned))
 }
 
 console.log(failed ? `${failed} FAILED` : 'DISCOVER TEST PASSED ✓')

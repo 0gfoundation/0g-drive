@@ -210,7 +210,7 @@ const TEXT_EXTS = new Set([
   'ts', 'tsx', 'js', 'jsx', 'mjs', 'py', 'rs', 'go', 'c', 'h', 'cpp', 'java',
   'sh', 'css', 'html', 'sql', 'sol', 'tex', 'rtf',
 ])
-/** Bytes of a text file read for indexing — the model reads ≤128 tokens. */
+/** Bytes of a text file read for indexing (what it is about is picked from them: subject.ts). */
 const TEXT_READ_BYTES = 16 * 1024
 const PDF_MAX_BYTES = 50 * 1024 * 1024
 const PDF_PAGES = 2

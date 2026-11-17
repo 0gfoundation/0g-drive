@@ -6,7 +6,7 @@
 // stored. No DOM, no model code: the vectors come in from the caller.
 
 import type { DriveCategories, SearchEntry } from '@0gdrive/core'
-import { cosineQ, dequantize } from './searchcore'
+import { cosineQ, dequantize, likenessShift } from './searchcore'
 
 export type CategoryKind = 'type' | 'topic' | 'own'
 
@@ -166,7 +166,7 @@ export const GROW = {
   k: 3,
   /** of them, at least this many put in the category by hand */
   need: 2,
-  /** and its average likeness to those files at least this (0.37 on v1 embeddings; v2, D41: 0.35) */
+  /** and its average likeness to those files at least this (0.37 on v1 embeddings; v2, D41: 0.35; v1 files held to 0.37 by likenessShift, D42) */
   floor: 0.35,
   /** the files compared at most (newest first) */
   maxFiles: 800,
@@ -212,9 +212,10 @@ export function growJoins(files: CatFile[], user: DriveCategories | null | undef
     .sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0))
     .slice(0, GROW.maxFiles)
   const vecs = pool.map((f) => unitOf(f.search!.e!))
+  const shift = pool.map((f) => likenessShift(f.search!))
   for (let i = 0; i < pool.length; i++) {
     const id = pool[i].id
-    const sims = vecs.map((v, j) => (j === i ? -Infinity : dot(vecs[i], v)))
+    const sims = vecs.map((v, j) => (j === i ? -Infinity : dot(vecs[i], v) - shift[i] - shift[j]))
     const nearest = sims
       .map((s, j) => ({ s, j }))
       .sort((a, b) => b.s - a.s)
