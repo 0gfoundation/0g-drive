@@ -11,6 +11,7 @@ import { embedTexts } from './ai/client'
 import { groupFiles, topicPhrases, TOPICS, type Category, type Grouping, type TopicVecs } from './ai/categories'
 import { discover, groupable, nameFrom, PEOPLE, type Found } from './ai/discover'
 import { allFiles } from './SmartSearch'
+import { subscribePendingSearch } from './searchPending'
 import { closeOnBackdrop } from './backdrop'
 import { Icon } from './icons'
 
@@ -22,6 +23,8 @@ export interface DriveGrouping {
   topics: boolean
 }
 
+const PENDING_REGROUP_MS = 2000
+
 /**
  * The drive grouped: types always; topics and own categories by their
  * names once the text model is ready (smart search on); pins always.
@@ -32,6 +35,22 @@ export function useCategories(drive: DriveState | null, smartOn: boolean, modelR
   // (the status reads "loading" again while the photo models load)
   const canEmbed = smartOn && modelReady
   const ready = smartOn
+  // entries indexed on this device count before they're saved (allFiles): regroup as they come,
+  // at most every PENDING_REGROUP_MS while a batch is indexed (growth compares every file pair) (D42)
+  const [pendingTick, setPendingTick] = useState(0)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = subscribePendingSearch(() => {
+      timer ??= setTimeout(() => {
+        timer = undefined
+        setPendingTick((t) => t + 1)
+      }, PENDING_REGROUP_MS)
+    })
+    return () => {
+      off()
+      clearTimeout(timer)
+    }
+  }, [])
   useEffect(() => {
     if (!canEmbed || topicVecs) return
     let alive = true
@@ -75,7 +94,7 @@ export function useCategories(drive: DriveState | null, smartOn: boolean, modelR
     const grouping = groupFiles(metas, drive.categories, ready ? topicVecs : null, ready ? own : null)
     return { grouping, files, topics: topicVecs !== null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drive, ready, topicVecs, namesTick])
+  }, [drive, ready, topicVecs, namesTick, pendingTick])
 }
 
 // ─── Suggested categories (D37) ───────────────────────────────────────

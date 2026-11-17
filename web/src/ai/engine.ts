@@ -31,7 +31,8 @@ import { FULL_TEXT_MODEL, SMALL_TEXT_MODEL } from './modelOn0g'
 // Chosen over multilingual-e5-small/-base after scripts/test-search.mjs:
 // same size as e5-small, but trained to align languages, so English↔Chinese
 // queries reach documents in the other language (10/10 vs 6/10 probes).
-// Reads at most 128 tokens — the file name and the document's opening.
+// Trained on (and best at) up to 128 tokens: given the file name and ~600
+// characters of what the document is about (it takes 512 at most).
 // Trimmed to English + Chinese and served from 0G Storage (modelOn0g.ts);
 // the full model from Hugging Face if that fails.
 export const TEXT_MODEL = SMALL_TEXT_MODEL

@@ -8,7 +8,7 @@
 // caller. Nothing here is stored.
 
 import type { SearchEntry } from '@0gdrive/core'
-import { dequantize } from './searchcore'
+import { dequantize, likenessShift } from './searchcore'
 import { cleanText } from './subject'
 
 export { cleanText }
@@ -19,7 +19,8 @@ export const DISCOVER = {
    * groups merge while their files are, on average, at least this similar
    * (0.35 for embeddings of openings as read, v1; 0.33 for embeddings of
    * what files are about, v2 (D41): less in common between papers now that
-   * "Abstract:" and the authors are out)
+   * "Abstract:" and the authors are out); a file still v1 is held to 0.35
+   * by likenessShift (D42)
    */
   link: 0.33,
   /** a group needs this many files */
@@ -105,9 +106,10 @@ export function discover(all: DiscoverFile[], inCategory: (id: string) => string
   const n = files.length
   if (n < DISCOVER.minFiles) return []
   const vecs = files.map((f) => unit(dequantize(f.search!.e!)))
+  const shift = files.map((f) => likenessShift(f.search!))
 
   // average linkage, by Lance–Williams: merging A and B, s(A∪B, C) = (|A| s(A,C) + |B| s(B,C)) / (|A| + |B|)
-  const sim: Float32Array[] = vecs.map((a) => Float32Array.from(vecs, (b) => dot(a, b)))
+  const sim: Float32Array[] = vecs.map((a, i) => Float32Array.from(vecs, (b, j) => dot(a, b) - shift[i] - shift[j]))
   const members: (number[] | null)[] = files.map((_, i) => [i])
   for (;;) {
     let best = -Infinity
