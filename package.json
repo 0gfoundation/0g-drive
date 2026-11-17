@@ -60,6 +60,7 @@
     "test:hot-downloads": "node scripts/test-hot-downloads.mjs",
     "test:ios-download": "npm run build -w core && node scripts/test-ios-download.mjs",
     "test:categories": "node scripts/test-categories.mjs",
+    "test:discover": "node scripts/test-discover.mjs",
     "test:categories-ui": "npm run build -w core && node scripts/test-categories-ui.mjs"
   },
   "engines": {

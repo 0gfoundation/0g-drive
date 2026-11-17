@@ -8,7 +8,9 @@
 // category), shown at once and stored in the drive; a file taken out of a
 // category, a category renamed and deleted, all with no wallet prompt; a
 // second device (a 390 px phone with touch) sees the user's category, with
-// chips that fit and scroll sideways; a folder's "Group by category" puts
+// chips that fit and scroll sideways; Suggest categories finds the papers on
+// LLM agents as a group (D37), named for agents: renamed and kept, it's a
+// category of the user's with them in it, stored, and isn't suggested again; a folder's "Group by category" puts
 // its files in sections (list and grid), each file once, kept after a
 // reload.
 //
@@ -123,7 +125,14 @@ const FILES = {
   'trip-notes.txt': 'Itinerary: fly TAP to Lisbon on May 3. Hotel in Alfama for five nights. Day trip to Sintra and Cascais. Return flight May 8.',
   'consensus-whitepaper.txt': 'This whitepaper describes a Byzantine fault tolerant consensus protocol for a modular blockchain. We analyze safety and liveness and report throughput on a 100-node testnet.',
   'budget.xlsx': 'not really a spreadsheet',
+  // papers: the LLM agents ones are a group Suggest categories finds
+  'agent-memory.txt': 'Memory in LLM Agents: A Survey. Abstract: We survey how language model agents store and retrieve memory, from long context to retrieval-augmented memory and episodic stores, and outline open problems.',
+  'agent-tools.txt': 'Teaching Language Models to Use Tools. Abstract: We train a language model agent to decide when to call external tools such as search and calculators, improving accuracy on agent tasks.',
+  'agent-planning.txt': 'Reasoning and Acting with Language Models. Abstract: We interleave reasoning traces with actions so an LLM agent can plan, act in an environment and revise its plan on interactive tasks.',
+  'dag-consensus.txt': 'DAG-Based Consensus for High-Throughput Blockchains. Abstract: We separate data dissemination from ordering in a BFT consensus protocol and reach 150k transactions per second on validators worldwide.',
+  'storage-proofs.txt': 'Proofs of Storage over Erasure-Coded Data. Abstract: Decentralized storage networks on a blockchain must verify that providers keep the data they are paid for; we design proofs of replication over erasure-coded sectors.',
 }
+const AGENTS = ['agent-memory.txt', 'agent-planning.txt', 'agent-tools.txt']
 const names = Object.keys(FILES)
 const row = (p, name) => p.locator('table tbody tr', { hasText: name }).first()
 const settled = (p) => p.waitForFunction(() => !document.querySelector('.progress-line.on'), null, { timeout: 3 * 60_000, polling: 200 })
@@ -158,9 +167,20 @@ try {
   const topics = await chips(page, 'Topics')
   const types = await chips(page, 'Types')
   // budget.xlsx has no text read (not a real spreadsheet): its name puts it in Finance
-  check('Categories: the files by topic — Finance (the invoice, budget.xlsx), Contracts & legal, Recipes, Travel, Research papers',
-    ['Finance 2', 'Contracts & legal 1', 'Recipes 1', 'Travel 1', 'Research papers 1'].every((c) => topics.includes(c)), JSON.stringify(topics))
-  check('…and by type: Documents 5, Spreadsheets 1', types.includes('Documents 5') && types.includes('Spreadsheets 1'), JSON.stringify(types))
+  // the files known for sure, by name (a short paper's abstract may also land in a topic: see D35's limits)
+  const inTopic = async (topic) => {
+    await chip(page, topic).click()
+    const got = await listed(page)
+    await chip(page, topic).click()
+    return got
+  }
+  const want = { Finance: ['budget.xlsx', 'invoice-031.txt'], 'Contracts & legal': ['lease.txt'], Recipes: ['carbonara.md'], Travel: ['trip-notes.txt'], 'Research papers': ['consensus-whitepaper.txt'] }
+  const gotTopics = {}
+  for (const topic of Object.keys(want)) gotTopics[topic] = await inTopic(topic)
+  check('Categories: the files by topic — the invoice and budget.xlsx in Finance, the lease in Contracts & legal, the recipe, the trip, the whitepaper in Research papers',
+    Object.entries(want).every(([topic, files]) => files.every((f) => gotTopics[topic].includes(f))) && JSON.stringify(gotTopics.Finance) === JSON.stringify(want.Finance),
+    JSON.stringify(gotTopics))
+  check('…and by type: Documents 10, Spreadsheets 1', types.includes('Documents 10') && types.includes('Spreadsheets 1'), JSON.stringify(types))
   await chip(page, 'Finance').click()
   const fin = await listed(page)
   const folderLink = await page.locator('.cat-files .result-folder').first().textContent()
@@ -172,22 +192,22 @@ try {
   await row(page, 'lease.txt').locator('input[type=checkbox]').check()
   await row(page, 'consensus-whitepaper.txt').locator('input[type=checkbox]').check()
   await page.getByRole('button', { name: 'Add to category' }).click()
-  await page.locator('.categorize-modal input').fill('Blockchain')
+  await page.locator('.categorize-modal input').fill('Shortlist')
   let t = Date.now()
   await page.locator('.categorize-modal').getByRole('button', { name: 'Create & add' }).click()
   const added = await toast(page)
   await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
-  await chip(page, 'Blockchain').waitFor({ timeout: 2000 })
+  await chip(page, 'Shortlist').waitFor({ timeout: 2000 })
   const shownMs = Date.now() - t
   const own = await chips(page, 'Your categories')
-  check('Add to category → a new category: “Added to Blockchain”, its chip shown at once with both files', added === 'Added to Blockchain' && own.includes('Blockchain 2') && shownMs < 2000, `${shownMs} ms, ${JSON.stringify({ added, own })}`)
+  check('Add to category → a new category: “Added to Shortlist”, its chip shown at once with both files', added === 'Added to Shortlist' && own.includes('Shortlist 2') && shownMs < 2000, `${shownMs} ms, ${JSON.stringify({ added, own })}`)
   await settled(page)
   let s = await stored()
-  check('…stored in the drive: the category and both files put in it', s?.own.length === 1 && s.own[0].name === 'Blockchain' && s.pins.filter((p) => p.in).length === 2, JSON.stringify(s))
+  check('…stored in the drive: the category and both files put in it', s?.own.length === 1 && s.own[0].name === 'Shortlist' && s.pins.filter((p) => p.in).length === 2, JSON.stringify(s))
 
   // ── taken out by hand (a category made from the dialog is the one shown)
-  if ((await chip(page, 'Blockchain').getAttribute('aria-pressed')) !== 'true') await chip(page, 'Blockchain').click()
-  await page.locator('.cat-files .result', { hasText: 'lease.txt' }).getByRole('button', { name: 'Take out of Blockchain' }).click()
+  if ((await chip(page, 'Shortlist').getAttribute('aria-pressed')) !== 'true') await chip(page, 'Shortlist').click()
+  await page.locator('.cat-files .result', { hasText: 'lease.txt' }).getByRole('button', { name: 'Take out of Shortlist' }).click()
   await page.waitForFunction(() => document.querySelectorAll('.cat-files .result').length === 1, null, { timeout: 2000 })
   check('a file taken out leaves the list at once', JSON.stringify(await listed(page)) === JSON.stringify(['consensus-whitepaper.txt']))
   await chip(page, 'Finance').click()
@@ -197,7 +217,38 @@ try {
   await settled(page)
   s = await stored()
   const out = s?.pins.filter((p) => !p.in).map((p) => p.cat).sort()
-  check('…stored: taken out of Blockchain and Finance', JSON.stringify(out) === JSON.stringify([s.own[0].id, 'topic:finance'].sort()), JSON.stringify(s?.pins))
+  check('…stored: taken out of Shortlist and Finance', JSON.stringify(out) === JSON.stringify([s.own[0].id, 'topic:finance'].sort()), JSON.stringify(s?.pins))
+
+  // ── Suggest categories: the agents papers, named for agents; renamed and kept
+  await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
+  await page.locator('.cat-suggest').waitFor({ timeout: 60_000 })
+  await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })
+  const cards = await page.$$eval('.cat-suggest-card', (cs) => cs.map((c) => ({ name: c.querySelector('input').value, files: c.querySelector('.cat-suggest-files').textContent })))
+  const agentsCard = cards.find((c) => AGENTS.every((n) => c.files.includes(n)))
+  check('Suggest categories: the LLM agents papers are a suggested group, named for agents',
+    !!agentsCard && /agent/i.test(agentsCard.name) && !/invoice|lease|carbonara|trip/.test(agentsCard.files), JSON.stringify(cards))
+  const card = page.locator('.cat-suggest-card', { hasText: 'agent-memory.txt' })
+  await card.locator('input').fill('AI agents')
+  const keptBefore = { ...prompts }
+  t = Date.now()
+  await card.getByRole('button', { name: 'Keep' }).click()
+  await chip(page, 'AI agents').waitFor({ timeout: 2000 })
+  const keptMs = Date.now() - t
+  const keptList = await listed(page)
+  check('Keep: a category of the user’s, shown at once with the 3 papers, the card gone',
+    JSON.stringify(keptList) === JSON.stringify(AGENTS) && keptMs < 2000 && (await page.locator('.cat-suggest-card', { hasText: 'agent-memory.txt' }).count()) === 0,
+    `${keptMs} ms, ${JSON.stringify(keptList)}`)
+  await settled(page)
+  s = await stored()
+  const kept = s?.own.find((o) => o.name === 'AI agents')
+  check('…stored: the category and its 3 files put in it, no wallet prompt',
+    !!kept && s.pins.filter((p) => p.cat === kept.id && p.in).length === 3 && prompts.tx === keptBefore.tx && prompts.sign === keptBefore.sign, JSON.stringify(s))
+  await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
+  await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })
+  await page.waitForTimeout(300)
+  const again = await page.$$eval('.cat-suggest-card', (cs) => cs.map((c) => c.querySelector('.cat-suggest-files').textContent))
+  check('…and isn’t suggested again', !again.some((f) => AGENTS.every((n) => f.includes(n))), JSON.stringify(again))
+  await page.getByRole('button', { name: 'Close suggestions' }).click()
 
   // ── a second device, a 390 px phone: the user's category is there
   const phone = await walletContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
@@ -211,7 +262,7 @@ try {
   await pp.locator('.nav-toggle').waitFor({ timeout: 5 * 60_000 })
   await pp.locator('.nav-toggle').tap()
   await pp.locator('.sidebar .nav-item', { hasText: 'Categories' }).tap()
-  await chip(pp, 'Blockchain').waitFor({ timeout: 60_000 })
+  await chip(pp, 'Shortlist').waitFor({ timeout: 60_000 })
   const fit = await pp.evaluate(() => {
     const rows = [...document.querySelectorAll('.categories .chips')].map((c) => ({ w: c.clientWidth, sw: c.scrollWidth, wrap: getComputedStyle(c).flexWrap }))
     const hs = [...document.querySelectorAll('.categories .chip')].map((c) => Math.round(c.getBoundingClientRect().height))
@@ -240,18 +291,20 @@ try {
   // ── rename and delete the user's category
   await page.reload()
   await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click({ timeout: 5 * 60_000 })
-  await chip(page, 'Blockchain').click()
-  nextAnswer = 'Crypto papers'
+  await chip(page, 'Shortlist').click()
+  nextAnswer = 'Picked'
   await page.locator('.cat-own-actions').getByRole('button', { name: 'Rename' }).click()
-  await chip(page, 'Crypto papers').waitFor({ timeout: 5000 })
-  check('rename: the chip shows the new name at once', (await toast(page)) === 'Renamed to Crypto papers')
+  await chip(page, 'Picked').waitFor({ timeout: 5000 })
+  check('rename: the chip shows the new name at once', (await toast(page)) === 'Renamed to Picked')
   await settled(page)
   nextAnswer = true
   await page.locator('.cat-own-actions').getByRole('button', { name: 'Delete' }).click()
-  await page.waitForFunction(() => !document.querySelector('.categories .chip-own'), null, { timeout: 5000 })
+  await page.waitForFunction(() => ![...document.querySelectorAll('.categories .chip-own .chip-name')].some((c) => c.textContent === 'Picked'), null, { timeout: 5000 })
   await settled(page)
   s = await stored()
-  check('delete: the category and its pins go (the topic one stays)', s.own.length === 0 && s.pins.length === 1 && s.pins[0].cat === 'topic:finance', JSON.stringify(s))
+  check('delete: the category and its pins go (the others stay)',
+    s.own.map((o) => o.name).join() === 'AI agents' && s.pins.filter((p) => p.cat === 'topic:finance').length === 1 && s.pins.filter((p) => p.cat === s.own[0].id).length === 3 && s.pins.length === 4,
+    JSON.stringify(s))
   check('none of it asked the wallet (the phone’s restore aside)', prompts.tx - phoneUsed.tx === before.tx && prompts.sign - phoneUsed.sign === before.sign, JSON.stringify({ before, after: prompts, phoneUsed }))
 
   // ── a folder grouped by category: sections, each file once; kept after a reload
@@ -284,6 +337,14 @@ try {
     return { w: c.clientWidth, sw: c.scrollWidth, scroll: document.documentElement.scrollWidth - window.innerWidth }
   })
   check('390 px: the Topics row scrolls sideways; the page doesn’t', row390.sw > row390.w && row390.scroll <= 0, JSON.stringify(row390))
+  await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
+  await page.locator('.cat-suggest').waitFor({ timeout: 60_000 })
+  await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })
+  const sug390 = await page.evaluate(() => {
+    const els = [...document.querySelectorAll('.cat-suggest, .cat-suggest-card, .cat-suggest button, .cat-suggest input')].map((e) => e.getBoundingClientRect())
+    return { minLeft: Math.round(Math.min(...els.map((r) => r.left))), maxRight: Math.round(Math.max(...els.map((r) => r.right))), n: document.querySelectorAll('.cat-suggest-card').length, scroll: document.documentElement.scrollWidth - window.innerWidth }
+  })
+  check('390 px: the suggestions fit (cards, names, buttons), no sideways scroll', sug390.minLeft >= 12 && sug390.maxRight <= 378 && sug390.scroll <= 0, JSON.stringify(sug390))
 } catch (e) {
   check('run completed', false, e.message.split('\n').slice(0, 6).join(' | '))
 } finally {

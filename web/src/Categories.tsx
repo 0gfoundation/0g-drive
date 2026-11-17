@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { DriveState, FileMeta } from '@0gdrive/core'
 import { embedTexts } from './ai/client'
 import { groupFiles, topicPhrases, TOPICS, type Category, type Grouping, type TopicVecs } from './ai/categories'
+import { discover, nameFrom } from './ai/discover'
 import { allFiles } from './SmartSearch'
 import { closeOnBackdrop } from './backdrop'
 import { Icon } from './icons'
@@ -77,6 +78,143 @@ export function useCategories(drive: DriveState | null, smartOn: boolean, modelR
   }, [drive, ready, topicVecs, namesTick])
 }
 
+// ─── Suggested categories (D37) ───────────────────────────────────────
+
+export interface Suggestion {
+  key: string
+  name: string
+  fileIds: string[]
+}
+
+/**
+ * Categories found in the files themselves, on request: groups of files
+ * close in meaning (ai/discover.ts) that no category holds yet, each named
+ * by its most distinctive words. Nothing is stored until one is kept.
+ */
+export function useSuggestions(data: DriveGrouping | null) {
+  const [list, setList] = useState<Suggestion[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const run = async () => {
+    if (!data) return
+    setBusy(true)
+    setError(null)
+    try {
+      const { grouping, files } = data
+      // types aren't about meaning: a group of PDFs is still new
+      const inCategory = (id: string) => (grouping.of.get(id) ?? []).filter((c) => !c.startsWith('type:'))
+      const found = discover([...files.values()].map(({ meta }) => meta), inCategory, (c) => grouping.files.get(c)?.length ?? 0)
+      // every group's name candidates in one call to the model
+      const all = found.flatMap((g) => g.candidates)
+      const vecs = all.length ? await embedTexts(all) : []
+      let at = 0
+      setList(
+        found.map((g) => {
+          const mine = vecs.slice(at, (at += g.candidates.length))
+          return { key: g.key, name: nameFrom(g, mine), fileIds: g.fileIds }
+        })
+      )
+    } catch (err) {
+      setError(`Couldn’t look for categories: ${(err as Error).message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return {
+    list,
+    busy,
+    error,
+    run,
+    drop: (key: string) => setList((l) => l?.filter((s) => s.key !== key) ?? null),
+    close: () => {
+      setList(null)
+      setError(null)
+    },
+  }
+}
+
+/** The suggestions: each with its files and a name to edit before keeping it. */
+function SuggestionsList({
+  sug,
+  files,
+  nameProblem,
+  onKeep,
+}: {
+  sug: ReturnType<typeof useSuggestions>
+  files: DriveGrouping['files']
+  nameProblem: (name: string) => string | null
+  onKeep: (name: string, fileIds: string[]) => void
+}) {
+  const [names, setNames] = useState<Record<string, string>>({})
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  if (!sug.list && !sug.error) return null
+  return (
+    <div className="cat-suggest" role="region" aria-label="Suggested categories">
+      <div className="cat-suggest-head">
+        <h3 className="cat-group-title">Suggested categories</h3>
+        <button className="btn small ghost" onClick={sug.close} aria-label="Close suggestions">
+          <Icon name="close" />
+        </button>
+      </div>
+      {sug.error ? (
+        <p className="error-text">{sug.error}</p>
+      ) : sug.list!.length === 0 ? (
+        <p className="muted">No new groups found: your files fit the categories you have. Groups need 3 or more files with text read.</p>
+      ) : (
+        <>
+          <p className="muted cat-suggest-note">Found in your files by the on-device AI. Names are a first guess: edit one, then keep it.</p>
+          <ul className="cat-suggest-list">
+            {sug.list!.map((s) => {
+              const name = names[s.key] ?? s.name
+              const problem = nameProblem(name)
+              const metas = s.fileIds.flatMap((id) => files.get(id)?.meta ?? [])
+              const shown = open[s.key] ? metas : metas.slice(0, 3)
+              return (
+                <li key={s.key} className="cat-suggest-card">
+                  <input
+                    className="key-input cat-suggest-name"
+                    value={name}
+                    maxLength={40}
+                    onChange={(e) => setNames((n) => ({ ...n, [s.key]: e.target.value }))}
+                    aria-label="Category name"
+                  />
+                  <p className="cat-suggest-files muted">
+                    {metas.length} files: {shown.map((m) => m.name).join(', ')}
+                    {metas.length > shown.length && (
+                      <>
+                        {' '}
+                        <button className="crumb" onClick={() => setOpen((o) => ({ ...o, [s.key]: true }))}>
+                          +{metas.length - shown.length} more
+                        </button>
+                      </>
+                    )}
+                  </p>
+                  {problem && name.trim() !== '' && <p className="cat-suggest-problem muted">{problem}</p>}
+                  <div className="cat-suggest-actions">
+                    <button className="btn small ghost" onClick={() => sug.drop(s.key)}>
+                      Dismiss
+                    </button>
+                    <button
+                      className="btn small primary"
+                      disabled={problem !== null}
+                      onClick={() => {
+                        onKeep(name.trim(), s.fileIds)
+                        sug.drop(s.key)
+                      }}
+                    >
+                      Keep
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
 const KIND_TITLES: Record<Category['kind'], string> = { own: 'Your categories', topic: 'Topics', type: 'Types' }
 
 /** One category's chip. */
@@ -97,6 +235,9 @@ export function CategoriesView({
   hint,
   canEdit,
   onNew,
+  suggest,
+  nameProblem,
+  onKeep,
   onRename,
   onDelete,
   onTakeOut,
@@ -112,6 +253,10 @@ export function CategoriesView({
   hint: ReactNode
   canEdit: boolean
   onNew: () => void
+  /** suggested categories; absent when they can't be found (smart search off, or its model not ready) */
+  suggest?: ReturnType<typeof useSuggestions>
+  nameProblem: (name: string) => string | null
+  onKeep: (name: string, fileIds: string[]) => void
   onRename: (c: Category) => void
   onDelete: (c: Category) => void
   onTakeOut: (meta: FileMeta, c: Category) => void
@@ -143,7 +288,14 @@ export function CategoriesView({
                   New category
                 </button>
               )}
+              {k === 'own' && canEdit && suggest && (
+                <button className="chip chip-new" onClick={() => void suggest.run()} disabled={suggest.busy}>
+                  <Icon name="sparkles" />
+                  {suggest.busy ? 'Looking…' : 'Suggest categories'}
+                </button>
+              )}
             </div>
+            {k === 'own' && canEdit && suggest && <SuggestionsList sug={suggest} files={files} nameProblem={nameProblem} onKeep={onKeep} />}
           </div>
         )
       )}

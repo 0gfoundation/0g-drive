@@ -1944,6 +1944,66 @@ tbody tr:hover {
   flex: 1;
   min-width: 0;
 }
+.chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.cat-suggest {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  padding: 12px;
+}
+.cat-suggest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cat-suggest-head .cat-group-title {
+  margin: 0;
+}
+.cat-suggest-note {
+  font-size: var(--fs-sm);
+  margin: 4px 0 0;
+}
+.cat-suggest-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.cat-suggest-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.cat-suggest-name {
+  width: 100%;
+  font-weight: 500;
+}
+.cat-suggest-files {
+  margin: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.cat-suggest-problem {
+  margin: 0;
+  font-size: var(--fs-xs);
+}
+.cat-suggest-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 @media (pointer: coarse) {
   .chip {
     min-height: 44px;
@@ -1967,6 +2027,9 @@ tbody tr:hover {
   }
   .cat-new-row {
     flex-direction: column;
+  }
+  .cat-suggest-list {
+    grid-template-columns: 1fr;
   }
 }
 
