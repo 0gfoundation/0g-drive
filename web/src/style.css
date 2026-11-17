@@ -1994,6 +1994,9 @@ tbody tr:hover {
 .cat-suggest-name {
   width: 100%;
   font-weight: 500;
+  /* a name, not a key: the text font, not .key-input's monospace */
+  font-family: var(--font);
+  font-size: var(--fs-md);
 }
 .cat-suggest-files {
   margin: 0;
