@@ -244,15 +244,17 @@ function SecRow({
   label?: string
   hint: string
   status?: React.ReactNode
+  /** none: the status takes the action's column too (the sidebar is narrow) */
   action?: React.ReactNode
 }) {
+  const cls = ['sec-status', !label && 'sec-wide', !action && 'sec-span'].filter(Boolean).join(' ')
   return (
     <div className="sec-row" data-row={id}>
       {label && <span className="sec-label" title={hint}>{label}</span>}
-      <span className={label ? 'sec-status' : 'sec-status sec-wide'} title={label ? undefined : hint}>
+      <span className={cls} title={label ? undefined : hint}>
         {status}
       </span>
-      <span className="sec-act">{action}</span>
+      {action ? <span className="sec-act">{action}</span> : null}
     </div>
   )
 }

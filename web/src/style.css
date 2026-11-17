@@ -813,10 +813,11 @@ a:hover {
 }
 .sec-grid {
   display: grid;
-  grid-template-columns: max-content 1fr auto;
+  /* the status column gives way (it wraps) before anything leaves the 232 px sidebar */
+  grid-template-columns: max-content minmax(0, 1fr) auto;
   grid-auto-rows: minmax(28px, auto);
   align-items: center;
-  column-gap: 16px;
+  column-gap: 8px;
   padding: 0 12px;
   font-size: var(--fs-sm);
 }
@@ -831,11 +832,16 @@ a:hover {
   justify-self: end;
 }
 /* an amount never breaks ("0.700 / 0G") */
-.sec-status {
-  white-space: nowrap;
-}
 .sec-wide {
   grid-column: 1 / span 2;
+  white-space: nowrap;
+}
+/* a row with no action: its status takes that column too */
+.sec-span {
+  grid-column: span 2;
+}
+.sec-wide.sec-span {
+  grid-column: 1 / span 3;
 }
 .sec-off {
   color: var(--muted);
