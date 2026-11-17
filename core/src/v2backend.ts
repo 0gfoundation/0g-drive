@@ -23,6 +23,13 @@ interface Root {
    * so a reader still on the previous root can finish reading it.
    */
   retired: string[]
+  /**
+   * The roots this one was built on, nearest first (its base, that one's
+   * base, …; at most LINEAGE). A change sees its root here once a later
+   * change is made on top of it. Absent on roots stored before (their base
+   * is retired[0]).
+   */
+  lineage?: string[]
 }
 
 interface ListingRef {
@@ -91,6 +98,8 @@ const VERIFY_AFTER_MS = 1000
 const FRESH_MS = 10_000
 /** roots stored again over another device's, at most */
 const MERGE_ROUNDS = 3
+/** roots a root names as built on (Root.lineage) */
+const LINEAGE = 8
 
 type Progress = (got: number, total: number) => void
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -405,16 +414,29 @@ export class V2Backend implements DriveBackend {
     return { checked: this.check(refs, ours) }
   }
 
-  /** commit's look again; a failure is only logged (the next refresh shows the drive as stored). */
+  /**
+   * commit's look again; a failure is only logged (the next refresh shows
+   * the drive as stored). Ours is kept when the newest root names our
+   * listings, or was built on our root: a later change made on top of ours
+   * saw it, and its version of a listing we both changed is the newer one
+   * (laying ours again would undo it). Only a root that never saw ours (a
+   * change made at the same time, on the same root as ours) gets ours laid
+   * over it.
+   */
   private async check(refs: Record<string, ListingRef>, ours: FoundRoot): Promise<void> {
     try {
+      // every root of ours in this change: a later change may be on any of them
+      const mine = new Set([ours.hash])
       for (let round = 1; ; round++) {
         await sleep(VERIFY_AFTER_MS)
         const base = this.newer(await this.findRoot(), this.current)
-        const kept = base !== null && Object.entries(refs).every(([key, ref]) => base.root.listings[key]?.h === ref.h)
-        if (kept || round > MERGE_ROUNDS) return
+        if (base === null) return
+        const named = Object.entries(refs).every(([key, ref]) => base.root.listings[key]?.h === ref.h)
+        const onOurs = (base.root.lineage ?? base.root.retired.slice(0, 1)).some((h) => mine.has(h))
+        if (named || onOurs || round > MERGE_ROUNDS) return
         refs = await this.renewRetired(refs, base)
         ours = await this.storeRoot(base, refs, ours)
+        mine.add(ours.hash)
       }
     } catch (err) {
       console.warn(`[drive] could not check the change against other devices': ${(err as Error).message}`)
@@ -451,6 +473,7 @@ export class V2Backend implements DriveBackend {
       at: Date.now(),
       listings: { ...base?.root.listings, ...refs },
       retired,
+      lineage: base ? [base.hash, ...(base.root.lineage ?? [])].slice(0, LINEAGE) : [],
     }
     const card = this.card ?? base?.card ?? null
     const cardBytes = card === null ? new Uint8Array(0) : new TextEncoder().encode(JSON.stringify(card))

@@ -167,6 +167,34 @@ try {
     `Docs: ${names(drive.folders.get('Docs'))}; Docs/2026: ${names(drive.folders.get('Docs/2026'))}`
   )
 
+  // a later change on top of ours, to the same folder, while our check is
+  // still to look: ours was seen by it, so the check must leave it (it used
+  // to lay our older version of the folder back over it). X's check is made
+  // to look late (its list reads wait) so Y's change lands first every time.
+  const x = newStore()
+  const y = newStore()
+  await x.loadDrive()
+  let late = false
+  let xRoots = 0
+  const xList = x.backend.relayer.list.bind(x.backend.relayer)
+  x.backend.relayer.list = async (...args) => {
+    if (late) await new Promise((r) => setTimeout(r, 4000))
+    return xList(...args)
+  }
+  const xUpload = x.backend.relayer.upload.bind(x.backend.relayer)
+  x.backend.relayer.upload = (...args) => (late && xRoots++, xUpload(...args))
+  await x.putFileRecord('Docs', record('fx', 'from-x.bin'))
+  late = true // X's root is stored; its check now waits
+  await y.loadDrive()
+  await y.putFileRecord('Docs', record('fy', 'from-y.bin'))
+  await Promise.all([x.backend.settled(), y.backend.settled()])
+  drive = await newStore().loadDrive()
+  check(
+    'a later change on top of ours, to the same folder, is kept (our check doesn’t undo it)',
+    names(drive.folders.get('Docs')) === 'from-a.bin, from-x.bin, from-y.bin' && xRoots === 0,
+    `Docs: ${names(drive.folders.get('Docs'))}; roots X stored after: ${xRoots}`
+  )
+
   let wrongKey = ''
   try {
     await newStore(crypto.getRandomValues(new Uint8Array(32))).loadDrive()
