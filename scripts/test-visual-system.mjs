@@ -254,6 +254,18 @@ try {
   check('a main action is the brand purple (light: #8200d1)', primary === null || primary === 'rgb(130, 0, 209)', String(primary))
   await row('notes.txt').locator('input[type=checkbox]').uncheck()
 
+  // nothing in the sidebar sticks out of it (its Security rows once pushed their buttons past the edge)
+  const spill = () =>
+    page.evaluate(() => {
+      const sb = document.querySelector('.sidebar').getBoundingClientRect()
+      return [...document.querySelectorAll('.sidebar *')]
+        .filter((e) => e.getClientRects().length > 0 && e.getBoundingClientRect().width > 0)
+        .filter((e) => { const r = e.getBoundingClientRect(); return r.right > sb.right + 0.5 || r.left < sb.left - 0.5 })
+        .map((e) => `${e.tagName.toLowerCase()}.${[...e.classList].join('.')} "${e.textContent.trim().slice(0, 20)}"`)
+    })
+  const deskSpill = await spill()
+  check('sidebar: nothing sticks out of it (1280 px)', deskSpill.length === 0, JSON.stringify(deskSpill))
+
   const desk = await header()
   check('header: the 0G mark is 28 px tall and keeps its shape', desk.logoH === 28 && Math.abs(desk.ratio - LOGO_RATIO) < 0.05 && desk.gap > 0, JSON.stringify(desk))
 
@@ -305,6 +317,12 @@ try {
   await page.waitForTimeout(400)
   const phone = await audit()
   check('390 px: only the system’s sizes, weights and corners, readable contrast; no emoji; no sideways scroll', clean(phone) && phone.scroll <= 0, `${brief(phone)} scroll ${phone.scroll}`)
+  await page.getByRole('button', { name: 'Folders and settings' }).click()
+  await page.waitForTimeout(400)
+  const phoneSpill = await spill()
+  check('sidebar drawer: nothing sticks out of it (390 px)', phoneSpill.length === 0, JSON.stringify(phoneSpill))
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
   const p390 = await header()
   await page.setViewportSize({ width: 360, height: 780 })
   await page.waitForTimeout(300)
