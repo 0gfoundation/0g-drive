@@ -147,7 +147,94 @@ export interface CatFile {
   id: string
   name: string
   mime: string
+  uploadedAt?: number
   search?: SearchEntry
+}
+
+// ─── Kept categories that grow (D38) ──────────────────────────────────
+//
+// A category kept from a suggestion is a group of files alike in meaning.
+// A new file joins it when most of its nearest files are ones put in it by
+// hand, and it's alike enough to them on average. Asking where a file's
+// neighbours are, rather than a fixed bar, keeps loosely related files out:
+// on a sample of papers, each group kept with one paper held out at a time,
+// 24 of 28 rejoined their own group and nothing else joined any (a fixed
+// bar letting as many back in let 27 join wrongly). scripts/test-discover.mjs.
+
+export const GROW = {
+  /** a file's nearest files looked at */
+  k: 3,
+  /** of them, at least this many put in the category by hand */
+  need: 2,
+  /** and its average likeness to those files at least this */
+  floor: 0.37,
+  /** the files compared at most (newest first) */
+  maxFiles: 800,
+}
+
+const unitCache = new Map<string, Float32Array>()
+/** A search entry's text vector, normalized (kept: the same entries come back with every change). */
+function unitOf(e: string): Float32Array {
+  let v = unitCache.get(e)
+  if (!v) {
+    const q = dequantize(e)
+    v = new Float32Array(q.length)
+    let n = 0
+    for (let i = 0; i < q.length; i++) n += q[i] * q[i]
+    n = Math.sqrt(n) || 1
+    for (let i = 0; i < q.length; i++) v[i] = q[i] / n
+    if (unitCache.size > 20_000) unitCache.clear()
+    unitCache.set(e, v)
+  }
+  return v
+}
+const dot = (a: Float32Array, b: Float32Array) => {
+  let s = 0
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i]
+  return s
+}
+
+/** Files that join a growing category by resemblance: file id → category ids. */
+export function growJoins(files: CatFile[], user: DriveCategories | null | undefined): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  const ids = new Set(files.map((f) => f.id))
+  const growing = (user?.own ?? [])
+    .filter((c) => c.grow)
+    .map((c) => {
+      const pins = (user?.pins ?? []).filter((p) => p.cat === c.id && ids.has(p.file))
+      return { id: c.id, put: new Set(pins.filter((p) => p.in).map((p) => p.file)), out: new Set(pins.filter((p) => !p.in).map((p) => p.file)) }
+    })
+    .filter((c) => c.put.size >= GROW.need)
+  if (growing.length === 0) return out
+  // text files with their own text read: as Suggest categories groups them
+  const pool = files
+    .filter((f) => f.search?.e && f.search.t && !f.search.c)
+    .sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0))
+    .slice(0, GROW.maxFiles)
+  const vecs = pool.map((f) => unitOf(f.search!.e!))
+  for (let i = 0; i < pool.length; i++) {
+    const id = pool[i].id
+    const sims = vecs.map((v, j) => (j === i ? -Infinity : dot(vecs[i], v)))
+    const nearest = sims
+      .map((s, j) => ({ s, j }))
+      .sort((a, b) => b.s - a.s)
+      .slice(0, GROW.k)
+      .map((x) => pool[x.j].id)
+    for (const c of growing) {
+      if (c.put.has(id) || c.out.has(id)) continue
+      if (nearest.filter((n) => c.put.has(n)).length < GROW.need) continue
+      let sum = 0
+      let n = 0
+      pool.forEach((f, j) => {
+        if (c.put.has(f.id)) {
+          sum += sims[j]
+          n++
+        }
+      })
+      if (n > 0 && sum / n >= GROW.floor) out.set(id, [...(out.get(id) ?? []), c.id])
+    }
+  }
+  return out
 }
 
 /** A file's topics from its search entry: up to 2, best first. */
@@ -229,6 +316,8 @@ export function groupFiles(
     for (const c of own) if (fitsOwn(f, ownVecs?.get(c.id))) cats.add(c.id)
     of.set(f.id, cats)
   }
+  // kept categories grow by resemblance (with smart search on: the files have their vectors then)
+  if (topicVecs) for (const [id, cs] of growJoins(files, user)) for (const c of cs) of.get(id)!.add(c)
   const known = new Set([...TYPES, ...TOPICS, ...own].map((c) => c.id))
   for (const p of user?.pins ?? []) {
     if (!ids.has(p.file) || !known.has(p.cat)) continue
@@ -245,8 +334,9 @@ export function groupFiles(
 
 // ─── Edits (idempotent: the same edit twice is the edit once) ─────────
 
-export const addOwn = (id: string, name: string) => (c: DriveCategories): DriveCategories =>
-  c.own.some((o) => o.id === id) ? c : { ...c, own: [...c.own, { id, name }] }
+/** `grow`: kept from a suggestion: it grows by resemblance (D38). */
+export const addOwn = (id: string, name: string, grow?: boolean) => (c: DriveCategories): DriveCategories =>
+  c.own.some((o) => o.id === id) ? c : { ...c, own: [...c.own, grow ? { id, name, grow } : { id, name }] }
 
 export const renameOwn = (id: string, name: string) => (c: DriveCategories): DriveCategories => ({
   ...c,

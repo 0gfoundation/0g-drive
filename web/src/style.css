@@ -1903,6 +1903,11 @@ tbody tr:hover {
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
+.chip-fresh,
+.nav-fresh {
+  color: var(--accent);
+  font-weight: 500;
+}
 .chip-new {
   border-style: dashed;
   background: none;

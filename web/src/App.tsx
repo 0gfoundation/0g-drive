@@ -2248,13 +2248,13 @@ export default function App() {
     [drive]
   )
 
-  /** A new own category, with `fileIds` put in it. */
+  /** A new own category, with `fileIds` put in it; `grow`: kept from a suggestion, it grows by resemblance (D38). */
   const createCategory = useCallback(
-    (name: string, fileIds: string[]) => {
+    (name: string, fileIds: string[], grow?: boolean) => {
       const id = 'own:' + bytesToHex(crypto.getRandomValues(new Uint8Array(8)))
       const keep = new Set(cats?.files.keys() ?? [])
       const edit = (c: DriveCategories) => {
-        const made = addOwn(id, name)(c)
+        const made = addOwn(id, name, grow)(c)
         return fileIds.length ? pin(fileIds, id, true, keep)(made) : made
       }
       editCategories(`Creating ${name}…`, edit, fileIds.length ? `Added to ${name}` : `${name} created`, `create ${name}`)
@@ -2914,6 +2914,9 @@ export default function App() {
                 >
                   <Icon name="tag" className="tree-folder-ico" />
                   <span>Categories</span>
+                  {suggestions.fresh > 0 && cats?.topics && !readOnly && (
+                    <span className="nav-count nav-fresh" title="New suggested categories">{suggestions.fresh} new</span>
+                  )}
                 </button>
                 <button
                   className={`nav-item${view === 'trash' ? ' active' : ''}`}
@@ -3332,7 +3335,7 @@ export default function App() {
             onNew={() => void newCategory()}
             suggest={cats.topics ? suggestions : undefined}
             nameProblem={(n) => ownNameProblem(n)}
-            onKeep={(name, ids) => createCategory(name, ids)}
+            onKeep={(name, ids) => createCategory(name, ids, true)}
             onRename={(c) => void renameCategory(c)}
             onDelete={(c) => void deleteCategory(c)}
             onTakeOut={takeOutOfCategory}

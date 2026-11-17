@@ -68,7 +68,11 @@ export interface FolderManifest {
  */
 export interface DriveCategories {
   v: 1
-  own: { id: string; name: string }[]
+  /**
+   * `grow`: kept from a suggestion (D38): new files whose nearest files are
+   * mostly the ones put in it by hand join it too.
+   */
+  own: { id: string; name: string; grow?: boolean }[]
   /** by hand: `file` (its id) is in (`in`) or out of category `cat` */
   pins: { file: string; cat: string; in: boolean }[]
   updatedAt: number
