@@ -2,20 +2,20 @@
 // deployment), smart search on, with an injected wallet backed by a FRESH
 // key funded from .env's test wallet (the drive's setup deposit and gas, 6
 // small uploads; files deleted and wallet refunded at the end). Checks:
-// the Categories view groups the files by topic (found by the on-device
+// the Tags view (categories in the code) groups the files by topic (found by the on-device
 // model) and by type; a chip lists its files with their folder; files
 // selected in a folder go into a new category of the user's (Add to
 // category), shown at once and stored in the drive; a file taken out of a
 // category, a category renamed and deleted, all with no wallet prompt; a
 // second device (a 390 px phone with touch) sees the user's category, with
-// chips that fit and scroll sideways; Suggest categories finds the papers on
+// chips that fit and scroll sideways; Suggest tags finds the papers on
 // LLM agents as a group (D37), named for agents: renamed and kept, it's a
 // category of the user's with them in it, stored, and isn't suggested again;
 // it grows (D38): a 4th agents paper uploaded later joins it by itself;
 // each file shows why it's there (D44: "Similar to its files" beside the 3
-// "Put in by you", "Found in its text", "Found by its file name"; in full
+// "Tagged by you", "Found in its text", "Found by its file name"; in full
 // at 390 px too); 3 vision papers uploaded later show as "1 new"
-// suggestion, sidebar and chip; a folder's "Group by category" puts
+// suggestion, sidebar and chip; a folder's "Group by tag" puts
 // its files in sections (list and grid), each file once, kept after a
 // reload.
 //
@@ -130,7 +130,7 @@ const FILES = {
   'trip-notes.txt': 'Itinerary: fly TAP to Lisbon on May 3. Hotel in Alfama for five nights. Day trip to Sintra and Cascais. Return flight May 8.',
   'consensus-whitepaper.txt': 'This whitepaper describes a Byzantine fault tolerant consensus protocol for a modular blockchain. We analyze safety and liveness and report throughput on a 100-node testnet.',
   'budget.xlsx': 'not really a spreadsheet',
-  // papers: the LLM agents ones are a group Suggest categories finds
+  // papers: the LLM agents ones are a group Suggest tags finds
   'agent-memory.txt': 'Memory in LLM Agents: A Survey. Abstract: We survey how language model agents store and retrieve memory, from long context to retrieval-augmented memory and episodic stores, and outline open problems.',
   'agent-tools.txt': 'Teaching Language Models to Use Tools. Abstract: We train a language model agent to decide when to call external tools such as search and calculators, improving accuracy on agent tasks.',
   'agent-planning.txt': 'Reasoning and Acting with Language Models. Abstract: We interleave reasoning traces with actions so an LLM agent can plan, act in an environment and revise its plan on interactive tasks.',
@@ -183,11 +183,11 @@ try {
   step('6 files uploaded')
 
   // ── the Categories view: topics (once the model has indexed them) and types
-  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
+  await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).click()
   await page.waitForFunction(() => [...document.querySelectorAll('.categories .chip-name')].some((c) => c.textContent === 'Travel'), null, { timeout: 10 * 60_000, polling: 1000 })
   await page.waitForTimeout(3000) // the rest of the files indexed
-  const topics = await chips(page, 'Topics')
-  const types = await chips(page, 'Types')
+  const topics = await chips(page, 'Auto tags')
+  const types = await chips(page, 'File types')
   // budget.xlsx has no text read (not a real spreadsheet): its name puts it in Finance
   // the files known for sure, by name (a short paper's abstract may also land in a topic: see D35's limits)
   const inTopic = async (topic) => {
@@ -216,42 +216,42 @@ try {
   await page.locator('.sidebar .nav-item', { hasText: 'My Drive' }).click()
   await row(page, 'lease.txt').locator('input[type=checkbox]').check()
   await row(page, 'consensus-whitepaper.txt').locator('input[type=checkbox]').check()
-  await page.getByRole('button', { name: 'Add to category' }).click()
+  await page.getByRole('button', { name: 'Add tag' }).click()
   await page.locator('.categorize-modal input').fill('Shortlist')
   let t = Date.now()
   await page.locator('.categorize-modal').getByRole('button', { name: 'Create & add' }).click()
   const added = await toast(page)
-  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
+  await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).click()
   await chip(page, 'Shortlist').waitFor({ timeout: 2000 })
   const shownMs = Date.now() - t
-  const own = await chips(page, 'Your categories')
-  check('Add to category → a new category: “Added to Shortlist”, its chip shown at once with both files', added === 'Added to Shortlist' && own.includes('Shortlist 2') && shownMs < 2000, `${shownMs} ms, ${JSON.stringify({ added, own })}`)
+  const own = await chips(page, 'Your tags')
+  check('Add tag → a new tag: “Tagged with Shortlist”, its chip shown at once with both files', added === 'Tagged with Shortlist' && own.includes('Shortlist 2') && shownMs < 2000, `${shownMs} ms, ${JSON.stringify({ added, own })}`)
   await settled(page)
   let s = await stored()
   check('…stored in the drive: the category and both files put in it', s?.own.length === 1 && s.own[0].name === 'Shortlist' && s.pins.filter((p) => p.in).length === 2, JSON.stringify(s))
 
   // ── taken out by hand (a category made from the dialog is the one shown)
   if ((await chip(page, 'Shortlist').getAttribute('aria-pressed')) !== 'true') await chip(page, 'Shortlist').click()
-  await page.locator('.cat-files .result', { hasText: 'lease.txt' }).getByRole('button', { name: 'Take out of Shortlist' }).click()
+  await page.locator('.cat-files .result', { hasText: 'lease.txt' }).getByRole('button', { name: 'Remove the Shortlist tag' }).click()
   await page.waitForFunction(() => document.querySelectorAll('.cat-files .result').length === 1, null, { timeout: 2000 })
   check('a file taken out leaves the list at once', JSON.stringify(await listed(page)) === JSON.stringify(['consensus-whitepaper.txt']))
-  check('…the one left: “Put in by you”', (await reasons(page))['consensus-whitepaper.txt'] === 'Put in by you', JSON.stringify(await reasons(page)))
+  check('…the one left: “Tagged by you”', (await reasons(page))['consensus-whitepaper.txt'] === 'Tagged by you', JSON.stringify(await reasons(page)))
   await chip(page, 'Finance').click()
-  await page.locator('.cat-files .result', { hasText: 'invoice-031.txt' }).getByRole('button', { name: 'Take out of Finance' }).click()
+  await page.locator('.cat-files .result', { hasText: 'invoice-031.txt' }).getByRole('button', { name: 'Remove the Finance tag' }).click()
   await page.waitForFunction(() => document.querySelectorAll('.cat-files .result').length === 1, null, { timeout: 2000 }).catch(() => undefined)
-  check('a file taken out of a topic leaves it', (await chips(page, 'Topics')).includes('Finance 1'), JSON.stringify(await chips(page, 'Topics')))
+  check('a file taken out of a topic leaves it', (await chips(page, 'Auto tags')).includes('Finance 1'), JSON.stringify(await chips(page, 'Auto tags')))
   await settled(page)
   s = await stored()
   const out = s?.pins.filter((p) => !p.in).map((p) => p.cat).sort()
   check('…stored: taken out of Shortlist and Finance', JSON.stringify(out) === JSON.stringify([s.own[0].id, 'topic:finance'].sort()), JSON.stringify(s?.pins))
 
-  // ── Suggest categories: the agents papers, named for agents; renamed and kept
-  await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
+  // ── Suggest tags: the agents papers, named for agents; renamed and kept
+  await page.locator('.categories .chip', { hasText: 'Suggest tags' }).click()
   await page.locator('.cat-suggest').waitFor({ timeout: 60_000 })
   await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })
   const cards = await page.$$eval('.cat-suggest-card', (cs) => cs.map((c) => ({ name: c.querySelector('input').value, files: c.querySelector('.cat-suggest-files').textContent })))
   const agentsCard = cards.find((c) => AGENTS.every((n) => c.files.includes(n)))
-  check('Suggest categories: the LLM agents papers are a suggested group, named for agents',
+  check('Suggest tags: the LLM agents papers are a suggested group, named for agents',
     !!agentsCard && /agent/i.test(agentsCard.name) && !/invoice|lease|carbonara|trip/.test(agentsCard.files), JSON.stringify(cards))
   const card = page.locator('.cat-suggest-card', { hasText: 'agent-memory.txt' })
   await card.locator('input').fill('AI agents')
@@ -269,7 +269,7 @@ try {
   const kept = s?.own.find((o) => o.name === 'AI agents')
   check('…stored: the category and its 3 files put in it, no wallet prompt',
     !!kept && s.pins.filter((p) => p.cat === kept.id && p.in).length === 3 && prompts.tx === keptBefore.tx && prompts.sign === keptBefore.sign, JSON.stringify(s))
-  await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
+  await page.locator('.categories .chip', { hasText: 'Suggest tags' }).click()
   await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })
   await page.waitForTimeout(300)
   const again = await page.$$eval('.cat-suggest-card', (cs) => cs.map((c) => c.querySelector('.cat-suggest-files').textContent))
@@ -278,7 +278,7 @@ try {
 
   // ── a kept category grows (D38): a new agents paper joins it, not put in by hand
   await uploadLater(['agent-benchmark.txt'])
-  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
+  await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).click()
   const grew = await page.waitForFunction(() => [...document.querySelectorAll('.categories .chip')].some((c) => c.querySelector('.chip-name')?.textContent === 'AI agents' && c.querySelector('.chip-count')?.textContent === '4'), null, { timeout: 60_000, polling: 500 }).then(() => true, () => false)
   await chip(page, 'AI agents').click().catch(() => undefined)
   if ((await chip(page, 'AI agents').getAttribute('aria-pressed')) !== 'true') await chip(page, 'AI agents').click()
@@ -289,20 +289,20 @@ try {
     grew && grown.includes('agent-benchmark.txt') && s.own.find((o) => o.id === keptId)?.grow === true && s.pins.filter((p) => p.cat === keptId).length === 3,
     JSON.stringify({ grown, pins: s.pins.filter((p) => p.cat === keptId).length }))
   const grownWhy = await reasons(page)
-  check('…shown as “Similar to its files”; the 3 kept with the suggestion “Put in by you”',
-    grownWhy['agent-benchmark.txt'] === 'Similar to its files' && Object.entries(grownWhy).filter(([, r]) => r === 'Put in by you').length === 3, JSON.stringify(grownWhy))
+  check('…shown as “Similar to its files”; the 3 kept with the suggestion “Tagged by you”',
+    grownWhy['agent-benchmark.txt'] === 'Similar to its files' && Object.entries(grownWhy).filter(([, r]) => r === 'Tagged by you').length === 3, JSON.stringify(grownWhy))
 
   // ── new suggestions after uploads: 3 vision papers, a new subject
   await uploadLater(VISION)
-  const badge = await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).locator('.nav-fresh').textContent({ timeout: 60_000 }).catch(() => null)
+  const badge = await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).locator('.nav-fresh').textContent({ timeout: 60_000 }).catch(() => null)
   check('after uploads, the sidebar says there are new suggested categories', badge === '1 new', String(badge))
-  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
-  const chipSays = await page.locator('.categories .chip', { hasText: 'Suggest categories' }).textContent()
-  await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
+  await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).click()
+  const chipSays = await page.locator('.categories .chip', { hasText: 'Suggest tags' }).textContent()
+  await page.locator('.categories .chip', { hasText: 'Suggest tags' }).click()
   await page.locator('.cat-suggest').waitFor({ timeout: 60_000 })
   await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })
   const visionCard = await page.$$eval('.cat-suggest-card .cat-suggest-files', (cs) => cs.map((c) => c.textContent))
-  const cleared = await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).locator('.nav-fresh').count()
+  const cleared = await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).locator('.nav-fresh').count()
   check('…the chip too; looking shows the vision papers as a group, and the count goes',
     /1 new/.test(chipSays) && visionCard.some((f) => VISION.every((n) => f.includes(n))) && cleared === 0, JSON.stringify({ chipSays, visionCard, cleared }))
   await page.getByRole('button', { name: 'Close suggestions' }).click()
@@ -318,7 +318,7 @@ try {
   await pp.getByRole('button', { name: 'Restore my drive' }).tap({ timeout: 2 * 60_000 })
   await pp.locator('.nav-toggle').waitFor({ timeout: 5 * 60_000 })
   await pp.locator('.nav-toggle').tap()
-  await pp.locator('.sidebar .nav-item', { hasText: 'Categories' }).tap()
+  await pp.locator('.sidebar .nav-item', { hasText: 'Tags' }).tap()
   await chip(pp, 'Shortlist').waitFor({ timeout: 60_000 })
   const fit = await pp.evaluate(() => {
     const rows = [...document.querySelectorAll('.categories .chips')].map((c) => ({ w: c.clientWidth, sw: c.scrollWidth, wrap: getComputedStyle(c).flexWrap }))
@@ -333,13 +333,13 @@ try {
   await pp.locator('.nav-toggle').tap()
   await pp.locator('.sidebar .nav-item', { hasText: 'My Drive' }).tap()
   await row(pp, 'carbonara.md').locator('input[type=checkbox]').tap()
-  await pp.getByRole('button', { name: 'Add to category' }).tap()
+  await pp.getByRole('button', { name: 'Add tag' }).tap()
   await pp.locator('.categorize-modal').waitFor()
   const dlg = await pp.evaluate(() => {
     const r = document.querySelector('.categorize-modal').getBoundingClientRect()
     return { left: Math.round(r.left), right: Math.round(r.right), scroll: document.documentElement.scrollWidth - window.innerWidth }
   })
-  check('390 px: Add to category opens a dialog that fits', dlg.left >= 0 && dlg.right <= 390 && dlg.scroll <= 0, JSON.stringify(dlg))
+  check('390 px: Add tag opens a dialog that fits', dlg.left >= 0 && dlg.right <= 390 && dlg.scroll <= 0, JSON.stringify(dlg))
   await pp.locator('.categorize-modal').getByRole('button', { name: 'Cancel' }).tap()
   await phone.close()
   // the phone's restore signature isn't a category edit's
@@ -347,7 +347,7 @@ try {
 
   // ── rename and delete the user's category
   await page.reload()
-  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click({ timeout: 5 * 60_000 })
+  await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).click({ timeout: 5 * 60_000 })
   await chip(page, 'Shortlist').click()
   nextAnswer = 'Picked'
   await page.locator('.cat-own-actions').getByRole('button', { name: 'Rename' }).click()
@@ -372,7 +372,7 @@ try {
   const groups = async () => page.$$eval('tbody.group-body', (bs) => bs.map((b) => ({ name: b.querySelector('.group-row th').childNodes[0].textContent.trim(), rows: b.querySelectorAll('tr:not(.group-row)').length })))
   let g = await groups()
   const total = g.reduce((n, x) => n + x.rows, 0)
-  check('Group by category: the folder in sections, each file once', g.length >= 4 && total === ALL.length && g.some((x) => x.name === 'Recipes'), JSON.stringify(g))
+  check('Group by tag: the folder in sections, each file once', g.length >= 4 && total === ALL.length && g.some((x) => x.name === 'Recipes'), JSON.stringify(g))
   const inDocs = await page.$$eval('tbody.group-body', (bs) => bs.filter((b) => b.querySelector('.group-row th').textContent.startsWith('Documents')).flatMap((b) => [...b.querySelectorAll('tr:not(.group-row)')].map((r) => r.textContent)))
   check('…the file taken out of Finance is under its type instead', inDocs.some((r) => r.includes('invoice-031.txt')), JSON.stringify(g))
   await page.reload()
@@ -386,14 +386,14 @@ try {
   // ── 390 px with topics: their row scrolls sideways, the page doesn't
   await page.setViewportSize({ width: 390, height: 844 })
   await page.locator('.nav-toggle').click()
-  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
+  await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).click()
   await chip(page, 'Recipes').waitFor({ timeout: 60_000 })
   const row390 = await page.evaluate(() => {
-    const g = [...document.querySelectorAll('.categories .cat-group')].find((x) => x.querySelector('.cat-group-title')?.textContent === 'Topics')
+    const g = [...document.querySelectorAll('.categories .cat-group')].find((x) => x.querySelector('.cat-group-title')?.textContent === 'Auto tags')
     const c = g.querySelector('.chips')
     return { w: c.clientWidth, sw: c.scrollWidth, scroll: document.documentElement.scrollWidth - window.innerWidth }
   })
-  check('390 px: the Topics row scrolls sideways; the page doesn’t', row390.sw > row390.w && row390.scroll <= 0, JSON.stringify(row390))
+  check('390 px: the Auto tags row scrolls sideways; the page doesn’t', row390.sw > row390.w && row390.scroll <= 0, JSON.stringify(row390))
   // the reason beside each file shows in full on a phone, inside its row; the folder gives way first
   await chip(page, 'AI agents').click()
   if ((await chip(page, 'AI agents').getAttribute('aria-pressed')) !== 'true') await chip(page, 'AI agents').click()
@@ -406,7 +406,7 @@ try {
     }
   })
   check('390 px: each file’s reason shows in full inside its row; no sideways scroll', why390.n >= 4 && why390.shown === why390.n && why390.scroll <= 0, JSON.stringify(why390))
-  await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
+  await page.locator('.categories .chip', { hasText: 'Suggest tags' }).click()
   await page.locator('.cat-suggest').waitFor({ timeout: 60_000 })
   await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })
   const sug390 = await page.evaluate(() => {

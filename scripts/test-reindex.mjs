@@ -147,10 +147,10 @@ try {
   check('the old entries are indexed again on this device, no wallet prompt', /2 indexed on this device/.test(s1) && txs === before.txs && signs === before.signs, JSON.stringify(s1))
 
   // categories use them before they're saved (D42): the invoice's old entry gave it no topic (a blank vector), the new one Finance
-  await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
+  await page.locator('.sidebar .nav-item', { hasText: 'Tags' }).click()
   const topics = await page
     .waitForFunction(() => {
-      const g = [...document.querySelectorAll('.categories .cat-group')].find((x) => x.querySelector('.cat-group-title')?.textContent === 'Topics')
+      const g = [...document.querySelectorAll('.categories .cat-group')].find((x) => x.querySelector('.cat-group-title')?.textContent === 'Auto tags')
       const names = g ? [...g.querySelectorAll('.chip:not(.chip-new) .chip-name')].map((c) => c.textContent) : []
       return names.length ? names : null
     }, null, { timeout: 30_000, polling: 500 })

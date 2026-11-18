@@ -517,3 +517,8 @@ On staging, memskill.pdf (an LLM agents paper) was in the user's "Blockchain" ca
 
 Verified: `npm run test:categories` (each reason, for put in, name, topics from text, photo and file name, types; grown into a kept category: "grew"), `npm run test:categories-ui` (the Finance list: "Found in its text", "Found by its file name"; Shortlist: "Put in by you"; a kept category: the grown paper "Similar to its files", the 3 kept "Put in by you"; at 390 px each reason in full inside its row, no sideways scroll).
 
+### D45 — "Categories" called "Tags" (user decision, 2026-11-18)
+A file can be in several at once (a paper in PDFs, Research papers and one of the user's own), which "category" — one drawer per file — doesn't say; "tag" does. The user's first idea was "AI Tags"; not all of them are the AI's (types are by file name, the user's own are put on by hand, and the reason beside each file now says which), and "AI" can read as files sent off to be analysed when it all runs on the device. So: the sidebar and view **Tags**; **Your tags** (with **New tag**, **Suggest tags**), **Auto tags** (the built-in topics, found by the on-device AI), **File types**; **Add tag**, **Remove the X tag**, **Group by tag**; "Tagged by you" for a file put in by hand. Words only: the stored listing (`DriveCategories`, key purpose 0x05) and the code keep their names — no migration, nothing re-indexed.
+
+Verified: `npm run test:categories-ui` and `npm run test:reindex` with the new names (their selectors find buttons and headings by text), at 390 px too.
+
