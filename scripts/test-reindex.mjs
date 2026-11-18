@@ -95,6 +95,10 @@ const TEXT = 'Provided proper attribution is provided, Acme hereby grants permis
   'Reusable Skills for LLM Agents Zeng Ming ∗ Acme Research zengming@acme.com Xiang Li ∗ Acme Research xli@acme.com Chen Wei † Acme Brain ' +
   'Abstract Large language model agents struggle to retain skills across tasks. We give agents a memory of reusable skills and evaluate on agent benchmarks.'
 const AUTHORS = /Zeng|Xiang|Chen Wei|acme\.com/
+// and an invoice under a plain name: indexed again, it's in Finance by its text (the paper's short abstract
+// fits no built-in topic for sure); indexed the old way here, with a blank vector, it's in none
+const BILL = 'notes.txt'
+const BILL_TEXT = 'Invoice no. 2025-031. Bill to: Acme Ltd. Web design services, 24 hours at 85 EUR. Subtotal 2,040.00, VAT 469.20, total due 2,509.20 within 30 days. Payment by bank transfer.'
 
 const status = () => page.locator('.sidebar .search-index').textContent({ timeout: 1000 }).catch(() => '')
 const waitStatus = async (re, timeout = 6 * 60_000) => {
@@ -115,8 +119,9 @@ try {
   await page.getByRole('button', { name: 'Create my drive' }).click({ timeout: 120_000 })
   await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   mk = hexToBytes(await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address))
-  await page.setInputFiles('.dropzone input[type=file]', [{ name: NAME, mimeType: 'text/plain', buffer: Buffer.from(TEXT) }])
+  await page.setInputFiles('.dropzone input[type=file]', [NAME, BILL].map((name) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(name === NAME ? TEXT : BILL_TEXT) })))
   await page.locator('table tbody tr', { hasText: NAME }).waitFor({ timeout: 8 * 60_000 })
+  await page.locator('table tbody tr', { hasText: BILL }).waitFor({ timeout: 8 * 60_000 })
   await page.waitForFunction(() => !document.querySelector('.progress-line.on'), null, { timeout: 3 * 60_000, polling: 500 })
   step('uploaded with smart search off')
 
@@ -125,7 +130,8 @@ try {
   const drive = await s.loadDrive()
   const meta = drive.folders.get('').files.find((f) => f.name === NAME)
   const v1 = { v: 1, t: TEXT.slice(0, 280), e: Buffer.alloc(384).toString('base64') }
-  await s.putFileRecords('', [{ ...meta, search: v1 }])
+  const bill = drive.folders.get('').files.find((f) => f.name === BILL)
+  await s.putFileRecords('', [{ ...meta, search: v1 }, { ...bill, search: { v: 1, t: BILL_TEXT.slice(0, 280), e: Buffer.alloc(384).toString('base64') } }])
   await s.backend.settled()
   const v1Stored = (await store().loadDrive()).folders.get('').files.find((f) => f.name === NAME).search
   check('the file’s record has an old-style entry (v1)', v1Stored?.v === 1 && !v1Stored.s, JSON.stringify({ v: v1Stored?.v }))
@@ -135,10 +141,10 @@ try {
   await page.reload()
   await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })
   await page.locator('.sidebar .sec-toggle input').check()
-  const s1 = await waitStatus(/1 indexed on this device/)
-  check('the old entry is indexed again on this device, no wallet prompt', /1 indexed on this device/.test(s1) && txs === before.txs && signs === before.signs, JSON.stringify(s1))
+  const s1 = await waitStatus(/2 indexed on this device/)
+  check('the old entries are indexed again on this device, no wallet prompt', /2 indexed on this device/.test(s1) && txs === before.txs && signs === before.signs, JSON.stringify(s1))
 
-  // categories use it before it's saved (D42): its old entry gave it no topic (a blank vector), the new one does
+  // categories use them before they're saved (D42): the invoice's old entry gave it no topic (a blank vector), the new one Finance
   await page.locator('.sidebar .nav-item', { hasText: 'Categories' }).click()
   const topics = await page
     .waitForFunction(() => {
@@ -148,7 +154,7 @@ try {
     }, null, { timeout: 30_000, polling: 500 })
     .then((h) => h.jsonValue())
     .catch(() => [])
-  check('…and categories regroup with it before it’s saved: it has a topic now', topics.length > 0 && /indexed on this device/.test((await status()) ?? ''), JSON.stringify(topics))
+  check('…and categories regroup with them before they’re saved: the invoice is in Finance now', topics.includes('Finance') && /indexed on this device/.test((await status()) ?? ''), JSON.stringify(topics))
 
   await page.locator('.sidebar .search-index button', { hasText: 'Save' }).click()
   const s2 = await waitStatus(/^(?![\s\S]*indexed on this device)/, 5 * 60_000)
