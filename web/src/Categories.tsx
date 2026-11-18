@@ -160,7 +160,7 @@ export function useSuggestions(data: DriveGrouping | null) {
       seen.current = new Set([...(seen.current ?? []), ...found.map((g) => g.key)])
       setFresh(0)
     } catch (err) {
-      setError(`Couldn’t look for categories: ${(err as Error).message}`)
+      setError(`Couldn’t look for tags: ${(err as Error).message}`)
     } finally {
       setBusy(false)
     }
@@ -231,9 +231,9 @@ function SuggestionsList({
   const [open, setOpen] = useState<Record<string, boolean>>({})
   if (!sug.list && !sug.error) return null
   return (
-    <div className="cat-suggest" role="region" aria-label="Suggested categories">
+    <div className="cat-suggest" role="region" aria-label="Suggested tags">
       <div className="cat-suggest-head">
-        <h3 className="cat-group-title">Suggested categories</h3>
+        <h3 className="cat-group-title">Suggested tags</h3>
         <button className="btn small ghost" onClick={sug.close} aria-label="Close suggestions">
           <Icon name="close" />
         </button>
@@ -241,7 +241,7 @@ function SuggestionsList({
       {sug.error ? (
         <p className="error-text">{sug.error}</p>
       ) : sug.list!.length === 0 ? (
-        <p className="muted">No new groups found: your files fit the categories you have. Groups need 3 or more files with text read.</p>
+        <p className="muted">No new groups found: your files fit the tags you have. Groups need 3 or more files with text read.</p>
       ) : (
         <>
           <p className="muted cat-suggest-note">Found in your files by the on-device AI. Names are a first guess: edit one, then keep it.</p>
@@ -259,7 +259,7 @@ function SuggestionsList({
                     maxLength={40}
                     onChange={(e) => setNames((n) => ({ ...n, [s.key]: e.target.value }))}
                     placeholder="Name this group"
-                    aria-label="Category name"
+                    aria-label="Tag name"
                   />
                   <p className="cat-suggest-files muted">
                     {metas.length} files: {shown.map((m) => m.name).join(', ')}
@@ -298,11 +298,11 @@ function SuggestionsList({
   )
 }
 
-const KIND_TITLES: Record<Category['kind'], string> = { own: 'Your categories', topic: 'Topics', type: 'Types' }
+const KIND_TITLES: Record<Category['kind'], string> = { own: 'Your tags', topic: 'Auto tags', type: 'File types' }
 
 /** Why a file is in the category shown, beside it (a type needs no saying). */
 const REASONS: Record<Reason, string | null> = {
-  put: 'Put in by you',
+  put: 'Tagged by you',
   grew: 'Similar to its files',
   name: 'Fits the name',
   text: 'Found in its text',
@@ -366,7 +366,7 @@ export function CategoriesView({
 
   return (
     <section className="files categories">
-      <h2>Categories</h2>
+      <h2>Tags</h2>
       {hint && <p className="cat-hint muted">{hint}</p>}
       {kinds.map(({ k, cats }) =>
         cats.length === 0 && !(k === 'own' && canEdit) ? null : (
@@ -379,13 +379,13 @@ export function CategoriesView({
               {k === 'own' && canEdit && (
                 <button className="chip chip-new" onClick={onNew}>
                   <Icon name="plus" />
-                  New category
+                  New tag
                 </button>
               )}
               {k === 'own' && canEdit && suggest && (
                 <button className="chip chip-new" onClick={() => void suggest.run()} disabled={suggest.busy}>
                   <Icon name="sparkles" />
-                  {suggest.busy ? 'Looking…' : 'Suggest categories'}
+                  {suggest.busy ? 'Looking…' : 'Suggest tags'}
                   {!suggest.busy && suggest.fresh > 0 && <span className="chip-count chip-fresh">{suggest.fresh} new</span>}
                 </button>
               )}
@@ -416,7 +416,7 @@ export function CategoriesView({
           </div>
           {shown.length === 0 ? (
             <p className="empty">
-              No files yet. Select files in a folder, then <strong>Add to category</strong>.
+              No files yet. Select files in a folder, then <strong>Add tag</strong>.
             </p>
           ) : (
             <ul className="results">
@@ -448,8 +448,8 @@ export function CategoriesView({
                       <button
                         className="btn small"
                         onClick={() => onTakeOut(meta, cat)}
-                        title={`Take out of ${cat.name}`}
-                        aria-label={`Take out of ${cat.name}`}
+                        title={`Remove the ${cat.name} tag`}
+                        aria-label={`Remove the ${cat.name} tag`}
                       >
                         <Icon name="minus" className="btn-ico" />
                       </button>
@@ -483,9 +483,9 @@ export function CategorizeDialog({
   const taken = [...own, ...TOPICS].some((c) => c.name.toLowerCase() === name.trim().toLowerCase())
   return (
     <div className="modal-backdrop" {...closeOnBackdrop(onClose)}>
-      <div className="modal categorize-modal" role="dialog" aria-label="Add to category" onClick={(e) => e.stopPropagation()}>
+      <div className="modal categorize-modal" role="dialog" aria-label="Add tag" onClick={(e) => e.stopPropagation()}>
         <h3>
-          Add {count === 1 ? '1 file' : `${count} files`} to a category
+          Tag {count === 1 ? '1 file' : `${count} files`}
         </h3>
         <form
           className="cat-new-row"
@@ -496,17 +496,17 @@ export function CategorizeDialog({
         >
           <input
             className="key-input"
-            placeholder="New category, e.g. Blockchain"
+            placeholder="New tag, e.g. Blockchain"
             value={name}
             maxLength={40}
             onChange={(e) => setName(e.target.value)}
-            aria-label="New category name"
+            aria-label="New tag name"
           />
           <button className="btn primary" type="submit" disabled={!name.trim() || taken}>
             Create &amp; add
           </button>
         </form>
-        {taken && <p className="muted">There’s a category with that name: pick it below.</p>}
+        {taken && <p className="muted">There’s a tag with that name: pick it below.</p>}
         {(['own', 'topic'] as const).map((k) => {
           const cats = k === 'own' ? own : TOPICS
           return cats.length === 0 ? null : (

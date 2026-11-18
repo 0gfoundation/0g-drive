@@ -2243,7 +2243,7 @@ export default function App() {
       if (!n) return 'Give it a name.'
       const own = drive?.categories?.own ?? []
       const taken = [...own.filter((c) => c.id !== except), ...TOPICS].some((c) => c.name.toLowerCase() === n)
-      return taken ? 'There’s a category with that name.' : null
+      return taken ? 'There’s a tag with that name.' : null
     },
     [drive]
   )
@@ -2257,7 +2257,7 @@ export default function App() {
         const made = addOwn(id, name, grow)(c)
         return fileIds.length ? pin(fileIds, id, true, keep)(made) : made
       }
-      editCategories(`Creating ${name}…`, edit, fileIds.length ? `Added to ${name}` : `${name} created`, `create ${name}`)
+      editCategories(`Creating ${name}…`, edit, fileIds.length ? `Tagged with ${name}` : `${name} created`, `create ${name}`)
       setCatSel(id)
     },
     [cats, editCategories]
@@ -2265,8 +2265,8 @@ export default function App() {
 
   const newCategory = useCallback(async () => {
     const name = await askText({
-      title: 'New category',
-      message: 'Files that fit its name are gathered in it by the on-device AI (with smart search on); you can also add files by hand.',
+      title: 'New tag',
+      message: 'Files that fit its name get it from the on-device AI (with smart search on); you can also tag files by hand.',
       action: 'Create',
       input: { label: 'Name', placeholder: 'e.g. Blockchain', check: (v) => ownNameProblem(v) },
     })
@@ -2276,7 +2276,7 @@ export default function App() {
   const renameCategory = useCallback(
     async (c: Category) => {
       const name = await askText({
-        title: 'Rename category',
+        title: 'Rename tag',
         action: 'Rename',
         input: { label: 'Name', value: c.name, check: (v) => (v.trim() === c.name ? 'That’s its name now.' : ownNameProblem(v, c.id)) },
       })
@@ -2289,8 +2289,8 @@ export default function App() {
     async (c: Category) => {
       const ok = await askConfirm({
         title: `Delete ${c.name}?`,
-        message: 'Only the category goes: its files stay where they are.',
-        action: 'Delete category',
+        message: 'Only the tag goes: its files stay where they are.',
+        action: 'Delete tag',
         danger: true,
       })
       if (!ok) return
@@ -2304,7 +2304,7 @@ export default function App() {
     (fileIds: string[], id: string, name: string) => {
       const keep = new Set(cats?.files.keys() ?? [])
       const what = fileIds.length === 1 ? cats?.files.get(fileIds[0])?.meta.name ?? '1 file' : `${fileIds.length} files`
-      editCategories(`Adding ${what} to ${name}…`, pin(fileIds, id, true, keep), `Added ${what} to ${name}`, `add ${what} to ${name}`)
+      editCategories(`Tagging ${what} with ${name}…`, pin(fileIds, id, true, keep), `Tagged ${what} with ${name}`, `tag ${what} with ${name}`)
     },
     [cats, editCategories]
   )
@@ -2312,7 +2312,7 @@ export default function App() {
   const takeOutOfCategory = useCallback(
     (meta: FileMeta, c: Category) => {
       const keep = new Set(cats?.files.keys() ?? [])
-      editCategories(`Taking ${meta.name} out of ${c.name}…`, pin([meta.id], c.id, false, keep), `Took ${meta.name} out of ${c.name}`, `take ${meta.name} out of ${c.name}`)
+      editCategories(`Removing the ${c.name} tag from ${meta.name}…`, pin([meta.id], c.id, false, keep), `Removed the ${c.name} tag from ${meta.name}`, `remove the ${c.name} tag from ${meta.name}`)
     },
     [cats, editCategories]
   )
@@ -2913,9 +2913,9 @@ export default function App() {
                   onClick={() => { smart.clearSearch(); setView('categories') }}
                 >
                   <Icon name="tag" className="tree-folder-ico" />
-                  <span>Categories</span>
+                  <span>Tags</span>
                   {suggestions.fresh > 0 && cats?.topics && !readOnly && (
-                    <span className="nav-count nav-fresh" title="New suggested categories">{suggestions.fresh} new</span>
+                    <span className="nav-count nav-fresh" title="New suggested tags">{suggestions.fresh} new</span>
                   )}
                 </button>
                 <button
@@ -3128,7 +3128,7 @@ export default function App() {
                 </span>
               ))}
               {view === 'trash' && <span className="crumb-sep">/ Trash</span>}
-              {view === 'categories' && <span className="crumb-sep">/ Categories</span>}
+              {view === 'categories' && <span className="crumb-sep">/ Tags</span>}
             </nav>
             <div className="toolbar-actions">
               {selectedIds.length > 0 && !readOnly && (
@@ -3158,7 +3158,7 @@ export default function App() {
                       </button>
                       <button className="btn small" disabled={busyText !== null} onClick={() => setCategorizeFor(selectedIds)}>
                         <Icon name="tag" />
-                        Add to category
+                        Add tag
                       </button>
                       <button className="btn small danger" disabled={busyText !== null} onClick={trashSelected}>
                         Trash selected
@@ -3268,7 +3268,7 @@ export default function App() {
                 {view === 'trash'
                   ? 'Trash view — switch to My drive to upload'
                   : view === 'categories'
-                    ? 'Categories view — open a folder to upload'
+                    ? 'Tags view — open a folder to upload'
                     : (
                     <>
                       <span className="dz-pointer">Drop files here or click to upload</span>
@@ -3324,7 +3324,7 @@ export default function App() {
             onSelect={setCatSel}
             hint={
               !smart.enabled
-                ? 'Turn on smart search (sidebar → On-device AI) to group files by topic and by your categories’ names; for now, by type and by hand.'
+                ? 'Turn on smart search (sidebar → On-device AI) for auto tags, and to tag files by your tags’ names; for now, by type and by hand.'
                 : !cats.topics
                   ? 'Topics show once the on-device search model is ready.'
                   : smart.index.remaining > 0
@@ -3388,7 +3388,7 @@ export default function App() {
             {view === 'drive' && shownFiles.length > 0 && (
               <label className="group-toggle">
                 <input type="checkbox" checked={groupBy} onChange={(e) => chooseGroupBy(e.target.checked)} />
-                Group by category
+                Group by tag
               </label>
             )}
           </div>
