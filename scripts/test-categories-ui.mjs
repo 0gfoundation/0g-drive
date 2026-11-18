@@ -11,8 +11,11 @@
 // chips that fit and scroll sideways; Suggest categories finds the papers on
 // LLM agents as a group (D37), named for agents: renamed and kept, it's a
 // category of the user's with them in it, stored, and isn't suggested again;
-// it grows (D38): a 4th agents paper uploaded later joins it by itself; 3
-// vision papers uploaded later show as "1 new" suggestion, sidebar and chip; a folder's "Group by category" puts
+// it grows (D38): a 4th agents paper uploaded later joins it by itself;
+// each file shows why it's there (D44: "Similar to its files" beside the 3
+// "Put in by you", "Found in its text", "Found by its file name"; in full
+// at 390 px too); 3 vision papers uploaded later show as "1 new"
+// suggestion, sidebar and chip; a folder's "Group by category" puts
 // its files in sections (list and grid), each file once, kept after a
 // reload.
 //
@@ -160,6 +163,8 @@ const chips = (p, group) =>
   }, group)
 const chip = (p, name) => p.locator('.categories .chip', { has: p.locator('.chip-name', { hasText: new RegExp(`^${name}$`) }) })
 const listed = (p) => p.$$eval('.cat-files .result .fname-btn', (els) => els.map((e) => e.textContent.trim()).sort())
+/** each listed file's reason for being in the category shown, as the row says it */
+const reasons = (p) => p.$$eval('.cat-files .result', (rows) => Object.fromEntries(rows.map((r) => [r.querySelector('.fname-btn').textContent.trim(), r.querySelector('.cat-why')?.textContent.replace(/^·\s*/, '') ?? null])))
 const toast = (p) => p.locator('.toast .toast-text').textContent({ timeout: 3000 }).catch(() => null)
 let mk = null
 let masterKeyHex = null
@@ -202,6 +207,9 @@ try {
   const fin = await listed(page)
   const folderLink = await page.locator('.cat-files .result-folder').first().textContent()
   check('a chip lists its files, with the folder each is in', JSON.stringify(fin) === JSON.stringify(['budget.xlsx', 'invoice-031.txt']) && folderLink === 'My drive', JSON.stringify({ fin, folderLink }))
+  const finWhy = await reasons(page)
+  check('…and why each is there: the invoice “Found in its text”, budget.xlsx (no text read) “Found by its file name”',
+    finWhy['invoice-031.txt'] === 'Found in its text' && finWhy['budget.xlsx'] === 'Found by its file name', JSON.stringify(finWhy))
 
   // ── Add to category: a new category of the user's, from a selection
   const before = { ...prompts }
@@ -227,6 +235,7 @@ try {
   await page.locator('.cat-files .result', { hasText: 'lease.txt' }).getByRole('button', { name: 'Take out of Shortlist' }).click()
   await page.waitForFunction(() => document.querySelectorAll('.cat-files .result').length === 1, null, { timeout: 2000 })
   check('a file taken out leaves the list at once', JSON.stringify(await listed(page)) === JSON.stringify(['consensus-whitepaper.txt']))
+  check('…the one left: “Put in by you”', (await reasons(page))['consensus-whitepaper.txt'] === 'Put in by you', JSON.stringify(await reasons(page)))
   await chip(page, 'Finance').click()
   await page.locator('.cat-files .result', { hasText: 'invoice-031.txt' }).getByRole('button', { name: 'Take out of Finance' }).click()
   await page.waitForFunction(() => document.querySelectorAll('.cat-files .result').length === 1, null, { timeout: 2000 }).catch(() => undefined)
@@ -279,6 +288,9 @@ try {
   check('a kept category grows: a new agents paper joins “AI agents” by itself (not put in by hand)',
     grew && grown.includes('agent-benchmark.txt') && s.own.find((o) => o.id === keptId)?.grow === true && s.pins.filter((p) => p.cat === keptId).length === 3,
     JSON.stringify({ grown, pins: s.pins.filter((p) => p.cat === keptId).length }))
+  const grownWhy = await reasons(page)
+  check('…shown as “Similar to its files”; the 3 kept with the suggestion “Put in by you”',
+    grownWhy['agent-benchmark.txt'] === 'Similar to its files' && Object.entries(grownWhy).filter(([, r]) => r === 'Put in by you').length === 3, JSON.stringify(grownWhy))
 
   // ── new suggestions after uploads: 3 vision papers, a new subject
   await uploadLater(VISION)
@@ -382,6 +394,18 @@ try {
     return { w: c.clientWidth, sw: c.scrollWidth, scroll: document.documentElement.scrollWidth - window.innerWidth }
   })
   check('390 px: the Topics row scrolls sideways; the page doesn’t', row390.sw > row390.w && row390.scroll <= 0, JSON.stringify(row390))
+  // the reason beside each file shows in full on a phone, inside its row; the folder gives way first
+  await chip(page, 'AI agents').click()
+  if ((await chip(page, 'AI agents').getAttribute('aria-pressed')) !== 'true') await chip(page, 'AI agents').click()
+  const why390 = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.cat-files .result')]
+    return {
+      n: rows.length,
+      shown: rows.filter((r) => { const w = r.querySelector('.cat-why'); const m = r.querySelector('.cat-meta').getBoundingClientRect(); const b = w?.getBoundingClientRect(); return b && b.width > 0 && w.scrollWidth <= w.clientWidth + 1 && b.right <= m.right + 1 && b.right <= 390 }).length,
+      scroll: document.documentElement.scrollWidth - window.innerWidth,
+    }
+  })
+  check('390 px: each file’s reason shows in full inside its row; no sideways scroll', why390.n >= 4 && why390.shown === why390.n && why390.scroll <= 0, JSON.stringify(why390))
   await page.locator('.categories .chip', { hasText: 'Suggest categories' }).click()
   await page.locator('.cat-suggest').waitFor({ timeout: 60_000 })
   await page.waitForFunction(() => !document.querySelector('.categories .chip:disabled'), null, { timeout: 60_000 })

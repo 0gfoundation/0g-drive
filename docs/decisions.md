@@ -510,3 +510,10 @@ A file's embedding was made from ~600 characters: a paper's title and abstract (
 
 Verified: `npm run test:subject` (pieces: 10 of ~500 characters spread start to end, no bibliography or table, ending at a sentence; Chinese at 。; none for a short text), `npm run test:discover`, `npm run test:search` (19/19), `npm run test:categories`, `npm run test:reindex` (a v1 entry indexed again on this device as v3, with `w`).
 
+### D44 — Why a file is in a category, shown beside it (user decision, 2026-11-18)
+On staging, memskill.pdf (an LLM agents paper) was in the user's "Blockchain" category, kept from a suggestion, and nothing said why: a file is in one of the user's categories when they put it in (by hand, or with a suggestion they kept — the suggestion then was the mixed group of D43's motivation), when it grew in (D38), or when the category's name fits it (D35); in a topic when its text, its photo's tags or its file name alone fit.
+- `groupFiles` keeps the reason for each file in each category (`Grouping.why`; a pin wins over the rest, as it does for membership); nothing new is stored.
+- A category's list shows it after the folder: "in My drive · Put in by you" — **Put in by you**, **Similar to its files**, **Fits the name**, **Found in its text**, **Found in the photo**, **Found by its file name**; types say nothing (what they are says why). The folder gives way (ellipsis) so the reason always shows in full, at 390 px too. **Take out** (−) was there already; a file taken out stays out.
+
+Verified: `npm run test:categories` (each reason, for put in, name, topics from text, photo and file name, types; grown into a kept category: "grew"), `npm run test:categories-ui` (the Finance list: "Found in its text", "Found by its file name"; Shortlist: "Put in by you"; a kept category: the grown paper "Similar to its files", the 3 kept "Put in by you"; at 390 px each reason in full inside its row, no sideways scroll).
+
