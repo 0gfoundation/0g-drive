@@ -2357,6 +2357,21 @@ tbody tr:hover {
   font-size: var(--fs-xs);
   padding: 0 4px;
 }
+/* a category's file: its folder gives way (ellipsis) so why it's here always shows */
+.cat-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.cat-in {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-why {
+  flex: none;
+}
 .result-excerpt {
   font-size: var(--fs-xs);
   color: var(--text-dim);

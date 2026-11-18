@@ -228,6 +228,36 @@ check('a pin of a file no longer in the drive is ignored', !chain.includes('gone
 check('own categories listed first, even empty; empty built-ins not listed',
   g.categories[0].id === 'own:chain' && g.categories[1].id === 'own:cook' && g.categories.every((c) => c.kind === 'own' || c.count > 0))
 
+// ── why each file is in each category (shown beside it) ──
+const why = (file, cat) => g.why.get(file)?.get(cat)
+check('why: put in by hand → “put” (Agora.pdf in Blockchain)', why('Agora.pdf', 'own:chain') === 'put')
+check('why: fits an own category’s name → “name”', chain.filter((n) => n !== 'Agora.pdf').every((n) => why(n, 'own:chain') === 'name'), chain.map((n) => `${n}:${why(n, 'own:chain')}`).join(' '))
+const reasonsRight = files.every((f) => [...(g.why.get(f.id) ?? [])].every(([c, r]) =>
+  c.startsWith('type:') ? r === 'type'
+    : c.startsWith('topic:') ? r === 'put' || r === (f.search?.c ? 'photo' : f.search && !f.search.t ? 'filename' : 'text')
+      : ['put', 'name', 'grew'].includes(r)))
+check('why: types by type; topics from the text, the photo, or the file name alone', reasonsRight)
+check('why: every category a file is in has a reason, and only those', files.every((f) => JSON.stringify([...(g.why.get(f.id)?.keys() ?? [])]) === JSON.stringify(g.of.get(f.id))))
+check('why: a file taken out has no reason there', !g.why.get('carbonara.md')?.has('topic:recipes'))
+// a kept category (from a suggestion) grows: 4 agents papers put in, a 5th grows in (the drive's other files don't)
+{
+  const AGENTS = [
+    'Reusable Skills for LLM Agents. Abstract: Large language model agents struggle to retain skills across tasks. We give agents a memory of reusable skills.',
+    'Planning with Language Model Agents. Abstract: We study how language model agents plan, act and revise their plans in interactive tasks.',
+    'Tool Use for LLM Agents. Abstract: Agents built on large language models call tools such as search and calculators; we teach agents when to call which tool.',
+    'Memory in LLM Agents: A Survey. Abstract: We survey how language model agents store and retrieve memory, from long context to episodic stores.',
+    'Benchmarking Web Agents. Abstract: We release a benchmark of realistic web tasks for language model agents; the best agents complete fewer than half.',
+  ]
+  const extra = []
+  for (const [k, text] of AGENTS.entries()) extra.push({ id: `agents-${k}.pdf`, name: `agents-${k}.pdf`, mime: 'application/pdf', uploadedAt: k, search: await indexText(`agents-${k}.pdf`, text) })
+  const put = extra.slice(0, 4).map((f) => f.id)
+  const kept = { v: 1, own: [{ id: 'own:kept', name: 'Group', grow: true }], pins: put.map((file) => ({ file, cat: 'own:kept', in: true })), updatedAt: 0 }
+  const gk = C.groupFiles([...files, ...extra], kept, topicVecs, new Map())
+  const reasons = (gk.files.get('own:kept') ?? []).map((n) => `${n}:${gk.why.get(n)?.get('own:kept')}`)
+  check('why: grown into a kept category → “grew”; the files put in → “put”',
+    put.every((n) => gk.why.get(n)?.get('own:kept') === 'put') && gk.why.get('agents-4.pdf')?.get('own:kept') === 'grew', reasons.join(' '))
+}
+
 // ── edits are idempotent ──
 const e0 = { v: 1, own: [], pins: [], updatedAt: 0 }
 const twice = (edit) => JSON.stringify(edit(edit(e0))) === JSON.stringify(edit(e0))

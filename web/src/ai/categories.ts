@@ -269,6 +269,14 @@ export function fitsOwn(file: CatFile, nameVec: ArrayLike<number> | undefined): 
   return cosineQ(nameVec, dequantize(e.e)) >= (nameOnly(e) ? CATEGORIZE.nameOnlyOwnMinFit : CATEGORIZE.ownMinFit)
 }
 
+/**
+ * Why a file is in a category, as shown beside it: put in by the user (a
+ * pin, or kept from a suggestion), grown into a kept category by
+ * resemblance, fitting the name of the user's category, a topic found in
+ * its text, in a photo or from its file name alone, or its type.
+ */
+export type Reason = 'put' | 'grew' | 'name' | 'text' | 'photo' | 'filename' | 'type'
+
 export interface Grouping {
   /** every category with at least one file (own ones always), in display order */
   categories: (Category & { count: number })[]
@@ -276,7 +284,12 @@ export interface Grouping {
   files: Map<string, string[]>
   /** category ids by file id */
   of: Map<string, string[]>
+  /** why each file is in each of its categories: file id → category id → reason */
+  why: Map<string, Map<string, Reason>>
 }
+
+/** A topic found for a file: from the photo, from its file name alone, or from its text. */
+const topicReason = (e: SearchEntry | undefined): Reason => (e?.c ? 'photo' : e && nameOnly(e) ? 'filename' : 'text')
 
 /**
  * Group `files`: types, topics (when `topicVecs` is given: the text model
@@ -291,30 +304,31 @@ export function groupFiles(
   ownVecs: Map<string, ArrayLike<number>> | null
 ): Grouping {
   const own: Category[] = (user?.own ?? []).map((c) => ({ id: c.id, name: c.name, kind: 'own' }))
-  const of = new Map<string, Set<string>>()
+  // each file's categories, with why it's in each (the last reason found wins: a pin over the rest)
+  const of = new Map<string, Map<string, Reason>>()
   const ids = new Set(files.map((f) => f.id))
   for (const f of files) {
-    const cats = new Set<string>()
+    const cats = new Map<string, Reason>()
     const type = typeOf(f.name, f.mime)
-    if (type) cats.add(type)
-    for (const t of topicsOf(f, topicVecs)) cats.add(t)
-    for (const c of own) if (fitsOwn(f, ownVecs?.get(c.id))) cats.add(c.id)
+    if (type) cats.set(type, 'type')
+    for (const t of topicsOf(f, topicVecs)) cats.set(t, topicReason(f.search))
+    for (const c of own) if (fitsOwn(f, ownVecs?.get(c.id))) cats.set(c.id, 'name')
     of.set(f.id, cats)
   }
   // kept categories grow by resemblance (with smart search on: the files have their vectors then)
-  if (topicVecs) for (const [id, cs] of growJoins(files, user)) for (const c of cs) of.get(id)!.add(c)
+  if (topicVecs) for (const [id, cs] of growJoins(files, user)) for (const c of cs) of.get(id)!.set(c, 'grew')
   const known = new Set([...TYPES, ...TOPICS, ...own].map((c) => c.id))
   for (const p of user?.pins ?? []) {
     if (!ids.has(p.file) || !known.has(p.cat)) continue
-    if (p.in) of.get(p.file)!.add(p.cat)
+    if (p.in) of.get(p.file)!.set(p.cat, 'put')
     else of.get(p.file)!.delete(p.cat)
   }
   const byCat = new Map<string, string[]>()
-  for (const f of files) for (const c of of.get(f.id)!) byCat.set(c, [...(byCat.get(c) ?? []), f.id])
+  for (const f of files) for (const c of of.get(f.id)!.keys()) byCat.set(c, [...(byCat.get(c) ?? []), f.id])
   const categories = [...own, ...TOPICS, ...TYPES]
     .map((c) => ({ id: c.id, name: c.name, kind: c.kind, count: byCat.get(c.id)?.length ?? 0 }))
     .filter((c) => c.count > 0 || c.kind === 'own')
-  return { categories, files: byCat, of: new Map([...of].map(([k, v]) => [k, [...v]])) }
+  return { categories, files: byCat, of: new Map([...of].map(([k, v]) => [k, [...v.keys()]])), why: of }
 }
 
 // ─── Edits (idempotent: the same edit twice is the edit once) ─────────

@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { DriveState, FileMeta } from '@0gdrive/core'
 import { embedTexts } from './ai/client'
-import { groupFiles, topicPhrases, TOPICS, type Category, type Grouping, type TopicVecs } from './ai/categories'
+import { groupFiles, topicPhrases, TOPICS, type Category, type Grouping, type Reason, type TopicVecs } from './ai/categories'
 import { discover, groupable, nameFrom, PEOPLE, type Found } from './ai/discover'
 import { allFiles } from './SmartSearch'
 import { subscribePendingSearch } from './searchPending'
@@ -300,6 +300,17 @@ function SuggestionsList({
 
 const KIND_TITLES: Record<Category['kind'], string> = { own: 'Your categories', topic: 'Topics', type: 'Types' }
 
+/** Why a file is in the category shown, beside it (a type needs no saying). */
+const REASONS: Record<Reason, string | null> = {
+  put: 'Put in by you',
+  grew: 'Similar to its files',
+  name: 'Fits the name',
+  text: 'Found in its text',
+  photo: 'Found in the photo',
+  filename: 'Found by its file name',
+  type: null,
+}
+
 /** One category's chip. */
 function Chip({ c, selected, onSelect }: { c: Category & { count: number }; selected: boolean; onSelect: () => void }) {
   return (
@@ -418,11 +429,17 @@ export function CategoriesView({
                     <button className="fname-btn" onClick={() => onOpen(meta)}>
                       {meta.name}
                     </button>
-                    <div className="result-meta muted">
-                      in{' '}
-                      <button className="crumb result-folder" onClick={() => onGoToFolder(folder)}>
-                        {folder === '' ? 'My drive' : folder}
-                      </button>
+                    <div className="result-meta cat-meta muted">
+                      <span className="cat-in">
+                        in{' '}
+                        <button className="crumb result-folder" onClick={() => onGoToFolder(folder)}>
+                          {folder === '' ? 'My drive' : folder}
+                        </button>
+                      </span>
+                      {(() => {
+                        const why = REASONS[grouping.why.get(meta.id)?.get(cat.id) ?? 'type']
+                        return why && <span className="cat-why">· {why}</span>
+                      })()}
                     </div>
                   </div>
                   <div className="row-actions">
