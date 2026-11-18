@@ -15,7 +15,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(root, 'node_modules/.cache/test-subject')
 mkdirSync(outDir, { recursive: true })
 await build({ entryPoints: [join(root, 'web/src/ai/subject.ts')], bundle: true, format: 'esm', platform: 'node', outdir: outDir, outExtension: { '.js': '.mjs' }, logLevel: 'error' })
-const { subjectText, pdfTitle } = await import(pathToFileURL(join(outDir, 'subject.mjs')))
+const { subjectText, pdfTitle, chunksOf, MAX_CHUNKS, CHUNK_CHARS } = await import(pathToFileURL(join(outDir, 'subject.mjs')))
 
 let failed = 0
 const check = (name, ok, detail = '') => {
@@ -61,6 +61,23 @@ const zh = '区块链共识协议的公平排序 王伟, 张明, 李翔 清华�
 const s4 = subjectText(zh, '区块链共识协议的公平排序')
 check('a Chinese paper: title and 摘要 on, no authors or institution', s4.startsWith('区块链共识协议的公平排序') && !/王伟|张明|李翔|清华/.test(s4) && /验证者/.test(s4), JSON.stringify(s4))
 check('no text: the title alone, or nothing', subjectText(undefined, 'Title') === 'Title' && subjectText(undefined) === undefined)
+
+// ── the whole file in pieces (D43): passage-sized, spread over it, no bibliography, no tables
+{
+  const section = (k) => `Section ${k}. ` + `In this part we describe how the agents keep a memory of skills and use it on task ${k}. `.repeat(12)
+  const body = Array.from({ length: 40 }, (_, k) => section(k)).join(' ')
+  const table = ' 0.12 0.34 0.56 | 1.2 3.4 5.6 | 7.8 9.0 1.1 | 2.2 3.3 4.4 | 5.5 6.6 7.7 | 8.8 9.9 0.1 '.repeat(20)
+  const refs = ' References [1] Zeng Ming, Xiang Li. Skills for agents. ICLR 2024. [2] Chen Wei, Wu Hao. Memory. NeurIPS 2023. '.repeat(30)
+  const pieces = chunksOf(body + table + refs)
+  check(`a long text: ${MAX_CHUNKS} pieces of about ${CHUNK_CHARS} characters`, pieces.length === MAX_CHUNKS && pieces.every((p) => p.length <= CHUNK_CHARS && p.length > CHUNK_CHARS / 2), pieces.map((p) => p.length).join(' '))
+  const sections = pieces.map((p) => Number(/Section (\d+)/.exec(p)?.[1] ?? -1))
+  check('…spread over all of it, start to end', sections[0] <= 1 && sections.at(-1) >= 35, JSON.stringify(sections))
+  check('…no bibliography (author names, venues) and no table', !pieces.some((p) => /Zeng Ming|ICLR|NeurIPS|\d\.\d \d\.\d/.test(p)))
+  check('…ending at a sentence', pieces.every((p) => /\.$/.test(p)), pieces.map((p) => p.slice(-12)).join(' | '))
+  check('a short text (about its opening): fewer than 2 pieces, nothing to add', chunksOf(section(1).slice(0, 700)).length < 2 && chunksOf(undefined).length === 0)
+  const zhBody = '本文研究智能体如何在多轮任务中存储和检索经验。'.repeat(120)
+  check('Chinese text: pieces end at 。', chunksOf(zhBody).length >= 2 && chunksOf(zhBody).every((p) => p.endsWith('。')))
+}
 
 console.log(failed ? `${failed} FAILED` : 'SUBJECT TEST PASSED ✓')
 process.exitCode = failed ? 1 : 0

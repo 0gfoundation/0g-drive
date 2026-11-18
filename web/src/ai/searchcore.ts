@@ -6,10 +6,10 @@ import type { SearchEntry } from '@0gdrive/core'
 
 export type { SearchEntry }
 
-/** 2: embeddings made from what a file is about (subject.ts, D41); 1: from its opening as read */
-export const SEARCH_ENTRY_VERSION = 2
+/** 3: a file's whole text read too, as `w` (D43); 2: embeddings made from what a file is about (subject.ts, D41); 1: from its opening as read */
+export const SEARCH_ENTRY_VERSION = 3
 
-/** An entry made the old way from a file's text (v1, D41): indexed again, from the file. Photos and names alone are the same either way. */
+/** An entry made from a file's text before the whole file was read (v1, v2): indexed again, from the file. Photos and names alone are the same either way. */
 export const outdatedSearch = (e: SearchEntry): boolean => (e.v ?? 1) < SEARCH_ENTRY_VERSION && !!e.t && !e.c
 /**
  * Two files' text vectors made the old way (v1) are more alike than made
@@ -68,6 +68,71 @@ export function cosineQ(query: ArrayLike<number>, q: Int8Array): number {
     norm += q[i] * q[i]
   }
   return norm > 0 ? dot / Math.sqrt(norm) : 0
+}
+
+// ─── A file's meaning, and its likeness to other files (D43) ─────────
+//
+// `e` is what a file is about (title and abstract, or its opening cleaned);
+// `w` its whole text, as the average of pieces spread over it. Search goes
+// by the two together. Files are compared with each other (Suggest
+// categories, growth) by that, less part of what every text has in common
+// (TEXT_CENTRE): an average of many pieces leans towards it, so without
+// this two long files on different subjects are as alike as two short
+// files on the same one, and no one bar groups both. Built-in topics go by
+// `e` alone (they were tuned on it).
+
+/**
+ * The average of the whole-file vectors of a reference sample (27 arXiv
+ * papers in 4 subjects, 15 Wikipedia and Wikivoyage articles in 5): what
+ * text in general reads like to the model. scripts/calibrate-whole-file.mjs.
+ */
+export const TEXT_CENTRE =
+  '2g7c6O8C9wcA/xcJK/z77BX96QL/0goO8fgA8xDEDBMVDe8dAwHxCOoMAw8K+/YPsOr++gEHAgUY/9zxBfnhAhILG/oKJN7y4gsXFusCJOQs5fH55PoO/w/nMPwKGhT9Af4Of+kF4/Mc+w7h+vn0BfL/+/L+EhoBAu8WDijS2/ruySj6AhL/9grj7BIJPzIp9zQV6xv3G9oQ7hf6BPXuAdcqAA/86g3mHRUj6+zh//PN9/b1A98PDPoK9Aj9COL0KAve21L29PS5Bt/P4ekf6Pck5xnO8h3u3Q7uDgbvIMXDDNgs3vDz1x4g2NMKFA3QCeMB7wAKxRkOHe3k//IR7tcd+g8iChcpCfzb//AC5gUTAhT6DNztFQASKQwe5wEO/ATvExHlG/wa/PT9+Af3+uf4Ig4T9wrIDQ8PAPUuDL8H7P4XFPjf5gIOCxXx9hohBzjs8EEp1fXxFAg67+wQH/7yFiPqCgL9GewBJhv21/URItgEEBMTAh71Ghn8HgUB'
+/** How much of TEXT_CENTRE is taken out of a file's meaning to compare files (tried 0.5, 0.7: 0.5 groups best). */
+export const CENTRE_WEIGHT = 0.5
+
+const unitOf = (v: ArrayLike<number>): Float32Array => {
+  const out = Float32Array.from(v)
+  let n = 0
+  for (const x of out) n += x * x
+  n = Math.sqrt(n) || 1
+  for (let i = 0; i < out.length; i++) out[i] /= n
+  return out
+}
+let centre: Float32Array | null = null
+const meaningCache = new Map<string, Float32Array>()
+const likenessCache = new Map<string, Float32Array>()
+const cached = (cache: Map<string, Float32Array>, key: string, make: () => Float32Array) => {
+  let v = cache.get(key)
+  if (!v) {
+    v = make()
+    if (cache.size > 20_000) cache.clear()
+    cache.set(key, v)
+  }
+  return v
+}
+
+/** A file's meaning, normalized: what it's about and its whole text together (`e` alone without `w`). */
+export function meaningOf(entry: SearchEntry): Float32Array | null {
+  const { e, w } = entry
+  if (!e) return null
+  return cached(meaningCache, w ? e + w : e, () => {
+    const a = unitOf(dequantize(e))
+    if (!w) return a
+    const b = unitOf(dequantize(w))
+    return unitOf(a.map((x, i) => x + b[i]))
+  })
+}
+
+/** A file's vector to compare with other files' (dot product = likeness): its meaning less part of TEXT_CENTRE. */
+export function likenessOf(entry: SearchEntry): Float32Array | null {
+  const m = meaningOf(entry)
+  if (!m) return null
+  return cached(likenessCache, entry.w ? entry.e! + entry.w : entry.e!, () => {
+    centre ??= unitOf(dequantize(TEXT_CENTRE))
+    const c = centre
+    return c.length === m.length ? unitOf(m.map((x, i) => x - CENTRE_WEIGHT * c[i])) : m
+  })
 }
 
 // ─── Photo tags (CLIP zero-shot) ──────────────────────────────────────
@@ -183,8 +248,11 @@ export function scoreFile(
   if (!entry) return best
   // exact keyword in the extracted text (codes, numbers, CJK terms)
   if (needle.length >= 2 && entry.t?.toLowerCase().includes(needle)) best = Math.max(best, 1.0)
-  if (entry.e) {
-    const s = (cosineQ(q.vec, dequantize(entry.e)) - CAL.textFloor) / CAL.textSpan
+  const meaning = meaningOf(entry)
+  if (meaning) {
+    let cos = 0
+    if (q.vec.length === meaning.length) for (let i = 0; i < meaning.length; i++) cos += q.vec[i] * meaning[i]
+    const s = (cos - CAL.textFloor) / CAL.textSpan
     best = Math.max(best, s)
   }
   if (entry.c && q.clip) {
