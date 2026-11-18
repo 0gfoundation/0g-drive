@@ -104,3 +104,51 @@ export function pdfTitle(items: PdfItem[]): string | undefined {
   const words = title.split(' ').filter((w) => /\p{L}{3,}/u.test(w))
   return words.length >= 2 && title.length <= 200 ? title : undefined
 }
+
+// ─── The whole file, in pieces (D43) ──────────────────────────────────
+//
+// The text model is trained on passages of up to 128 tokens; a longer one
+// reads as vaguely like everything (a paper's first 2,400 characters in one
+// pass: likeness to its own subject 0.85, to others 0.76). So a file's
+// whole text is read as a few passage-sized pieces, spread over it, and
+// their embeddings are averaged (engine.ts). References and bibliographies
+// are left out (author names, venues), and so are pieces that are mostly
+// not words (tables, equations, data).
+
+/** Characters in a piece: about what the model reads in one pass. */
+export const CHUNK_CHARS = 500
+/** Pieces of a file embedded at most, spread evenly over it. */
+export const MAX_CHUNKS = 10
+/** Share of a piece that must be letters (else a table, equations, data). */
+const PROSE_SHARE = 0.6
+const REFERENCES = /\b(?:References|REFERENCES|Bibliography|BIBLIOGRAPHY|参考文献)\b/g
+
+/**
+ * Up to MAX_CHUNKS passage-sized pieces of a file's text, spread evenly
+ * over it, ending at a sentence where one is near. None for a text under
+ * 2 pieces long: about as long as its opening, nothing to add to it.
+ */
+export function chunksOf(text: string | undefined): string[] {
+  if (!text) return []
+  const flat = text.replace(/\s+/g, ' ').trim()
+  // the last "References" heading in the second half: what follows is the bibliography
+  let refs = -1
+  for (const m of flat.matchAll(REFERENCES)) refs = m.index
+  const body = refs > flat.length / 2 ? flat.slice(0, refs) : flat
+  // not much more than the opening the subject embedding reads already
+  if (body.length < 2 * CHUNK_CHARS) return []
+  const pieces: string[] = []
+  for (let at = 0; at < body.length; ) {
+    let end = Math.min(body.length, at + CHUNK_CHARS)
+    if (end < body.length) {
+      const stop = Math.max(body.lastIndexOf('. ', end), body.lastIndexOf('。', end))
+      if (stop > at + CHUNK_CHARS / 2) end = stop + 1
+    }
+    const piece = body.slice(at, end).trim()
+    const letters = piece.match(/\p{L}/gu)?.length ?? 0
+    if (piece.length > CHUNK_CHARS / 5 && letters / piece.length > PROSE_SHARE) pieces.push(piece)
+    at = end
+  }
+  if (pieces.length <= MAX_CHUNKS) return pieces
+  return Array.from({ length: MAX_CHUNKS }, (_, i) => pieces[Math.floor((i * pieces.length) / MAX_CHUNKS)])
+}

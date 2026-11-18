@@ -63,6 +63,7 @@
     "test:discover": "node scripts/test-discover.mjs",
     "test:subject": "node scripts/test-subject.mjs",
     "test:reindex": "npm run build -w core && node scripts/test-reindex.mjs",
+    "calibrate:whole-file": "node scripts/calibrate-whole-file.mjs",
     "test:categories-ui": "npm run build -w core && node scripts/test-categories-ui.mjs"
   },
   "engines": {

@@ -1,4 +1,4 @@
-// Re-indexing (D41): a file indexed the old way (a v1 search entry, its
+// Re-indexing (D41, D43): a file indexed the old way (a v1 search entry, its
 // embedding made from its opening as read: authors and all) is indexed
 // again on this device, in the background, from what it's about — and
 // saved as v2 with the sidebar's Save, with no wallet prompt. The new entry
@@ -93,7 +93,9 @@ await context.addInitScript(() => {
 const NAME = 'skills-paper.txt'
 const TEXT = 'Provided proper attribution is provided, Acme hereby grants permission to reproduce the tables and figures in this paper. ' +
   'Reusable Skills for LLM Agents Zeng Ming ∗ Acme Research zengming@acme.com Xiang Li ∗ Acme Research xli@acme.com Chen Wei † Acme Brain ' +
-  'Abstract Large language model agents struggle to retain skills across tasks. We give agents a memory of reusable skills and evaluate on agent benchmarks.'
+  'Abstract Large language model agents struggle to retain skills across tasks. We give agents a memory of reusable skills and evaluate on agent benchmarks. ' +
+  // the rest of the paper: read as pieces too (D43)
+  Array.from({ length: 8 }, (_, k) => `Section ${k + 1}. Agents store each skill they learn with a short description, retrieve the skills that fit a new task, and refine them after use. `.repeat(3)).join('')
 const AUTHORS = /Zeng|Xiang|Chen Wei|acme\.com/
 // and an invoice under a plain name: indexed again, it's in Finance by its text (the paper's short abstract
 // fits no built-in topic for sure); indexed the old way here, with a blank vector, it's in none
@@ -159,9 +161,10 @@ try {
   await page.locator('.sidebar .search-index button', { hasText: 'Save' }).click()
   const s2 = await waitStatus(/^(?![\s\S]*indexed on this device)/, 5 * 60_000)
   const e = (await store().loadDrive()).folders.get('').files.find((f) => f.name === NAME).search
-  check('Save stores it as v2, no wallet prompt', e?.v === 2 && txs === before.txs && signs === before.signs && !/indexed on this device/.test(s2), JSON.stringify({ v: e?.v, s2 }))
+  check('Save stores it as v3, no wallet prompt', e?.v === 3 && txs === before.txs && signs === before.signs && !/indexed on this device/.test(s2), JSON.stringify({ v: e?.v, s2 }))
   // (a text file's opening on one line, notice + title + authors: no font sizes to find its title by — a PDF's comes from its largest text)
   check('…embedded from its abstract: no authors or notice in what it was made from', !!e?.s && e.s.startsWith('Large language model agents') && !AUTHORS.test(e.s) && !/permission/.test(e.s), JSON.stringify(e?.s))
+  check('…and its whole text read too (w)', typeof e?.w === 'string' && e.w.length > 100)
   check('…its opening kept as the excerpt (results, an author’s name searched)', e?.t === TEXT.slice(0, 280).replace(/\s+/g, ' ').trim() || e?.t?.startsWith('Provided proper attribution'), JSON.stringify(e?.t?.slice(0, 60)))
   await page.reload()
   await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 5 * 60_000 })

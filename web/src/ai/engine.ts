@@ -25,7 +25,7 @@ import {
   quantize,
   type SearchEntry,
 } from './searchcore'
-import { subjectText } from './subject'
+import { chunksOf, subjectText } from './subject'
 import { FULL_TEXT_MODEL, SMALL_TEXT_MODEL } from './modelOn0g'
 
 // Chosen over multilingual-e5-small/-base after scripts/test-search.mjs:
@@ -194,15 +194,33 @@ export async function indexPhoto(name: string, image: RawImage): Promise<SearchE
 /**
  * A text file's entry: embedded from what it's about (a paper's title and
  * abstract; other text cleaned of authors, greetings, boilerplate: D41),
- * kept as `s`; its opening as read kept as `t`, for results and exact words.
+ * kept as `s`; its opening as read kept as `t`, for results and exact words;
+ * and its whole text, as up to 10 pieces spread over it, averaged (`w`, D43).
  */
 export async function indexText(name: string, text: string | undefined, title?: string): Promise<SearchEntry> {
-  const subject = subjectText(text, title)
+  const subject = subjectText(text?.slice(0, SUBJECT_READ_CHARS), title)
   const passage = passageText(name, undefined, subject)
-  const e = passage ? quantize(await embedPassage(passage)) : undefined
+  const pieces = chunksOf(text)
+  const whole = pieces.length >= 2 ? pieces : []
+  const vecs = passage || whole.length ? await embedTexts([...(passage ? [passage] : []), ...whole]) : []
+  const e = passage ? quantize(vecs[0]) : undefined
+  const w = whole.length ? quantize(average(vecs.slice(passage ? 1 : 0))) : undefined
   const t = makeExcerpt(text)
   const s = makeExcerpt(subject)
-  return { v: SEARCH_ENTRY_VERSION, t, ...(s && s !== t ? { s } : {}), e }
+  return { v: SEARCH_ENTRY_VERSION, t, ...(s && s !== t ? { s } : {}), e, ...(w ? { w } : {}) }
+}
+
+/** The text a file's subject is looked for in: its opening (an abstract starts near the top). */
+const SUBJECT_READ_CHARS = 16 * 1024
+
+/** The normalized average of normalized vectors. */
+function average(vecs: Float32Array[]): Float32Array {
+  const out = new Float32Array(vecs[0].length)
+  for (const v of vecs) for (let i = 0; i < v.length; i++) out[i] += v[i]
+  let n = 0
+  for (const x of out) n += x * x
+  n = Math.sqrt(n) || 1
+  return out.map((x) => x / n)
 }
 
 /**

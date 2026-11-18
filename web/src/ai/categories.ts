@@ -6,7 +6,7 @@
 // stored. No DOM, no model code: the vectors come in from the caller.
 
 import type { DriveCategories, SearchEntry } from '@0gdrive/core'
-import { cosineQ, dequantize, likenessShift } from './searchcore'
+import { cosineQ, dequantize, likenessOf, likenessShift } from './searchcore'
 
 export type CategoryKind = 'type' | 'topic' | 'own'
 
@@ -166,28 +166,12 @@ export const GROW = {
   k: 3,
   /** of them, at least this many put in the category by hand */
   need: 2,
-  /** and its average likeness to those files at least this (0.37 on v1 embeddings; v2, D41: 0.35; v1 files held to 0.37 by likenessShift, D42) */
-  floor: 0.35,
+  /** and its average likeness to those files at least this (likenessOf, D43: on real papers and articles 57 of 68 held out came back; v1 files 0.02 higher) */
+  floor: 0.2,
   /** the files compared at most (newest first) */
   maxFiles: 800,
 }
 
-const unitCache = new Map<string, Float32Array>()
-/** A search entry's text vector, normalized (kept: the same entries come back with every change). */
-function unitOf(e: string): Float32Array {
-  let v = unitCache.get(e)
-  if (!v) {
-    const q = dequantize(e)
-    v = new Float32Array(q.length)
-    let n = 0
-    for (let i = 0; i < q.length; i++) n += q[i] * q[i]
-    n = Math.sqrt(n) || 1
-    for (let i = 0; i < q.length; i++) v[i] = q[i] / n
-    if (unitCache.size > 20_000) unitCache.clear()
-    unitCache.set(e, v)
-  }
-  return v
-}
 const dot = (a: Float32Array, b: Float32Array) => {
   let s = 0
   for (let i = 0; i < a.length; i++) s += a[i] * b[i]
@@ -211,7 +195,7 @@ export function growJoins(files: CatFile[], user: DriveCategories | null | undef
     .filter((f) => f.search?.e && f.search.t && !f.search.c)
     .sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0))
     .slice(0, GROW.maxFiles)
-  const vecs = pool.map((f) => unitOf(f.search!.e!))
+  const vecs = pool.map((f) => likenessOf(f.search!)!)
   const shift = pool.map((f) => likenessShift(f.search!))
   for (let i = 0; i < pool.length; i++) {
     const id = pool[i].id

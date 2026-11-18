@@ -8,7 +8,7 @@
 // caller. Nothing here is stored.
 
 import type { SearchEntry } from '@0gdrive/core'
-import { dequantize, likenessShift } from './searchcore'
+import { dequantize, likenessOf, likenessShift } from './searchcore'
 import { cleanText } from './subject'
 
 export { cleanText }
@@ -16,13 +16,13 @@ export { cleanText }
 /** Tuned on a sample of papers and everyday files (scripts/test-discover.mjs). */
 export const DISCOVER = {
   /**
-   * groups merge while their files are, on average, at least this similar
-   * (0.35 for embeddings of openings as read, v1; 0.33 for embeddings of
-   * what files are about, v2 (D41): less in common between papers now that
-   * "Abstract:" and the authors are out); a file still v1 is held to 0.35
-   * by likenessShift (D42)
+   * groups merge while their files are, on average, at least this alike
+   * (likenessOf: meaning less what all text shares, D43; on real papers and
+   * articles, scripts/calibrate-whole-file.mjs: 0.2–0.24 keep groups ≥ 96%
+   * one subject on any mix of long and short files; v1 files held 0.02
+   * higher by likenessShift)
    */
-  link: 0.33,
+  link: 0.24,
   /** a group needs this many files */
   minFiles: 3,
   /** skip a group that is nearly a category already: shared files / files in either, at least this */
@@ -105,11 +105,13 @@ export function discover(all: DiscoverFile[], inCategory: (id: string) => string
     .slice(0, DISCOVER.maxFiles)
   const n = files.length
   if (n < DISCOVER.minFiles) return []
+  // compared by likeness (meaning less what all text shares: D43); named by what they're about (e)
+  const like = files.map((f) => likenessOf(f.search!)!)
   const vecs = files.map((f) => unit(dequantize(f.search!.e!)))
   const shift = files.map((f) => likenessShift(f.search!))
 
   // average linkage, by Lance–Williams: merging A and B, s(A∪B, C) = (|A| s(A,C) + |B| s(B,C)) / (|A| + |B|)
-  const sim: Float32Array[] = vecs.map((a, i) => Float32Array.from(vecs, (b, j) => dot(a, b) - shift[i] - shift[j]))
+  const sim: Float32Array[] = like.map((a, i) => Float32Array.from(like, (b, j) => dot(a, b) - shift[i] - shift[j]))
   const members: (number[] | null)[] = files.map((_, i) => [i])
   for (;;) {
     let best = -Infinity

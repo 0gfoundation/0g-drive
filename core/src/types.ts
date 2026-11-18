@@ -77,8 +77,8 @@ export interface FileMeta {
  * L2-normalized embeddings, base64-encoded.
  */
 export interface SearchEntry {
-  /** 2: the embedding is made from `s`, what the file is about (D41); 1: from its opening as read */
-  v: 1 | 2
+  /** 3: `w` made from the whole file, when it's longer than its opening (D43); 2: the embedding is made from `s`, what the file is about (D41); 1: from its opening as read */
+  v: 1 | 2 | 3
   /** Leading extracted text (≤280 chars) — shown in results, matched by name search. */
   t?: string
   /**
@@ -91,6 +91,12 @@ export interface SearchEntry {
   g?: string[]
   /** paraphrase-multilingual-MiniLM-L12-v2 passage embedding (384-d). */
   e?: string
+  /**
+   * The whole file's text, as the average of the embeddings of up to 10
+   * passage-sized pieces spread over it (384-d; v3). Absent when the text
+   * is about as long as its opening (`e` has it all).
+   */
+  w?: string
   /** CLIP ViT-B/32 image embedding (512-d), photos only. */
   c?: string
 }

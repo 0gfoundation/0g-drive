@@ -210,10 +210,11 @@ const TEXT_EXTS = new Set([
   'ts', 'tsx', 'js', 'jsx', 'mjs', 'py', 'rs', 'go', 'c', 'h', 'cpp', 'java',
   'sh', 'css', 'html', 'sql', 'sol', 'tex', 'rtf',
 ])
-/** Bytes of a text file read for indexing (what it is about is picked from them: subject.ts). */
-const TEXT_READ_BYTES = 16 * 1024
+/** Bytes of a text file read for indexing: what it's about is picked from the opening, and pieces from all of it (subject.ts, D43). */
+const TEXT_READ_BYTES = 256 * 1024
 const PDF_MAX_BYTES = 50 * 1024 * 1024
-const PDF_PAGES = 2
+/** Pages of a PDF read for indexing: the first for its title and abstract, all of them (up to this) for pieces of the whole (D43). */
+const PDF_PAGES = 30
 export const PHOTO_MAX_BYTES = 40 * 1024 * 1024
 
 const ext = (name: string) => name.split('.').pop()?.toLowerCase() ?? ''
