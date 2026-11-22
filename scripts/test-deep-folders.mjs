@@ -2,7 +2,10 @@
 // injected wallet backed by a FRESH key funded from .env's test wallet.
 // Makes Spark/consensus/blockchain/algorithm/titanic/compute/transformer/inference
 // (no files) and Docs:
-//   the sidebar shows the chain as one row, every name opens its folder
+//   the sidebar shows the chain as one row: its last two names, the rest behind
+//     "…", which unfolds it into a row each; the open folder's name stays shown
+//   on a touch phone: the open row's buttons on a line of their own, "…" unfolds
+//     the row and every folder of it opens with a tap
 //   the open folder's subfolders show above its files, in the list and the grid,
 //     with a count; a folder of only subfolders shows no "empty drive" hero
 //   siblings break the chain; past 4 levels rows keep one indent, with guide bars
@@ -49,7 +52,7 @@ const page = await context.newPage()
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 let txs = 0
 let signs = 0
-await page.exposeFunction('__eth', async (method, params) => {
+const eth = async (method, params) => {
   try {
     switch (method) {
       case 'eth_requestAccounts':
@@ -84,8 +87,9 @@ await page.exposeFunction('__eth', async (method, params) => {
   } catch (e) {
     return { err: e.shortMessage ?? e.message }
   }
-})
-await context.addInitScript(() => {
+}
+await page.exposeFunction('__eth', eth)
+const inject = () => {
   localStorage.setItem('0gdrive:smart-search', 'off')
   localStorage.setItem('0gdrive:layout', 'list')
   window.ethereum = {
@@ -97,7 +101,8 @@ await context.addInitScript(() => {
     on() {},
     removeListener() {},
   }
-})
+}
+await context.addInitScript(inject)
 
 /** Delete every file of the drive's storage account (rent stops), with its key from the page. */
 async function deleteDriveFiles(pg = page, address = wallet.address) {
@@ -124,6 +129,13 @@ const newFolder = async (name) => {
   promptAnswer = name
   await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await treeRow(name).first().waitFor({ timeout: 5 * 60_000 })
+}
+/** Opens a folder the way a person would from My drive: through the folder rows. */
+const openByList = async (pg, path) => {
+  await pg.locator('.breadcrumb .crumb', { hasText: 'My drive' }).click()
+  for (const seg of path.split('/')) {
+    await pg.locator('.folder-open', { has: pg.locator('.folder-name', { hasText: new RegExp(`^${seg}$`) }) }).click()
+  }
 }
 /** The sidebar's rows: their names, left edge, guide bars, and how much of the row the label area gets. */
 const rows = () => page.$$eval('.sidebar .tree-row', (els) => els.map((r) => {
@@ -152,19 +164,80 @@ try {
   }
   step(`folders made; open: ${await openPath()}`)
 
-  // ── the chain is one row; every name in it opens its folder
-  const chainRow = (await rows()).find((r) => r.names[0] === 'Spark')
-  check('sidebar: the 8 folders that lead straight into each other share one row',
-    JSON.stringify(chainRow.names) === JSON.stringify(CHAIN) && chainRow.overflow <= 0, JSON.stringify(chainRow))
+  // ── the chain is one row: its last two names, "…" for the rest
+  const folded = async () => page.evaluate(() => {
+    const r = [...document.querySelectorAll('.sidebar .tree-row')].find((x) => x.querySelector('.tree-more'))
+    return r && { names: [...r.querySelectorAll('.tree-name')].map((n) => n.textContent), more: [...r.querySelectorAll('.tree-more')].map((b) => b.getAttribute('aria-label')), overflow: r.scrollWidth - r.clientWidth }
+  })
+  const row1 = await folded()
+  check('sidebar: the 8 folders that lead straight into each other share one row: "… / transformer / inference"',
+    JSON.stringify(row1?.names) === '["transformer","inference"]' && JSON.stringify(row1.more) === '["Show all 8 folders"]' && row1.overflow <= 0, JSON.stringify(row1))
+  await page.getByRole('button', { name: 'Show all 8 folders' }).click()
+  const unfolded = (await rows()).filter((r) => CHAIN.includes(r.names[0]))
+  check('"…" unfolds it into a row per folder', unfolded.length === 8 && unfolded.every((r) => r.names.length === 1), JSON.stringify(unfolded.map((r) => r.names)))
   await treeLabel('algorithm').click()
-  const onAlgo = { open: await openPath(), here: await page.$eval('.sidebar .tree-seg.here', (e) => e.textContent).catch(() => '') }
+  const onAlgo = { open: await openPath(), here: await page.$eval('.sidebar .tree-row.selected .tree-name', (e) => e.textContent).catch(() => '') }
+  check('clicking a folder’s row opens that folder and marks it', onAlgo.open === pathTo(3) && onAlgo.here === 'algorithm', JSON.stringify(onAlgo))
+  await page.reload() // reconnects by itself; the row is folded again
+  await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 3 * 60_000 })
+  await openByList(page, pathTo(3))
+  const row2 = await folded()
+  check('folded with the open folder in it: "… / algorithm / … / inference"',
+    JSON.stringify(row2?.names) === '["algorithm","inference"]' && row2.more.length === 2, JSON.stringify(row2))
   const short = await crumbs()
   await page.getByRole('button', { name: 'Show the whole path' }).click()
   const whole = await crumbs()
   check('a deep path’s breadcrumb shows My drive / … / its last two; … shows it whole',
     short === 'My drive/…/blockchain/algorithm' && whole === `My drive/${pathTo(3)}`, JSON.stringify({ short, whole }))
-  check('clicking a name in the row opens that folder and marks it',
-    onAlgo.open === pathTo(3) && onAlgo.here === 'algorithm', JSON.stringify(onAlgo))
+
+  // ── on a touch phone: the open row's buttons on their own line; every folder of the row a tap away
+  const masterKey = await page.evaluate((a) => localStorage.getItem('0gdrive:masterkey:' + a.toLowerCase()), wallet.address)
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const pp = await phone.newPage()
+  pp.on('pageerror', (e) => errors.push(`pageerror (phone): ${e.message}`))
+  await pp.exposeFunction('__eth', eth)
+  await phone.addInitScript(inject)
+  await phone.addInitScript(([a, k]) => localStorage.setItem('0gdrive:masterkey:' + a.toLowerCase(), k), [wallet.address, masterKey])
+  await pp.goto(base)
+  await connectExtension(pp)
+  await pp.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 3 * 60_000 })
+  await openByList(pp, pathTo(3))
+  await pp.getByRole('button', { name: 'Folders and settings' }).tap()
+  await pp.waitForTimeout(400)
+  const touchRow = await pp.evaluate(() => {
+    const r = document.querySelector('.sidebar .tree-row.selected')
+    const chain = r.querySelector('.tree-chain').getBoundingClientRect()
+    const acts = [...r.querySelectorAll('.tree-act')].map((b) => b.getBoundingClientRect())
+    return {
+      touch: matchMedia('(hover: none)').matches,
+      names: [...r.querySelectorAll('.tree-seg')].map((b) => [b.textContent, Math.round(b.getBoundingClientRect().width), b.scrollWidth > b.clientWidth]),
+      below: acts.length === 3 && acts.every((b) => b.top >= chain.bottom - 1 && b.width > 0),
+      side: Math.round(document.querySelector('.sidebar').getBoundingClientRect().right),
+      right: Math.round(r.getBoundingClientRect().right),
+    }
+  })
+  check('touch phone: the open row shows "algorithm" and "inference" in full, its buttons on a line below',
+    touchRow.touch && touchRow.below && touchRow.right <= touchRow.side &&
+    JSON.stringify(touchRow.names.map((n) => n[0])) === '["algorithm","inference"]' && touchRow.names.every((n) => !n[2]), JSON.stringify(touchRow))
+  await pp.locator('.sidebar .tree-more').first().tap()
+  const touchRows = await pp.$$eval('.sidebar .tree-row', (els) => els.map((r) => {
+    const l = (r.querySelector('.tree-chain') ?? r.querySelector('.tree-label')).getBoundingClientRect()
+    return { names: [...r.querySelectorAll('.tree-name')].map((n) => n.textContent), w: Math.round(l.width), h: Math.round(l.height) }
+  }))
+  const chainRows = touchRows.filter((r) => CHAIN.includes(r.names[0]))
+  check('touch phone: "…" unfolds the row; each folder’s row ≥ 100 px wide and ≥ 40 px tall to tap',
+    chainRows.length === 8 && chainRows.every((r) => r.names.length === 1 && r.w >= 100 && r.h >= 40), JSON.stringify(chainRows))
+  const tapped = []
+  for (const name of ['consensus', 'blockchain', 'titanic']) {
+    if (!(await pp.locator('.sidebar.open').count())) await pp.getByRole('button', { name: 'Folders and settings' }).tap()
+    await pp.waitForTimeout(400)
+    await pp.locator('.sidebar .tree-label', { has: pp.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) }).tap()
+    await pp.waitForTimeout(300)
+    tapped.push(await pp.$eval('.files-head h2', (h) => h.title))
+  }
+  check('touch phone: tapping consensus, blockchain, titanic in the drawer opens each',
+    JSON.stringify(tapped) === JSON.stringify([pathTo(1), pathTo(2), pathTo(4)]), JSON.stringify(tapped))
+  await phone.close()
 
   // ── the open folder's subfolders, above its files
   const listed = await page.evaluate(() => ({
@@ -189,16 +262,16 @@ try {
   await folderOpen('Spark').click()
   check('clicking a folder tile opens it', (await openPath()) === 'Spark', await openPath())
   await page.getByRole('button', { name: 'List view' }).click()
-  await treeLabel('inference').click()
+  await openByList(page, pathTo(7))
   check('an empty folder still shows the hero', await page.locator('.hero').isVisible() && (await page.locator('.folder-row').count()) === 0)
 
   // ── siblings break the chain; past 4 levels the indent stops growing
   const siblings = ['a', 'b', 'c', 'd', 'e']
   for (let i = 0; i < siblings.length; i++) {
-    await treeLabel(CHAIN[i + 1]).click()
+    await openByList(page, pathTo(i + 1))
     await newFolder(siblings[i])
   }
-  await treeLabel('inference').click()
+  await openByList(page, pathTo(7))
   const deep = await rows()
   const by = (n) => deep.find((r) => r.names.includes(n))
   const levels = ['consensus', 'blockchain', 'algorithm', 'titanic', 'compute', 'transformer'].map((n) => by(n))
@@ -227,7 +300,7 @@ try {
     acts.n === 3 && acts.shown && acts.clear && acts.target === 'Rename compute' && open === 'Rename inference', JSON.stringify({ acts, open }))
 
   // ── phone width
-  await treeLabel('compute').click()
+  await openByList(page, pathTo(5))
   await page.setViewportSize({ width: 390, height: 844 })
   await page.waitForTimeout(300)
   const phoneMain = await page.evaluate(() => ({

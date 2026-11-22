@@ -461,10 +461,10 @@ const CRUMBS_SHOWN = 2
  * A folder and the folders it leads straight into: while a folder holds one
  * subfolder and no files, the two share a row ("a / b / c").
  */
-function treeChain(node: TreeNode, hasFiles: (p: string) => boolean): TreeNode[] {
+function treeChain(node: TreeNode, hasFiles: (p: string) => boolean, unfolded: string[]): TreeNode[] {
   const chain = [node]
   let last = node
-  while (last.children.length === 1 && !hasFiles(last.path)) {
+  while (last.children.length === 1 && !hasFiles(last.path) && !unfolded.includes(last.path)) {
     last = last.children[0]
     chain.push(last)
   }
@@ -472,26 +472,32 @@ function treeChain(node: TreeNode, hasFiles: (p: string) => boolean): TreeNode[]
 }
 
 function TreeRow({
-  node, depth, currentPath, expanded, hasFiles, onToggle, onSelect, onRename, onMove, onRemove, disabled,
+  node, depth, currentPath, expanded, unfolded, hasFiles, onToggle, onUnfold, onSelect, onRename, onMove, onRemove, disabled,
 }: {
   node: TreeNode
   depth: number
   currentPath: string
   expanded: string[]
+  /** folders whose shared row was unfolded into a row each */
+  unfolded: string[]
   hasFiles(p: string): boolean
   onToggle(p: string): void
+  onUnfold(paths: string[]): void
   onSelect(p: string): void
   onRename(p: string): void
   onMove(p: string): void
   onRemove(p: string): void
   disabled: boolean
 }) {
-  const chain = treeChain(node, hasFiles)
+  const chain = treeChain(node, hasFiles, unfolded)
   const last = chain[chain.length - 1]
   const isOpen = expanded.includes(last.path)
   const here = chain.find((n) => n.path === currentPath)
   // the actions work on the folder you're in when it's part of the row, else the deepest one
   const target = here ?? last
+  // a long shared row shows two names (the open one, if it's in the row, and the last); "…" holds the rest
+  const hereAt = here ? chain.indexOf(here) : -1
+  const shown = new Set(hereAt >= 0 && hereAt < chain.length - 2 ? [hereAt, chain.length - 1] : [chain.length - 2, chain.length - 1])
   const extra = Math.min(depth - TREE_INDENT_LEVELS, 3)
   return (
     <div>
@@ -516,14 +522,32 @@ function TreeRow({
         ) : (
           <div className="tree-chain" title={last.path}>
             <FolderGlyph open={isOpen} />
-            {chain.map((n, i) => (
-              <Fragment key={n.path}>
-                {i > 0 && <span className="tree-sep" aria-hidden="true">/</span>}
-                <button className={`tree-label tree-seg${n === here ? ' here' : ''}`} onClick={() => onSelect(n.path)} title={n.path}>
-                  <span className="tree-name">{n.name}</span>
-                </button>
-              </Fragment>
-            ))}
+            {chain.map((n, i) => {
+              if (!shown.has(i)) {
+                // one "…" for each run of folded names; it unfolds the row
+                if (shown.has(i - 1) || i === 0) {
+                  return (
+                    <Fragment key={n.path}>
+                      {i > 0 && <span className="tree-sep" aria-hidden="true">/</span>}
+                      <button className="tree-more" onClick={() => onUnfold(chain.slice(0, -1).map((c) => c.path))}
+                        title={chain.filter((_, j) => !shown.has(j)).map((c) => c.name).join(' / ')}
+                        aria-label={`Show all ${chain.length} folders`}>
+                        …
+                      </button>
+                    </Fragment>
+                  )
+                }
+                return null
+              }
+              return (
+                <Fragment key={n.path}>
+                  {i > 0 && <span className="tree-sep" aria-hidden="true">/</span>}
+                  <button className={`tree-label tree-seg${n === here ? ' here' : ''}`} onClick={() => onSelect(n.path)} title={n.path}>
+                    <span className="tree-name">{n.name}</span>
+                  </button>
+                </Fragment>
+              )
+            })}
           </div>
         )}
         <span className="tree-acts">
@@ -544,7 +568,7 @@ function TreeRow({
       {isOpen &&
         last.children.map((ch) => (
           <TreeRow key={ch.path} node={ch} depth={depth + 1} currentPath={currentPath}
-            expanded={expanded} hasFiles={hasFiles} onToggle={onToggle} onSelect={onSelect} onRename={onRename} onMove={onMove} onRemove={onRemove}
+            expanded={expanded} unfolded={unfolded} hasFiles={hasFiles} onToggle={onToggle} onUnfold={onUnfold} onSelect={onSelect} onRename={onRename} onMove={onMove} onRemove={onRemove}
             disabled={disabled} />
         ))}
     </div>
@@ -853,6 +877,13 @@ export default function App() {
     }
     setExpandedFolders((prev) => [...new Set([...prev, ...ancestors])])
   }, [currentPath])
+
+  /** a shared tree row unfolded into one row per folder (until the page is reloaded) */
+  const [unfoldedChains, setUnfoldedChains] = useState<string[]>([])
+  const unfoldChain = useCallback((paths: string[]) => {
+    setUnfoldedChains((prev) => [...new Set([...prev, ...paths])])
+    setExpandedFolders((prev) => [...new Set([...prev, ...paths])])
+  }, [])
 
   const toggleFolder = useCallback((p: string) => {
     setExpandedFolders((prev) =>
@@ -3008,6 +3039,8 @@ export default function App() {
                     depth={1}
                     currentPath={view === 'drive' ? currentPath : ''}
                     expanded={expandedFolders}
+                    unfolded={unfoldedChains}
+                    onUnfold={unfoldChain}
                     hasFiles={(p) => (drive.folders.get(p)?.files.length ?? 0) > 0}
                     onToggle={toggleFolder}
                     onSelect={(p) => { setView('drive'); setCurrentPath(p) }}

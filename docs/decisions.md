@@ -531,3 +531,12 @@ On staging, a folder eight levels deep (Spark/consensus/…/inference) left its 
 - **Subfolders above the files**: rows in the list (name, "N folders · N files", rename/move/trash), tiles in the grid; click to open. They sit outside the files' table and grid, so selection, Select all and groups by tag stay files only. A folder with subfolders and no files shows them, not the empty-drive hero.
 
 Verified: `npm run test:deep-folders` (the eight as one row, every name opens its folder; folder rows and tiles with their counts, no hero; siblings split the row; indent 16 px a level to 4, then one bar a level; labels to the row's end, the buttons beside the name of the row pointed at; at 390 px folder rows, tiles and tree rows fit), `test-folder-rename`, `test-move`, `test-dialogs`, `test-bg-index`, `test-background-sync` (their clicks find a folder's name in a shared row, and point at a row before its buttons).
+
+### D47 — Long shared rows fold behind "…" (user decision, 2026-11-22)
+On a phone (D46 on staging), the shared row "consensus / blockchain / algorithm" left each name a few letters ("c… / b… / alg.") beside the open row's three touch buttons, too narrow to read or tap, so its folders couldn't be reached from the drawer. Every name in a long row gets too little room on a desktop too.
+- A shared row of more than two folders shows two names: the open folder, when it's in the row, and the last; **…** stands for each run of the others (its tooltip names them): "… / transformer / inference", "… / algorithm / … / inference".
+- **…** unfolds the row into one row per folder (indented as in D46), until the page is reloaded.
+- On touch screens the open row's buttons sit on a line under its names, so the names keep the drawer's width. Pointing no longer reveals buttons there: a tap counts as hover, so the tapped row's buttons appeared and its name shrank under the finger (the tap could land on Rename). Tree rows are at least 40 px tall to tap.
+- The long-path wrap fix of D46 (upload zone, Activity) is in this change: #100 was merged before it was pushed, and staging's `test-deep-folders` caught the 7 px sideways scroll it fixes.
+
+Verified: `npm run test:deep-folders` (the eight folders fold to "… / transformer / inference"; … unfolds them into 8 rows; after a reload, with algorithm open, "… / algorithm / … / inference"; a touch phone at 390 px — `isMobile`, hover: none — shows both names in full with the buttons below, … unfolds into rows ≥ 100 × 40 px, and tapping consensus, blockchain and titanic opens each).
