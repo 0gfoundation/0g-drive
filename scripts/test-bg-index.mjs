@@ -110,6 +110,7 @@ async function deleteDriveFiles(pg = page, address = wallet.address) {
 }
 
 const treeRow = (name) => page.locator('.sidebar .tree-row', { has: page.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) })
+const treeLabel = (name) => page.locator('.sidebar .tree-label', { has: page.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) })
 const fileRow = (name) => page.locator('table tr', { has: page.locator('.fname-btn', { hasText: name }) })
 const upload = async (files) => {
   await page.setInputFiles('.dropzone input[type=file]', files.map(([name, text, mimeType = 'text/plain']) => ({ name, mimeType, buffer: Buffer.from(text) })))
@@ -151,7 +152,7 @@ try {
   promptAnswer = 'Recipes'
   await page.getByRole('button', { name: 'New folder', exact: true }).click()
   await treeRow('Recipes').first().waitFor({ timeout: 5 * 60_000 })
-  await treeRow('Recipes').first().locator('.tree-label').click()
+  await treeLabel('Recipes').click()
   await upload([['carbonara.md', 'Spaghetti carbonara: guanciale, eggs, pecorino, black pepper. Boil the pasta al dente.']])
   await page.locator('.breadcrumb .crumb').first().click()
   await upload([['lease.txt', 'Residential lease agreement between landlord and tenant. Notice period sixty days.']])

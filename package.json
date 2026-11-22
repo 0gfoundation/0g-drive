@@ -57,6 +57,7 @@
     "test:rename": "npm run build -w core && node scripts/test-rename.mjs",
     "test:folder-rename": "npm run build -w core && node scripts/test-folder-rename.mjs",
     "test:move": "npm run build -w core && node scripts/test-move.mjs",
+    "test:deep-folders": "npm run build -w core && node scripts/test-deep-folders.mjs",
     "test:hot-downloads": "node scripts/test-hot-downloads.mjs",
     "test:ios-download": "npm run build -w core && node scripts/test-ios-download.mjs",
     "test:categories": "node scripts/test-categories.mjs",
