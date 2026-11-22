@@ -236,7 +236,7 @@ try {
     acts: [...document.querySelectorAll('.folder-row .btn')].map((b) => Math.round(b.getBoundingClientRect().right)),
   }))
   const head = await page.$eval('.files-head h2', (h) => ({ text: h.childNodes[0].textContent.trim(), title: h.title }))
-  check('phone: a deep folder’s breadcrumb and heading don’t widen the page; the heading is the folder’s name',
+  check('phone: a deep folder’s breadcrumb, heading, upload zone and activity don’t widen the page; the heading is the folder’s name',
     phoneMain.overflow <= 0 && (await crumbs()) === 'My drive/…/titanic/compute' && head.text === 'compute' && head.title === pathTo(5),
     JSON.stringify({ crumbs: await crumbs(), head }))
   check('phone: folder rows and their buttons fit the screen', phoneMain.overflow <= 0 && phoneMain.rows.length === 2 && [...phoneMain.rows, ...phoneMain.acts].every((x) => x <= 390), JSON.stringify(phoneMain))

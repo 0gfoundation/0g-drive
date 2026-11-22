@@ -1004,6 +1004,8 @@ a:hover {
   display: none;
 }
 .dropzone-title {
+  /* a deep folder's path breaks anywhere rather than widening the page */
+  overflow-wrap: anywhere;
   font-size: var(--fs-md);
   font-weight: 500;
 }
@@ -1253,6 +1255,7 @@ tbody tr:hover {
   overflow-y: auto;
 }
 .activity li {
+  overflow-wrap: anywhere;
   padding: 4px 0;
   border-bottom: 1px solid var(--border-soft);
 }
