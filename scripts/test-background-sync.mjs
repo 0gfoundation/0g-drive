@@ -187,6 +187,7 @@ try {
   await treeRow(B.page, 'Work').click()
 
   // A renames Work: B follows it
+  await treeRow(A.page, 'Work').hover() // a row's buttons show while you point at it
   await treeRow(A.page, 'Work').getByRole('button', { name: /Rename/ }).click()
   const renameInput = A.page.locator('.rename-modal input')
   await renameInput.fill('Work 2026')

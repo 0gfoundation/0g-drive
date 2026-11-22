@@ -465,7 +465,8 @@ a:hover {
 }
 @media (max-width: 760px) {
   .layout {
-    grid-template-columns: 1fr;
+    /* minmax: a long path in the breadcrumb scrolls instead of widening the page */
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -555,16 +556,70 @@ a:hover {
 }
 
 .tree-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
   border-radius: var(--r-md);
 }
-.tree-row:hover {
-  background: var(--panel-2);
+/* rows nested past the indent cap: one thin bar per extra level */
+.tree-deep {
+  display: inline-flex;
+  gap: 2px;
+  align-self: stretch;
+  padding: 4px 0;
+  flex: none;
 }
-.tree-row.selected {
-  background: var(--accent-soft);
+.tree-deep i {
+  width: 1px;
+  background: var(--border);
+}
+/* a chain of single-subfolder folders on one row: every name stays clickable */
+.tree-chain {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+}
+.tree-chain .tree-folder-ico {
+  margin: 0 4px;
+}
+.tree-chain .tree-seg {
+  flex: 0 1 auto;
+  min-width: 1.6em;
+  padding-left: 2px;
+  padding-right: 2px;
+}
+.tree-chain .tree-seg:last-child,
+.tree-chain .tree-seg.here {
+  flex-shrink: 0.3;
+  min-width: 3em;
+}
+.tree-seg.here {
+  color: var(--accent);
+  font-weight: 500;
+}
+.tree-row.selected .tree-seg:not(.here) {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.tree-sep {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  flex: none;
+}
+/* actions take room only on the row you point at (VS Code's way), so other names keep the full width */
+.tree-acts {
+  display: none;
+  align-items: center;
+  flex: none;
+}
+.tree-row:hover .tree-acts,
+.tree-row:has(:focus-visible) .tree-acts {
+  display: flex;
 }
 .tree-caret {
   background: none;
@@ -637,7 +692,7 @@ a:hover {
   height: 13px;
 }
 .tree-row:hover .tree-act,
-.tree-act:focus-visible {
+.tree-row:has(:focus-visible) .tree-act {
   opacity: 1;
 }
 .tree-rename:hover,
@@ -913,6 +968,10 @@ a:hover {
 }
 .crumb-sep {
   color: var(--muted);
+}
+.crumb-more {
+  color: var(--muted);
+  letter-spacing: 1px;
 }
 .toolbar-actions {
   display: flex;
@@ -1573,6 +1632,137 @@ tbody tr:hover {
   margin: 0;
   cursor: pointer;
 }
+/* ── Subfolders above the files ─────────────────────── */
+
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 4px;
+}
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border-soft);
+  padding: 2px 8px 2px 0;
+  transition: background 0.1s;
+}
+.folder-row:hover {
+  background: var(--panel);
+}
+.folder-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  padding: 8px 12px;
+}
+.folder-row .folder-open {
+  /* lines the folder name up with the file names below the checkbox column */
+  padding-left: 40px;
+}
+.folder-open .tree-folder-ico {
+  width: 19px;
+  height: 19px;
+  color: var(--accent);
+}
+.folder-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.folder-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-open:hover .folder-name {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.folder-meta {
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.folder-acts {
+  flex: none;
+}
+.folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.folder-tile {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  transition: border-color 0.12s, background 0.12s;
+}
+.folder-tile:hover {
+  border-color: var(--border);
+  background: var(--panel-2);
+}
+.folder-tile .folder-text {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.folder-tile .folder-name {
+  max-width: 100%;
+}
+.folder-tile .folder-open {
+  padding-bottom: 4px;
+}
+.folder-tile .folder-acts {
+  display: flex;
+  gap: 2px;
+  padding: 0 8px 8px;
+}
+.folder-tile .folder-acts .btn {
+  padding: 4px 8px;
+}
+@media (hover: hover) {
+  .folder-tile .folder-acts,
+  .folder-row .folder-acts {
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .folder-tile:hover .folder-acts,
+  .folder-tile:focus-within .folder-acts,
+  .folder-row:hover .folder-acts,
+  .folder-row:focus-within .folder-acts {
+    opacity: 1;
+  }
+}
+@media (max-width: 520px) {
+  .folder-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 8px;
+  }
+  .folder-row .folder-open {
+    padding-left: 12px;
+  }
+  .folder-text {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+  }
+}
+
 .tile {
   position: relative;
   background: var(--panel);
@@ -1747,8 +1937,11 @@ tbody tr:hover {
   .dz-touch {
     display: inline;
   }
-  /* no hover on touch screens: keep hover-revealed controls visible */
-  .tree-act {
+  /* no hover on touch screens: the open folder's row shows its actions */
+  .tree-row.selected .tree-acts {
+    display: flex;
+  }
+  .tree-row.selected .tree-act {
     opacity: 1;
   }
   .tile-check {

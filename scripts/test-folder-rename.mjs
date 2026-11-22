@@ -111,6 +111,7 @@ async function deleteDriveFiles(pg = page, address = wallet.address) {
 const crumbs = () => page.$$eval('.breadcrumb .crumb', (els) => els.map((e) => e.textContent.trim()).join('/'))
 const treeNames = () => page.$$eval('.sidebar .tree-name', (els) => els.map((e) => e.textContent.trim()))
 const treeRow = (name) => page.locator('.sidebar .tree-row', { has: page.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) })
+const treeLabel = (name) => page.locator('.sidebar .tree-label', { has: page.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) })
 const dialog = page.locator('.rename-modal')
 const input = dialog.getByRole('textbox', { name: 'New name' })
 const submit = dialog.getByRole('button', { name: 'Rename' })
@@ -129,15 +130,18 @@ try {
   await page.getByRole('button', { name: 'New folder', exact: true }).waitFor({ timeout: 120_000 })
   await newFolder('Docs')
   await newFolder('Work')
-  await treeRow('Work').locator('.tree-label').click()
+  await treeLabel('Work').click()
   await newFolder('2025')
-  await treeRow('2025').locator('.tree-label').click()
+  await treeLabel('2025').click()
   await page.setInputFiles('.dropzone input[type=file]', [
     { name: 'report.txt', mimeType: 'text/plain', buffer: Buffer.from('Annual report: folders renamed.') },
   ])
   await page.locator('table .fname-btn', { hasText: 'report.txt' }).waitFor({ timeout: 8 * 60_000 })
   step(`folders made, report.txt uploaded; open: ${await crumbs()}`)
 
+  // Work leads straight into 2025, so they share a row; open Work for its actions to act on it
+  await treeLabel('Work').click()
+  await treeRow('Work').hover() // a row's buttons show while you point at it
   await treeRow('Work').getByRole('button', { name: 'Rename folder' }).click()
   await input.waitFor()
   const sel = await input.evaluate((i) => [i.selectionStart, i.selectionEnd, i.value])
@@ -174,16 +178,19 @@ try {
   await page.locator('.activity li', { hasText: 'Renamed folder Work → Projects' }).waitFor({ timeout: 10 * 60_000 })
   await dialog.waitFor({ state: 'detached' })
   await treeRow('Projects').waitFor({ timeout: 2 * 60_000 })
+  const openAfter = await crumbs()
+  await treeLabel('2025').click()
   await page.locator('table .fname-btn', { hasText: 'report.txt' }).waitFor({ timeout: 2 * 60_000 })
-  const after = { txs: txs - before.txs, signs: signs - before.signs, tree: await treeNames(), crumbs: await crumbs() }
-  check('rename prompts the wallet for nothing; the open folder follows to Projects/2025',
-    after.txs === 0 && after.signs === 0 && JSON.stringify(after.tree.sort()) === '["2025","Docs","Projects"]' && after.crumbs === 'My drive/Projects/2025',
+  const after = { txs: txs - before.txs, signs: signs - before.signs, tree: await treeNames(), open: openAfter, crumbs: await crumbs() }
+  check('rename prompts the wallet for nothing; the open folder follows to Projects; 2025 and its file moved with it',
+    after.txs === 0 && after.signs === 0 && JSON.stringify(after.tree.sort()) === '["2025","Docs","Projects"]' && after.open === 'My drive/Projects' && after.crumbs === 'My drive/Projects/2025',
     JSON.stringify(after))
 
   // phone: the drawer's tree rows fit, with touch-sized buttons
   await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('button', { name: 'Folders and settings' }).click()
   await page.waitForTimeout(400)
+  await page.locator('.sidebar .tree-row').last().hover() // a row's buttons show while you point at it
   const drawer = await page.evaluate(() => {
     const side = document.querySelector('.sidebar').getBoundingClientRect()
     const acts = [...document.querySelectorAll('.sidebar .tree-row .tree-act')].map((b) => {
@@ -193,14 +200,14 @@ try {
     return { overflow: document.documentElement.scrollWidth - window.innerWidth, side: Math.round(side.right), acts }
   })
   check('phone: tree rows and their buttons fit the drawer',
-    drawer.overflow <= 0 && drawer.acts.length > 0 && drawer.acts.every((a) => a.right <= drawer.side && a.right <= 390), JSON.stringify(drawer))
+    drawer.overflow <= 0 && drawer.acts.some((a) => a.w > 0) && drawer.acts.every((a) => a.right <= drawer.side && a.right <= 390), JSON.stringify(drawer))
   await page.getByRole('button', { name: 'Folders and settings' }).click({ force: true }).catch(() => {})
   await page.setViewportSize({ width: 1280, height: 900 })
 
   await page.reload() // reconnects by itself
   await treeRow('Projects').waitFor({ timeout: 5 * 60_000 })
-  await treeRow('Projects').locator('.tree-label').click()
-  await treeRow('2025').locator('.tree-label').click()
+  await treeLabel('Projects').click()
+  await treeLabel('2025').click()
   await page.locator('table .fname-btn', { hasText: 'report.txt' }).click({ timeout: 5 * 60_000 })
   await page.locator('.preview-text').waitFor({ timeout: 5 * 60_000 })
   check('after reload: Projects/2025 holds the file, and it opens',

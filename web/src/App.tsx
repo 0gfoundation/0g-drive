@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   bytesToHex,
   createMasterKey,
@@ -451,13 +451,34 @@ function FolderGlyph({ open }: { open?: boolean }) {
   )
 }
 
+/** Rows past this depth keep its indent; thin guide bars show how much deeper they are. */
+const TREE_INDENT_LEVELS = 4
+
+/** The breadcrumb shows this many of a deep path's last folders, the rest behind "…". */
+const CRUMBS_SHOWN = 2
+
+/**
+ * A folder and the folders it leads straight into: while a folder holds one
+ * subfolder and no files, the two share a row ("a / b / c").
+ */
+function treeChain(node: TreeNode, hasFiles: (p: string) => boolean): TreeNode[] {
+  const chain = [node]
+  let last = node
+  while (last.children.length === 1 && !hasFiles(last.path)) {
+    last = last.children[0]
+    chain.push(last)
+  }
+  return chain
+}
+
 function TreeRow({
-  node, depth, currentPath, expanded, onToggle, onSelect, onRename, onMove, onRemove, disabled,
+  node, depth, currentPath, expanded, hasFiles, onToggle, onSelect, onRename, onMove, onRemove, disabled,
 }: {
   node: TreeNode
   depth: number
   currentPath: string
   expanded: string[]
+  hasFiles(p: string): boolean
   onToggle(p: string): void
   onSelect(p: string): void
   onRename(p: string): void
@@ -465,39 +486,65 @@ function TreeRow({
   onRemove(p: string): void
   disabled: boolean
 }) {
-  const isOpen = expanded.includes(node.path)
-  const isSelected = currentPath === node.path
+  const chain = treeChain(node, hasFiles)
+  const last = chain[chain.length - 1]
+  const isOpen = expanded.includes(last.path)
+  const here = chain.find((n) => n.path === currentPath)
+  // the actions work on the folder you're in when it's part of the row, else the deepest one
+  const target = here ?? last
+  const extra = Math.min(depth - TREE_INDENT_LEVELS, 3)
   return (
     <div>
-      <div className={`tree-row${isSelected ? ' selected' : ''}`} style={{ paddingLeft: 4 + depth * 16 }}>
+      <div className={`tree-row${here ? ' selected' : ''}`} style={{ paddingLeft: 4 + Math.min(depth, TREE_INDENT_LEVELS) * 16 }}>
+        {extra > 0 && (
+          <span className="tree-deep" aria-hidden="true">
+            {Array.from({ length: extra }, (_, i) => <i key={i} />)}
+          </span>
+        )}
         <button
-          className={`tree-caret${node.children.length === 0 ? ' spacer' : ''}`}
-          onClick={() => node.children.length > 0 && onToggle(node.path)}
+          className={`tree-caret${last.children.length === 0 ? ' spacer' : ''}`}
+          onClick={() => last.children.length > 0 && onToggle(last.path)}
           aria-label={isOpen ? 'collapse' : 'expand'}
         >
-          {node.children.length > 0 && <Icon name="chevron" className={`ico tree-chevron${isOpen ? ' open' : ''}`} />}
+          {last.children.length > 0 && <Icon name="chevron" className={`ico tree-chevron${isOpen ? ' open' : ''}`} />}
         </button>
-        <button className="tree-label" onClick={() => onSelect(node.path)} title={node.path}>
-          <FolderGlyph open={isOpen} />
-          <span className="tree-name">{node.name}</span>
-        </button>
-        <button className="tree-act tree-rename" disabled={disabled} onClick={() => onRename(node.path)}
-          title="Rename folder" aria-label="Rename folder">
-          <Icon name="rename" />
-        </button>
-        <button className="tree-act tree-move" disabled={disabled} onClick={() => onMove(node.path)}
-          title="Move folder" aria-label="Move folder">
-          <Icon name="move" />
-        </button>
-        <button className="tree-act tree-remove" disabled={disabled} onClick={() => onRemove(node.path)}
-          title="Move folder (and contents) to trash" aria-label="Trash folder">
-          <Icon name="trash" />
-        </button>
+        {chain.length === 1 ? (
+          <button className="tree-label" onClick={() => onSelect(node.path)} title={node.path}>
+            <FolderGlyph open={isOpen} />
+            <span className="tree-name">{node.name}</span>
+          </button>
+        ) : (
+          <div className="tree-chain" title={last.path}>
+            <FolderGlyph open={isOpen} />
+            {chain.map((n, i) => (
+              <Fragment key={n.path}>
+                {i > 0 && <span className="tree-sep" aria-hidden="true">/</span>}
+                <button className={`tree-label tree-seg${n === here ? ' here' : ''}`} onClick={() => onSelect(n.path)} title={n.path}>
+                  <span className="tree-name">{n.name}</span>
+                </button>
+              </Fragment>
+            ))}
+          </div>
+        )}
+        <span className="tree-acts">
+          <button className="tree-act tree-rename" disabled={disabled} onClick={() => onRename(target.path)}
+            title={`Rename ${target.name}`} aria-label="Rename folder">
+            <Icon name="rename" />
+          </button>
+          <button className="tree-act tree-move" disabled={disabled} onClick={() => onMove(target.path)}
+            title={`Move ${target.name}`} aria-label="Move folder">
+            <Icon name="move" />
+          </button>
+          <button className="tree-act tree-remove" disabled={disabled} onClick={() => onRemove(target.path)}
+            title={`Move ${target.name} (and contents) to trash`} aria-label="Trash folder">
+            <Icon name="trash" />
+          </button>
+        </span>
       </div>
       {isOpen &&
-        node.children.map((ch) => (
+        last.children.map((ch) => (
           <TreeRow key={ch.path} node={ch} depth={depth + 1} currentPath={currentPath}
-            expanded={expanded} onToggle={onToggle} onSelect={onSelect} onRename={onRename} onMove={onMove} onRemove={onRemove}
+            expanded={expanded} hasFiles={hasFiles} onToggle={onToggle} onSelect={onSelect} onRename={onRename} onMove={onMove} onRemove={onRemove}
             disabled={disabled} />
         ))}
     </div>
@@ -759,6 +806,7 @@ export default function App() {
     { mode: 'link' | 'encrypted'; payload: SharePayload | EncryptedSharePayload } | null
   >(null)
   const [expandedFolders, setExpandedFolders] = useState<string[]>([])
+  const [crumbsOpen, setCrumbsOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [navOpen, setNavOpen] = useState(false)
   const [assistOpen, setAssistOpen] = useState(false)
@@ -795,6 +843,7 @@ export default function App() {
 
   // expand tree ancestors when navigating into a deep folder
   useEffect(() => {
+    setCrumbsOpen(false)
     if (currentPath === '') return
     const ancestors: string[] = []
     let p = ''
@@ -2390,6 +2439,8 @@ export default function App() {
   }
 
   const pathSegments = currentPath === '' ? [] : currentPath.split('/')
+  /** a deep path shows My drive / … / its last two folders until … is clicked */
+  const crumbsHidden = !crumbsOpen && pathSegments.length > CRUMBS_SHOWN + 1 ? pathSegments.length - CRUMBS_SHOWN : 0
   const chooseLayout = (l: 'list' | 'grid') => {
     setLayout(l)
     try {
@@ -2450,6 +2501,63 @@ export default function App() {
       : view === 'categories'
         ? []
         : drive?.folders.get(currentPath)?.files ?? []
+  /** the folder's own subfolders, shown before its files */
+  const shownFolders = view === 'drive' && drive ? subFolders(drive, currentPath) : []
+  const folderSummary = (path: string) => {
+    const folders = drive ? subFolders(drive, path).length : 0
+    const files = drive?.folders.get(path)?.files.length ?? 0
+    const parts = [
+      folders > 0 && `${folders} folder${folders === 1 ? '' : 's'}`,
+      (files > 0 || folders === 0) && `${files} file${files === 1 ? '' : 's'}`,
+    ].filter(Boolean)
+    return parts.join(' · ')
+  }
+  const folderActions = (path: string) => (
+    <>
+      <button className="btn small" disabled={busy !== null || readOnly} onClick={() => openFolderRename(path)} title="Rename folder" aria-label="Rename folder">
+        <ActionLabel icon="rename" />
+      </button>
+      <button className="btn small" disabled={busy !== null || readOnly} onClick={() => openMove({ kind: 'folder', path })} title="Move folder" aria-label="Move folder">
+        <ActionLabel icon="move" />
+      </button>
+      <button className="btn small danger" disabled={busy !== null || readOnly} onClick={() => void removeFolder(path)} title="Move folder (and contents) to trash" aria-label="Trash folder">
+        <ActionLabel icon="trash" />
+      </button>
+    </>
+  )
+  const openFolder = (path: string) => setCurrentPath(path)
+  const folderBlock =
+    shownFolders.length === 0 ? null : layout === 'grid' ? (
+      <div className="folder-grid" aria-label="Folders">
+        {shownFolders.map((p) => (
+          <div key={p} className="folder-tile">
+            <button className="folder-open" onClick={() => openFolder(p)} title={p}>
+              <FolderGlyph />
+              <span className="folder-text">
+                <span className="folder-name">{baseName(p)}</span>
+                <span className="folder-meta muted">{folderSummary(p)}</span>
+              </span>
+            </button>
+            <div className="folder-acts">{folderActions(p)}</div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className="folder-list" aria-label="Folders">
+        {shownFolders.map((p) => (
+          <div key={p} className="folder-row">
+            <button className="folder-open" onClick={() => openFolder(p)} title={p}>
+              <FolderGlyph />
+              <span className="folder-text">
+                <span className="folder-name">{baseName(p)}</span>
+                <span className="folder-meta muted">{folderSummary(p)}</span>
+              </span>
+            </button>
+            <div className="folder-acts row-actions">{folderActions(p)}</div>
+          </div>
+        ))}
+      </div>
+    )
   /** the folder's files in sections by category, when chosen */
   const sections = view === 'drive' && groupBy && cats && shownFiles.length > 0 ? sectionsOf(shownFiles, cats.grouping) : null
   const renderTile = (f: FileMeta) => {
@@ -2900,6 +3008,7 @@ export default function App() {
                     depth={1}
                     currentPath={view === 'drive' ? currentPath : ''}
                     expanded={expandedFolders}
+                    hasFiles={(p) => (drive.folders.get(p)?.files.length ?? 0) > 0}
                     onToggle={toggleFolder}
                     onSelect={(p) => { setView('drive'); setCurrentPath(p) }}
                     onRename={openFolderRename}
@@ -3116,7 +3225,16 @@ export default function App() {
               <button className="crumb" onClick={() => { setView('drive'); setCurrentPath('') }}>
                 My drive
               </button>
-              {view === 'drive' && pathSegments.map((seg, i) => (
+              {view === 'drive' && crumbsHidden > 0 && (
+                <span>
+                  <span className="crumb-sep">/</span>
+                  <button className="crumb crumb-more" onClick={() => setCrumbsOpen(true)}
+                    title={pathSegments.slice(0, crumbsHidden).join(' / ')} aria-label="Show the whole path">
+                    …
+                  </button>
+                </span>
+              )}
+              {view === 'drive' && pathSegments.map((seg, i) => i >= crumbsHidden && (
                 <span key={i}>
                   <span className="crumb-sep">/</span>
                   <button
@@ -3381,8 +3499,8 @@ export default function App() {
             />
           )}
           <div className="files-head">
-            <h2>
-              {view === 'trash' ? 'Trash' : currentPath === '' ? 'My drive' : currentPath}{' '}
+            <h2 title={view === 'drive' && currentPath !== '' ? currentPath : undefined}>
+              {view === 'trash' ? 'Trash' : currentPath === '' ? 'My drive' : baseName(currentPath)}{' '}
               <span className="count">{shownFiles.length}</span>
             </h2>
             {view === 'drive' && shownFiles.length > 0 && (
@@ -3393,7 +3511,8 @@ export default function App() {
             )}
           </div>
           {view === 'trash' && !readOnly && <p className="trash-note muted">Files in trash are deleted forever after {TRASH_DAYS} days.</p>}
-          {shownFiles.length === 0 && view === 'drive' && drive ? (
+          {folderBlock}
+          {shownFiles.length === 0 && shownFolders.length > 0 ? null : shownFiles.length === 0 && view === 'drive' && drive ? (
             <div className="hero">
               <HeroIcon />
               <h3>Your drive lives on 0G Storage</h3>

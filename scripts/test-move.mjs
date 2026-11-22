@@ -115,6 +115,7 @@ async function deleteDriveFiles(pg = page, address = wallet.address) {
 const crumbs = () => page.$$eval('.breadcrumb .crumb', (els) => els.map((e) => e.textContent.trim()).join('/'))
 const treeNames = () => page.$$eval('.sidebar .tree-name', (els) => els.map((e) => e.textContent.trim()))
 const treeRow = (name) => page.locator('.sidebar .tree-row', { has: page.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) })
+const treeLabel = (name) => page.locator('.sidebar .tree-label', { has: page.locator('.tree-name', { hasText: new RegExp(`^${name}$`) }) })
 const names = () => page.$$eval('table .fname-btn', (els) => els.map((e) => e.textContent.trim()).sort())
 const fileRow = (name) => page.locator('table tr', { has: page.locator('.fname-btn', { hasText: name }) })
 const picker = page.locator('.move-modal')
@@ -136,7 +137,7 @@ const newFolder = async (name) => {
   await treeRow(name).first().waitFor({ timeout: 5 * 60_000 })
 }
 const openFolder = async (name) => {
-  await treeRow(name).first().locator('.tree-label').click()
+  await treeLabel(name).first().click()
 }
 const upload = async (files) => {
   await page.setInputFiles('.dropzone input[type=file]', files.map(([name, text]) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(text) })))
@@ -155,7 +156,7 @@ try {
   await newFolder('reports')
   await openFolder('Work')
   await newFolder('Reports')
-  await page.locator('.sidebar .tree-row', { has: page.locator('.tree-label[title="Work/Reports"]') }).locator('.tree-label').click()
+  await page.locator('.sidebar .tree-label[title="Work/Reports"]').click()
   await upload([['a.txt', 'Alpha: moved by the picker.'], ['b.txt', 'Beta']])
   step(`set up; open: ${await crumbs()}`)
 
@@ -196,6 +197,7 @@ try {
 
   // ── folder: Work/Reports → Docs (clash) → new Docs/2026, one transaction
   const workReports = page.locator('.sidebar .tree-row', { has: page.locator('.tree-label[title="Work/Reports"]') })
+  await workReports.hover() // a row's buttons show while you point at it
   await workReports.getByRole('button', { name: 'Move folder' }).click()
   await picker.waitFor()
   const states = {}
@@ -273,6 +275,7 @@ try {
   }))
   await page.getByRole('button', { name: 'Folders and settings' }).click()
   await page.waitForTimeout(400)
+  await page.locator('.sidebar .tree-row').last().hover() // a row's buttons show while you point at it
   const drawer = await page.evaluate(() => {
     const side = Math.round(document.querySelector('.sidebar').getBoundingClientRect().right)
     const rights = [...document.querySelectorAll('.sidebar .tree-row .tree-act')].map((b) => Math.round(b.getBoundingClientRect().right))
