@@ -589,14 +589,9 @@ a:hover {
 }
 .tree-chain .tree-seg {
   flex: 0 1 auto;
-  min-width: 1.6em;
+  min-width: 3em;
   padding-left: 2px;
   padding-right: 2px;
-}
-.tree-chain .tree-seg:last-child,
-.tree-chain .tree-seg.here {
-  flex-shrink: 0.3;
-  min-width: 3em;
 }
 .tree-seg.here {
   color: var(--accent);
@@ -605,6 +600,22 @@ a:hover {
 .tree-row.selected .tree-seg:not(.here) {
   color: var(--text-dim);
   font-weight: 400;
+}
+.tree-more {
+  flex: none;
+  background: none;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  letter-spacing: 1px;
+  padding: 4px 4px;
+  cursor: pointer;
+}
+.tree-more:hover {
+  color: var(--accent);
+  background: var(--panel-2);
 }
 .tree-sep {
   color: var(--muted);
@@ -617,7 +628,12 @@ a:hover {
   align-items: center;
   flex: none;
 }
-.tree-row:hover .tree-acts,
+/* a tap counts as hover on touch screens: there only the open row shows its buttons (below) */
+@media (hover: hover) {
+  .tree-row:hover .tree-acts {
+    display: flex;
+  }
+}
 .tree-row:has(:focus-visible) .tree-acts {
   display: flex;
 }
@@ -691,7 +707,11 @@ a:hover {
   width: 13px;
   height: 13px;
 }
-.tree-row:hover .tree-act,
+@media (hover: hover) {
+  .tree-row:hover .tree-act {
+    opacity: 1;
+  }
+}
 .tree-row:has(:focus-visible) .tree-act {
   opacity: 1;
 }
@@ -1004,6 +1024,8 @@ a:hover {
   display: none;
 }
 .dropzone-title {
+  /* a deep folder's path breaks anywhere rather than widening the page */
+  overflow-wrap: anywhere;
   font-size: var(--fs-md);
   font-weight: 500;
 }
@@ -1253,6 +1275,7 @@ tbody tr:hover {
   overflow-y: auto;
 }
 .activity li {
+  overflow-wrap: anywhere;
   padding: 4px 0;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -1937,9 +1960,14 @@ tbody tr:hover {
   .dz-touch {
     display: inline;
   }
-  /* no hover on touch screens: the open folder's row shows its actions */
+  /* no hover on touch screens: the open folder's row shows its actions, on a line of their own */
+  .tree-row.selected {
+    flex-wrap: wrap;
+  }
   .tree-row.selected .tree-acts {
     display: flex;
+    flex-basis: 100%;
+    justify-content: flex-end;
   }
   .tree-row.selected .tree-act {
     opacity: 1;
@@ -1990,6 +2018,11 @@ tbody tr:hover {
   .tree-label {
     padding-top: 8px;
     padding-bottom: 8px;
+    min-height: 40px;
+  }
+  .tree-more {
+    min-height: 40px;
+    min-width: 32px;
   }
   .tree-act {
     min-width: 34px;
